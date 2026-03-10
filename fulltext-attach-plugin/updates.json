@@ -9,9 +9,9 @@
               "strict_min_version": "7.0"
             }
           },
-          "update_hash": "sha256:63a6085ae0b6b2e3347cda8b223b16c7c9ef63e960ccca3989a27104895fdd02",
-          "update_link": "https://github.com/dzackgarza/zotero-attachment-plugin/releases/download/v3.1.5/fulltext-attach-plugin-3.1.5.xpi",
-          "version": "3.1.5"
+          "update_hash": "sha256:3d85981cbd907430870c0107d3566c7636f4ce048d8bd107bb280fc241c319b3",
+          "update_link": "https://github.com/dzackgarza/zotero-attachment-plugin/releases/download/v3.1.6/fulltext-attach-plugin-3.1.6.xpi",
+          "version": "3.1.6"
         }
       ]
     }
