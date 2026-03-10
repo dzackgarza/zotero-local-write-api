@@ -2,6 +2,7 @@
   "applications": {
     "zotero": {
       "id": "fulltext-attach@dzackgarza.com",
+      "strict_max_version": "*",
       "strict_min_version": "7.0",
       "update_url": "https://raw.githubusercontent.com/dzackgarza/zotero-attachment-plugin/main/fulltext-attach-plugin/updates.json"
     }
@@ -15,5 +16,5 @@
   },
   "manifest_version": 2,
   "name": "Fulltext Attachment API",
-  "version": "3.1.3"
+  "version": "3.1.4"
 }

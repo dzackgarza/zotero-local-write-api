@@ -5,12 +5,13 @@
         {
           "applications": {
             "zotero": {
+              "strict_max_version": "*",
               "strict_min_version": "7.0"
             }
           },
-          "update_hash": "sha256:1ba4df1a82076a387efa96f06ec3be49f31a7b20d9be9024a82c39009f458963",
-          "update_link": "https://github.com/dzackgarza/zotero-attachment-plugin/releases/download/v3.1.3/fulltext-attach-plugin-3.1.3.xpi",
-          "version": "3.1.3"
+          "update_hash": "sha256:3b1f782df00489d6b3fea33b84948947808e527bc86e07067f5561bf4c50d05f",
+          "update_link": "https://github.com/dzackgarza/zotero-attachment-plugin/releases/download/v3.1.4/fulltext-attach-plugin-3.1.4.xpi",
+          "version": "3.1.4"
         }
       ]
     }

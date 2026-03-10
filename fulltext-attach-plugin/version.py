@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Canonical release metadata for the Zotero attachment plugin."""
 
-VERSION = "3.1.3"
+VERSION = "3.1.4"
 
 REPO_OWNER = "dzackgarza"
 REPO_NAME = "zotero-attachment-plugin"
@@ -16,6 +16,7 @@ ADDON_DESCRIPTION = (
 )
 
 STRICT_MIN_VERSION = "7.0"
+STRICT_MAX_VERSION = "*"
 TESTED_ZOTERO_VERSION = "8.0.1"
 
 FULLTEXT_ATTACH_PATH = "/fulltext-attach"
