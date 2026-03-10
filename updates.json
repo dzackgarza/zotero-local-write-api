@@ -9,9 +9,9 @@
               "strict_min_version": "7.0"
             }
           },
-          "update_hash": "sha256:ea90ffd50b26564bccf7ff24c3a4438ddef6eb8ceac65430165935d877aed052",
-          "update_link": "https://github.com/dzackgarza/zotero-attachment-plugin/releases/download/v3.1.8/local-write-api-3.1.8.xpi",
-          "version": "3.1.8"
+          "update_hash": "sha256:65c54b2d3d1d64e30171d9123c37df4bd1f671061024f35a4ed1ce1fad2a3163",
+          "update_link": "https://github.com/dzackgarza/zotero-local-write-api/releases/download/v3.1.9/local-write-api-3.1.9.xpi",
+          "version": "3.1.9"
         }
       ]
     }

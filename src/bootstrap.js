@@ -1,13 +1,13 @@
 var FulltextAttachEndpoint;
 var OpenCodeWriteEndpoint;
 var PluginVersionEndpoint;
-var PLUGIN_VERSION = "3.1.8";
+var PLUGIN_VERSION = "3.1.9";
 var FULLTEXT_ATTACH_PATH = "/attach";
 var LOCAL_WRITE_PATH = "/write";
 var VERSION_PATH = "/version";
 var ADDON_ID = "local-write-api@dzackgarza.com";
-var HOMEPAGE_URL = "https://github.com/dzackgarza/zotero-attachment-plugin";
-var UPDATE_URL = "https://raw.githubusercontent.com/dzackgarza/zotero-attachment-plugin/main/local-write-api/updates.json";
+var HOMEPAGE_URL = "https://github.com/dzackgarza/zotero-local-write-api";
+var UPDATE_URL = "https://raw.githubusercontent.com/dzackgarza/zotero-local-write-api/main/updates.json";
 var STRICT_MIN_VERSION = "7.0";
 var STRICT_MAX_VERSION = "*";
 var TESTED_ZOTERO_VERSION = "8.0.1";

@@ -17,16 +17,18 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Install dependencies
+        run: pip install pyyaml
+
       - name: Build XPI
-        run: cd fulltext-attach-plugin && python3 build.py
+        run: python3 build.py
 
       - name: Get version
         id: ver
-        run: |
-          echo "version=$(cd fulltext-attach-plugin && python3 -c 'from version import VERSION; print(VERSION)')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: fulltext-attach-plugin/fulltext-attach-plugin-${{ steps.ver.outputs.version }}.xpi
+          files: local-write-api-${{ steps.ver.outputs.version }}.xpi
           generate_release_notes: true

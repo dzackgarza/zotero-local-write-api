@@ -1,8 +1,6 @@
-plugin_dir := "fulltext-attach-plugin"
-
 # Show the current version
 version:
-    @cd {{plugin_dir}} && python3 -c "from version import VERSION; print(VERSION)"
+    @cat VERSION
 
 # Release a patch version — bug fixes, infra, tooling (default)
 release: (_release "patch")
@@ -14,7 +12,7 @@ release-minor: (_release "minor")
 release-major: (_release "major")
 
 # Regenerate plugin icons via Replicate (requires REPLICATE_API_TOKEN in env)
-# Run this, commit the icons/, then cut a release.
+# Run this, commit src/icons/, then cut a release.
 gen-icons:
     #!/usr/bin/env python3
     import os, time, urllib.request, json
@@ -47,11 +45,11 @@ gen-icons:
     from PIL import Image
     import urllib.request as ul
     raw = Image.open(ul.urlopen(img_url)).convert("RGBA")
-    icons = Path("{{plugin_dir}}/icons")
+    icons = Path("src/icons")
     icons.mkdir(exist_ok=True)
     raw.resize((96, 96), Image.LANCZOS).save(icons / "favicon.png")
     raw.resize((48, 48), Image.LANCZOS).save(icons / "favicon@0.5x.png")
-    print("Wrote icons/favicon.png (96x96) and icons/favicon@0.5x.png (48x48)")
+    print("Wrote src/icons/favicon.png (96x96) and src/icons/favicon@0.5x.png (48x48)")
 
 # --- private ---
 
@@ -59,11 +57,11 @@ _bump bump_type:
     #!/usr/bin/env python3
     import re, sys
     from pathlib import Path
-    path = Path("{{plugin_dir}}/version.py")
-    source = path.read_text()
-    m = re.search(r'^VERSION = "(\d+)\.(\d+)\.(\d+)"$', source, re.MULTILINE)
+    path = Path("VERSION")
+    source = path.read_text().strip()
+    m = re.match(r'^(\d+)\.(\d+)\.(\d+)$', source)
     if not m:
-        sys.exit('Could not parse VERSION = "X.Y.Z" from version.py')
+        sys.exit('Could not parse X.Y.Z from VERSION')
     major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
     if "{{bump_type}}" == "major":
         major, minor, patch = major + 1, 0, 0
@@ -72,17 +70,15 @@ _bump bump_type:
     else:
         patch += 1
     new = f"{major}.{minor}.{patch}"
-    path.write_text(re.sub(r'^VERSION = ".*"$', f'VERSION = "{new}"', source, flags=re.MULTILINE))
+    path.write_text(new + "\n")
     print(f"Bumped to {new}")
 
 _release bump_type: (_bump bump_type)
     #!/usr/bin/env bash
     set -euo pipefail
-    cd {{plugin_dir}}
     python3 build.py
-    version=$(python3 -c "from version import VERSION; print(VERSION)")
-    cd ..
-    git add {{plugin_dir}}/version.py {{plugin_dir}}/manifest.json {{plugin_dir}}/updates.json
+    version=$(cat VERSION)
+    git add VERSION updates.json src/bootstrap.js src/manifest.json
     git commit -m "chore: release v${version}"
     git tag "v${version}"
     git push

@@ -1,0 +1,23 @@
+addon:
+  id: local-write-api@dzackgarza.com
+  slug: local-write-api
+  name: Local Write API
+  author: D. Zack Garza
+  description: >-
+    Exposes write endpoints on Zotero's local HTTP server, covering the gap
+    left by the read-only built-in API.
+
+repo:
+  owner: dzackgarza
+  name: zotero-local-write-api
+  branch: main
+
+zotero:
+  strict_min_version: "7.0"
+  strict_max_version: "*"
+  tested_version: "8.0.1"
+
+endpoints:
+  attach: /attach
+  write: /write
+  version: /version

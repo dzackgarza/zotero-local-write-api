@@ -1,3 +1,5 @@
 .serena/
-**/__pycache__/
+__pycache__/
 *.pyc
+*.xpi
+.DS_Store

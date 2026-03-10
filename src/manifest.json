@@ -4,17 +4,17 @@
       "id": "local-write-api@dzackgarza.com",
       "strict_max_version": "*",
       "strict_min_version": "7.0",
-      "update_url": "https://raw.githubusercontent.com/dzackgarza/zotero-attachment-plugin/main/local-write-api/updates.json"
+      "update_url": "https://raw.githubusercontent.com/dzackgarza/zotero-local-write-api/main/updates.json"
     }
   },
   "author": "D. Zack Garza",
   "description": "Exposes write endpoints on Zotero's local HTTP server, covering the gap left by the read-only built-in API.",
-  "homepage_url": "https://github.com/dzackgarza/zotero-attachment-plugin",
+  "homepage_url": "https://github.com/dzackgarza/zotero-local-write-api",
   "icons": {
     "48": "icons/favicon@0.5x.png",
     "96": "icons/favicon.png"
   },
   "manifest_version": 2,
   "name": "Local Write API",
-  "version": "3.1.8"
+  "version": "3.1.9"
 }

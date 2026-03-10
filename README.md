@@ -20,7 +20,7 @@ See [issue #1](https://github.com/dzackgarza/zotero-attachment-plugin/issues/1) 
 
 ## What It Ships
 
-The add-on lives in [`fulltext-attach-plugin`](./fulltext-attach-plugin) and registers three endpoints on Zotero's local HTTP server:
+The add-on lives in [`local-write-api`](./local-write-api) and registers three endpoints on Zotero's local HTTP server:
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -38,10 +38,12 @@ The version probe lets consumers require a minimum installed add-on version befo
 ## Repo Layout
 
 ```text
-fulltext-attach-plugin/   Add-on source, build scripts, manifest, and update manifest
-examples/                 Example clients and requests
-scripts/                  Utility scripts
-tests/                    Add-on-specific verification assets
+src/               Plugin source (bootstrap.js, icons, generated manifest.json)
+build.py           Builds the XPI from src/ and writes updates.json
+config.yml         All stable constants — addon ID, repo, Zotero compatibility, endpoints
+VERSION            Current version number (plain text, bumped by justfile)
+updates.json       Committed; fetched by Zotero at the update_url for auto-update
+justfile           Release workflow
 ```
 
 ## Build and Release
@@ -52,12 +54,12 @@ just release-minor    # bump minor version
 just release-major    # bump major version
 ```
 
-GitHub Actions picks up the tag and publishes the GitHub Release with the `.xpi` asset. Zotero polls the `update_url` in the installed manifest and offers the update automatically.
+`VERSION` and `config.yml` are the two sources of truth. `build.py` derives everything else — `updates.json`, the XPI, and the injected constants in `bootstrap.js`.
 
-[`version.py`](./fulltext-attach-plugin/version.py) is the single source of truth for the version number. Everything else is derived from it.
+GitHub Actions picks up the tag and publishes the GitHub Release with the `.xpi` asset. Zotero polls `update_url` in the installed manifest and offers the update automatically.
 
-Install the generated `.xpi` from Zotero's `Tools -> Add-ons` menu, then verify:
+Install the `.xpi` from Zotero's `Tools → Add-ons → Install Add-on From File`, then verify:
 
-- `GET http://127.0.0.1:23119/opencode-zotero-plugin-version`
-- `POST http://127.0.0.1:23119/fulltext-attach`
-- `POST http://127.0.0.1:23119/opencode-zotero-write`
+- `GET http://127.0.0.1:23119/version`
+- `POST http://127.0.0.1:23119/attach`
+- `POST http://127.0.0.1:23119/write`
