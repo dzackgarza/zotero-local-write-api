@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Canonical release metadata for the Zotero attachment plugin."""
 
-VERSION = "3.1"
+VERSION = "3.2"
 
 REPO_OWNER = "dzackgarza"
 REPO_NAME = "zotero-attachment-plugin"
