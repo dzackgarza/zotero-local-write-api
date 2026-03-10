@@ -150,7 +150,12 @@ def main():
     
     print("Fetching items from Zotero...")
     # Fetch a small batch of items
-    items = client.items(limit=30)
+    try:
+        items = client.items(limit=30)
+    except Exception as e:
+        print(f"Error connecting to local Zotero API: {e}")
+        print("Please ensure Zotero is running and the local API is enabled.")
+        sys.exit(1)
     processed_count = 0
     
     for item in items:
