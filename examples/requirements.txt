@@ -1,0 +1,4 @@
+pyzotero>=1.5.0
+requests>=2.30.0
+PyMuPDF>=1.22.0
+sentence-transformers>=2.2.0

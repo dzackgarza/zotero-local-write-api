@@ -1,38 +1,41 @@
 #!/usr/bin/env python3
 """
-Simple Offline Pipeline Example
+Advanced Offline Pipeline Example
 
-This script demonstrates an offline processing pipeline that:
-1. Connects to your local Zotero library using `pyzotero`.
-2. Finds items that have PDF attachments but no extracted fulltext notes.
-3. Retrieves the PDF file path.
-4. (Simulated) Extracts the text content.
-5. Attaches the extracted text back to the Zotero item using `zotero-local-write-api`.
+This script demonstrates an end-to-end offline processing pipeline combining Zotero's
+native HTTP API with the local-write-api add-on and external Python libraries.
+
+The pipeline performs the following steps on your Zotero library:
+1. Connects to the local Zotero library using `pyzotero`.
+2. Finds journal articles or preprints that have PDF attachments but no fulltext notes.
+3. Retrieves the PDF file path directly from the local Zotero data directory.
+4. Extracts the text content using `PyMuPDF`.
+5. Generates semantic embeddings of the text using `sentence-transformers`.
+6. Attaches the extracted text as a rich HTML note and adds an "embedded" tag to the 
+   item using `zotero-local-write-api`.
 
 Requirements:
-- pip install pyzotero requests
-- pdftotext (or another CLI text extraction tool)
-- The zotero-local-write-api plugin installed in Zotero
+    pip install -r requirements.txt
+    (Depends on pyzotero, requests, PyMuPDF, sentence-transformers)
+
+Note: This requires the zotero-local-write-api plugin to be installed in Zotero.
 """
 
 import os
 import sys
-import json
-import shutil
-import tempfile
 import requests
-import subprocess
 from pathlib import Path
 
 try:
     from pyzotero import zotero
+    import fitz  # PyMuPDF
+    from sentence_transformers import SentenceTransformer
 except ImportError:
-    print("Please install required packages: pip install pyzotero requests")
+    print("Missing dependencies. Please run: pip install -r requirements.txt")
     sys.exit(1)
 
 # Configuration for the Local Write API
 ZOTERO_WRITE_API_URL = "http://localhost:23119/write"
-ZOTERO_ATTACH_API_URL = "http://localhost:23119/attach"
 
 def get_local_zotero_client() -> zotero.Zotero:
     """Get authenticated Zotero client using the local API."""
@@ -67,10 +70,6 @@ def get_pdf_path(client: zotero.Zotero, item_key: str) -> str:
         for child in children:
             data = child.get("data", {})
             if data.get("itemType") == "attachment" and data.get("contentType") == "application/pdf":
-                # In a real scenario, you can locate the file on disk using the Zotero data directory
-                # and item key. However, for this example, we'll demonstrate downloading it via pyzotero
-                # into a temporary directory if needed.
-                # Locally, it's typically at: ~/Zotero/storage/<ATTACHMENT_KEY>/<filename>
                 attachment_key = data.get("key")
                 filename = data.get("filename")
                 zotero_data_dir = os.path.expanduser("~/Zotero")
@@ -82,13 +81,33 @@ def get_pdf_path(client: zotero.Zotero, item_key: str) -> str:
          print(f"Error retrieving PDF for {item_key}: {e}")
     return ""
 
-def attach_fulltext_via_api(item_key: str, text_content: str) -> bool:
+def extract_text(pdf_path: str) -> str:
+    """Extract text from a PDF file using PyMuPDF."""
+    text_content = ""
+    try:
+        with fitz.open(pdf_path) as doc:
+            for page in doc:
+                text_content += page.get_text() + "\n"
+        return text_content
+    except Exception as e:
+        print(f"Failed to extract text from {pdf_path}: {e}")
+        return ""
+
+def generate_embedding(text_content: str, model: SentenceTransformer) -> list:
+    """Generate a vector embedding for the text using sentence-transformers."""
+    # Truncate text context for embedding to fit typical context window of lightweight models
+    truncated_text = text_content[:4000]
+    embedding = model.encode(truncated_text)
+    return embedding.tolist()
+
+def update_zotero_item(item_key: str, text_content: str, has_embedding: bool) -> bool:
     """
-    Attach extracted text as a child note using the zotero-local-write-api /write endpoint.
+    Attach extracted text as a child note and tag the item using the write API.
     """
     note_html = f"<h1>Fulltext Content</h1><p><pre>{text_content[:2000]}... (truncated)</pre></p>"
     
-    payload = {
+    # 1. Attach the note
+    attach_payload = {
         "operation": "attach_note",
         "parent_item_key": item_key,
         "note_text": note_html,
@@ -96,42 +115,38 @@ def attach_fulltext_via_api(item_key: str, text_content: str) -> bool:
     }
 
     try:
-        response = requests.post(ZOTERO_WRITE_API_URL, json=payload, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        return data.get("success", False)
+        resp = requests.post(ZOTERO_WRITE_API_URL, json=attach_payload, timeout=5)
+        resp.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"API Error attaching note: {e}")
         return False
 
-def extract_text(pdf_path: str) -> str:
-    """Extract text from a PDF file using pdftotext."""
-    if not shutil.which("pdftotext"):
-        print("Warning: pdftotext not found. Simulating extraction.")
-        return "Simulated extracted text content..."
-        
-    try:
-        # Run pdftotext to extract text to stdout
-        result = subprocess.run(
-            ["pdftotext", "-q", "-enc", "UTF-8", pdf_path, "-"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to extract text: {e}")
-        return ""
+    # 2. Add an 'embedded' tag
+    if has_embedding:
+        tag_payload = {
+            "operation": "set_item_tags",
+            "item_key": item_key,
+            "tags": ["embedded", "fulltext-extracted"]
+        }
+        try:
+            resp = requests.post(ZOTERO_WRITE_API_URL, json=tag_payload, timeout=5)
+            resp.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"API Error updating tags: {e}")
+            return False
+
+    return True
 
 def main():
     print("Initializing offline processing pipeline...")
-    
     client = get_local_zotero_client()
     
-    # Example: fetch the top 20 items to process
-    print("Fetching items...")
-    items = client.items(limit=20)
+    print("Loading embedding model (this may take a moment)...")
+    model = SentenceTransformer("all-MiniLM-L6-v2")
     
+    print("Fetching items from Zotero...")
+    # Fetch a small batch of items
+    items = client.items(limit=30)
     processed_count = 0
     
     for item in items:
@@ -139,8 +154,8 @@ def main():
         title = item.get("data", {}).get("title", "Untitled")
         item_type = item.get("data", {}).get("itemType", "")
         
-        # Skip attachments/notes, we want parent items
-        if item_type in ["attachment", "note"]:
+        # Only process standard items that might have PDFs
+        if item_type in ["attachment", "note", "artwork", "computerProgram"]:
              continue
              
         print(f"\nProcessing {item_key}: {title[:50]}...")
@@ -156,21 +171,26 @@ def main():
              
         print(f"  -> Found PDF at: {pdf_path}")
         
-        print("  -> Extracting text...")
+        print("  -> Extracting text with PyMuPDF...")
         text_content = extract_text(pdf_path)
         
         if not text_content.strip():
              print("  -> Text extraction failed or resulted in empty output.")
              continue
              
-        print("  -> Attaching extracted text to Zotero...")
-        success = attach_fulltext_via_api(item_key, text_content)
+        print("  -> Generating semantic embedding via sentence-transformers...")
+        embedding = generate_embedding(text_content, model)
+        # Here you would typically save the embedding to a vector database (e.g. ChromaDB)
+        # We will skip the DB insertion to keep the example lightweight, but we flag it as generated.
+        
+        print("  -> Updating Zotero item via Local Write API...")
+        success = update_zotero_item(item_key, text_content, has_embedding=bool(embedding))
         
         if success:
-             print("  [OK] Extracted text attached successfully!")
+             print("  [OK] Extracted text attached and tags updated successfully!")
              processed_count += 1
         else:
-             print("  [FAIL] Failed to attach text via local API.")
+             print("  [FAIL] Failed to update Zotero via local API.")
              
     print(f"\nPipeline complete. Processed {processed_count} new items.")
 
