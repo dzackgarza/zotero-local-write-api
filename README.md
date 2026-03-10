@@ -52,7 +52,7 @@ justfile           Release workflow
 The `examples/` directory contains standalone python scripts demonstrating how to interact with local Zotero plus this API:
 
 1. **[`find_item_by_bibtex.py`](./examples/find_item_by_bibtex.py)**: Shows how to search for an item in a local library through the `pyzotero` interface via its Better BibTeX citation key.
-2. **[`offline_pipeline.py`](./examples/offline_pipeline.py)**: Demonstrates an end-to-end local text extraction pipeline, reading a PDF with standard APIs, extracting text via `pdftotext`, and attaching the result back to the Zotero item seamlessly using the `/write` endpoint.
+2. **[`offline_pipeline.py`](./examples/offline_pipeline.py)**: Demonstrates an end-to-end local text extraction pipeline, reading a PDF with standard APIs, extracting text via `PyMuPDF`, and attaching the result back to the Zotero item seamlessly using the `/write` endpoint.
 
 ## Build and Release
 
