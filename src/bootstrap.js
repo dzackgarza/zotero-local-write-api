@@ -787,7 +787,7 @@ async function handleRestoreItem(data) {
 	await item.saveTx();
 	return successResult("restore_item", {
 		item_key: itemKey,
-		item_type: item.itemType || null,
+		item_type: item.itemType || item.itemTypeID || null,
 	});
 }
 
