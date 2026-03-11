@@ -199,17 +199,14 @@ function isMissingFileError(error: unknown): boolean {
 async function materializeUploadBytes(fileName: string, fileBytesBase64: string): Promise<string> {
 	const tempDir = Zotero.getTempDirectory();
 	const safeFileName = Zotero.File.getValidFileName(fileName.trim()) || "attachment.bin";
-	const tempPath = OS.Path.join(
-		tempDir.path,
-		`local-write-api-${Date.now()}-${Math.random().toString(16).slice(2)}-${safeFileName}`,
-	);
+	tempDir.append(`local-write-api-${Date.now()}-${Math.random().toString(16).slice(2)}-${safeFileName}`);
 	const binary = atob(fileBytesBase64);
 	const bytes = new Uint8Array(binary.length);
 	for (let index = 0; index < binary.length; index++) {
 		bytes[index] = binary.charCodeAt(index);
 	}
-	await Zotero.File.putContentsAsync(tempPath, bytes.buffer);
-	return tempPath;
+	await Zotero.File.putContentsAsync(tempDir.path, bytes.buffer);
+	return tempDir.path;
 }
 
 async function importStoredAttachment(parentItem: Zotero.Item, filePath: string, title: string): Promise<Zotero.Item> {
@@ -273,7 +270,7 @@ async function handleFulltextAttach(data: RequestData): Promise<JsonPayload> {
 	finally {
 		if (tempPath) {
 			try {
-				await OS.File.remove(tempPath);
+				Zotero.File.pathToFile(tempPath).remove(false);
 			}
 			catch (error) {
 				Zotero.logError(error instanceof Error ? error : new Error(String(error)));
