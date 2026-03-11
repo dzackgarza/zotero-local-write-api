@@ -9,6 +9,7 @@ const PLUGIN_VERSION = "3.2.0-dev";
 const FULLTEXT_ATTACH_PATH = "/attach";
 const LOCAL_WRITE_PATH = "/write";
 const VERSION_PATH = "/version";
+const FULLTEXT_ALLOWED_DIRS = ["/tmp", "/var/tmp"];
 const ADDON_ID = "local-write-api@dzackgarza.com";
 const HOMEPAGE_URL = "https://github.com/dzackgarza/zotero-local-write-api";
 const UPDATE_URL = "https://raw.githubusercontent.com/dzackgarza/zotero-local-write-api/main/updates.json";
@@ -17,6 +18,7 @@ const STRICT_MAX_VERSION = "*";
 const TESTED_ZOTERO_VERSION = "8.0.1";
 const PLUGIN_CAPABILITIES = [
 	"attach",
+	"attach_bytes",
 	"write",
 	"version_probe",
 ];
@@ -98,6 +100,14 @@ function requireNonEmptyString(value: unknown, fieldName: string): string {
 	return cleaned;
 }
 
+function optionalNonEmptyString(value: unknown): string | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	const cleaned = value.trim();
+	return cleaned ? cleaned : null;
+}
+
 function requireObject(value: unknown, fieldName: string): JsonPayload {
 	if (!value || Array.isArray(value) || typeof value !== "object") {
 		throw new Error(fieldName + " must be an object");
@@ -173,34 +183,110 @@ async function cloneChildAttachmentToParent(sourceAttachment: Zotero.Item, paren
 	return newAttachment;
 }
 
-async function handleFulltextAttach(data: RequestData): Promise<JsonPayload> {
-	const itemKey = requireNonEmptyString(data.item_key, "item_key");
-	const filePath = requireNonEmptyString(data.file_path, "file_path");
-	const title = requireNonEmptyString(data.title, "title");
-
-	const allowedDirs = ["/tmp", "/var/tmp"];
-	if (!allowedDirs.some(dir => filePath.startsWith(dir))) {
-		throw new Error(
-			"File path must be within allowed directories: " + allowedDirs.join(", ")
-		);
+function resolveAttachFilePath(filePath: string): string {
+	const file = Zotero.File.pathToFile(filePath);
+	if (!file.exists()) {
+		throw new Error("File not found: " + filePath);
 	}
+	return file.path;
+}
 
-	const parentItem = await getUserItemOrThrow(itemKey);
+function isMissingFileError(error: unknown): boolean {
+	return typeof (error as Error).message === "string"
+		&& (error as Error).message.includes("NS_ERROR_FILE_NOT_FOUND");
+}
+
+async function materializeUploadBytes(fileName: string, fileBytesBase64: string): Promise<string> {
+	const tempDir = Zotero.getTempDirectory();
+	const safeFileName = Zotero.File.getValidFileName(fileName.trim()) || "attachment.bin";
+	const tempPath = OS.Path.join(
+		tempDir.path,
+		`local-write-api-${Date.now()}-${Math.random().toString(16).slice(2)}-${safeFileName}`,
+	);
+	const binary = atob(fileBytesBase64);
+	const bytes = new Uint8Array(binary.length);
+	for (let index = 0; index < binary.length; index++) {
+		bytes[index] = binary.charCodeAt(index);
+	}
+	await Zotero.File.putContentsAsync(tempPath, bytes.buffer);
+	return tempPath;
+}
+
+async function importStoredAttachment(parentItem: Zotero.Item, filePath: string, title: string): Promise<Zotero.Item> {
+	const resolvedFilePath = resolveAttachFilePath(filePath);
 	const attachment = await Zotero.Attachments.importFromFile({
-		file: filePath,
+		file: resolvedFilePath,
+		libraryID: parentItem.libraryID,
 		parentItemID: parentItem.id,
 		title: title,
 	});
 	if (!attachment) {
 		throw new Error("Failed to create attachment");
 	}
-
 	await attachment.saveTx();
+	return attachment;
+}
+
+async function handleFulltextAttach(data: RequestData): Promise<JsonPayload> {
+	const itemKey = requireNonEmptyString(data.item_key, "item_key");
+	const title = requireNonEmptyString(data.title, "title");
+	const filePath = optionalNonEmptyString(data.file_path);
+	const fileName = optionalNonEmptyString(data.file_name);
+	const fileBytesBase64 = optionalNonEmptyString(data.file_bytes_base64);
+
+	if (!filePath && !fileBytesBase64) {
+		throw new Error("Either file_path or file_bytes_base64 must be provided");
+	}
+
+	const parentItem = await getUserItemOrThrow(itemKey);
+	let attachment: Zotero.Item;
+	let sourceMode = "path";
+	let tempPath: string | null = null;
+
+	try {
+		if (filePath) {
+			if (!FULLTEXT_ALLOWED_DIRS.some(dir => filePath.startsWith(dir))) {
+				throw new Error(
+					"File path must be within allowed directories: " + FULLTEXT_ALLOWED_DIRS.join(", ")
+				);
+			}
+			try {
+				attachment = await importStoredAttachment(parentItem, filePath, title);
+			}
+			catch (error) {
+				if (!fileBytesBase64 || !isMissingFileError(error)) {
+					throw error;
+				}
+				const fallbackName = fileName || Zotero.File.pathToFile(filePath).leafName || "attachment.bin";
+				tempPath = await materializeUploadBytes(fallbackName, fileBytesBase64);
+				attachment = await importStoredAttachment(parentItem, tempPath, title);
+				sourceMode = "bytes_fallback";
+			}
+		}
+		else {
+			const requiredFileName = requireNonEmptyString(data.file_name, "file_name");
+			tempPath = await materializeUploadBytes(requiredFileName, requireNonEmptyString(data.file_bytes_base64, "file_bytes_base64"));
+			attachment = await importStoredAttachment(parentItem, tempPath, title);
+			sourceMode = "bytes";
+		}
+	}
+	finally {
+		if (tempPath) {
+			try {
+				await OS.File.remove(tempPath);
+			}
+			catch (error) {
+				Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+			}
+		}
+	}
+
 	return successResult(
 		"attach_file_to_item",
 		{
 			parent_item_key: itemKey,
 			file_path: filePath,
+			source_mode: sourceMode,
 			title: title,
 		},
 		{
@@ -489,8 +575,12 @@ async function handleDeleteTag(data: RequestData): Promise<JsonPayload> {
 	if (!tagID) {
 		throw new Error("Tag not found: " + tagName);
 	}
-	// zotero-types marks onProgress/types as required but they are optional at runtime
-	await Zotero.Tags.removeFromLibrary(userLibraryID(), [tagID], () => {}, []);
+	await Zotero.Tags.removeFromLibrary(
+		userLibraryID(),
+		[tagID],
+		() => {},
+		undefined as unknown as number[],
+	);
 	return successResult("delete_tag", {
 		tag_name: tagName,
 	});

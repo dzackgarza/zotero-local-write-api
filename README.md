@@ -14,19 +14,19 @@ That API has **no write capability whatsoever.** Every endpoint is GET-only. Thi
 - Collection and tag management (rename, merge, move, delete)
 - Creating items from scratch
 
-It also exposes `/fulltext-attach`, a file-attachment workflow that stages a file from disk into Zotero's storage — not available in the native API in any form.
+It also exposes a file-attachment workflow that stages a file from disk into Zotero's storage, which the native API does not provide.
 
 See [issue #1](https://github.com/dzackgarza/zotero-attachment-plugin/issues/1) for write operations not yet implemented.
 
 ## What It Ships
 
-The add-on lives in [`local-write-api`](./local-write-api) and registers three endpoints on Zotero's local HTTP server:
+The endpoint names, add-on ID, compatibility range, and update URL live in [`config.yml`](./config.yml). The add-on registers three endpoints on Zotero's local HTTP server:
 
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/fulltext-attach` | POST | Attach a file from disk to a Zotero item |
-| `/opencode-zotero-write` | POST | All write operations (dispatched by `operation` field) |
-| `/opencode-zotero-plugin-version` | GET | Version probe and capability list |
+| `/attach` | POST | Attach a file from disk to a Zotero item |
+| `/write` | POST | All write operations (dispatched by `operation` field) |
+| `/version` | GET | Version probe and capability list |
 
 The version probe lets consumers require a minimum installed add-on version before issuing write requests.
 

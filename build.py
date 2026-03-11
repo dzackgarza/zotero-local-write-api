@@ -39,6 +39,7 @@ TESTED_ZOTERO_VERSION = cfg["zotero"]["tested_version"]
 ATTACH_PATH = cfg["endpoints"]["attach"]
 WRITE_PATH = cfg["endpoints"]["write"]
 VERSION_PATH = cfg["endpoints"]["version"]
+FULLTEXT_ALLOWED_DIRS = cfg["fulltext_attach"]["allowed_dirs"]
 
 UPDATE_MANIFEST_URL = (
     f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/updates.json"
@@ -51,6 +52,7 @@ BOOTSTRAP_VAR_PATTERNS = {
     "FULLTEXT_ATTACH_PATH": re.compile(r"(?:var|const|let) FULLTEXT_ATTACH_PATH = .*?;"),
     "LOCAL_WRITE_PATH": re.compile(r"(?:var|const|let) LOCAL_WRITE_PATH = .*?;"),
     "VERSION_PATH": re.compile(r"(?:var|const|let) VERSION_PATH = .*?;"),
+    "FULLTEXT_ALLOWED_DIRS": re.compile(r"(?:var|const|let) FULLTEXT_ALLOWED_DIRS = .*?;"),
     "ADDON_ID": re.compile(r"(?:var|const|let) ADDON_ID = .*?;"),
     "HOMEPAGE_URL": re.compile(r"(?:var|const|let) HOMEPAGE_URL = .*?;"),
     "UPDATE_URL": re.compile(r"(?:var|const|let) UPDATE_URL = .*?;"),
@@ -63,6 +65,7 @@ BOOTSTRAP_VAR_VALUES = {
     "FULLTEXT_ATTACH_PATH": ATTACH_PATH,
     "LOCAL_WRITE_PATH": WRITE_PATH,
     "VERSION_PATH": VERSION_PATH,
+    "FULLTEXT_ALLOWED_DIRS": FULLTEXT_ALLOWED_DIRS,
     "ADDON_ID": ADDON_ID,
     "HOMEPAGE_URL": REPO_URL,
     "UPDATE_URL": UPDATE_MANIFEST_URL,
