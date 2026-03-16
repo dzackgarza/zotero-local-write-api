@@ -57,12 +57,16 @@ The `examples/` directory contains standalone python scripts demonstrating how t
 ## Build and Release
 
 ```bash
+python3 build.py        # build the current working tree XPI
+just smoke-live         # prove /version, /attach, delete_tag, and trash_item live
 just release          # bump patch version, build, commit, tag, push
 just release-minor    # bump minor version
 just release-major    # bump major version
 ```
 
 `VERSION` and `config.yml` are the two sources of truth. `build.py` derives everything else — `updates.json`, the XPI, and the injected constants in `bootstrap.js`.
+
+Do not tag a release until the current working-tree XPI has been installed into a real Zotero and `just smoke-live` has passed. Static checks alone are not enough for this add-on because `/attach` and `/write` run inside Zotero's XPCOM runtime.
 
 GitHub Actions picks up the tag and publishes the GitHub Release with the `.xpi` asset. Zotero polls `update_url` in the installed manifest and offers the update automatically.
 
@@ -71,3 +75,5 @@ Install the `.xpi` from Zotero's `Tools → Add-ons → Install Add-on From File
 - `GET http://127.0.0.1:23119/version`
 - `POST http://127.0.0.1:23119/attach`
 - `POST http://127.0.0.1:23119/write`
+
+The live smoke recipe accepts `EXPECTED_VERSION`, `ZOTERO_LOCAL_BASE_URL`, and `ZOTERO_LIBRARY_ID` from the environment when you need to pin the installed version or use a forwarded Zotero server.
