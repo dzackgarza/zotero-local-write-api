@@ -213,16 +213,34 @@ async function materializeUploadBytes(fileName: string, fileBytesBase64: string)
 
 async function importStoredAttachment(parentItem: Zotero.Item, filePath: string, title: string): Promise<Zotero.Item> {
 	const resolvedFilePath = resolveAttachFilePath(filePath);
-	const attachment = await Zotero.Attachments.importFromFile({
-		file: resolvedFilePath,
-		libraryID: parentItem.libraryID,
-		parentItemID: parentItem.id,
-		title: title,
-	});
-	if (!attachment) {
-		throw new Error("Failed to create attachment");
+	// Copy the file into Zotero's own temp directory before importing.
+	// Passing a /tmp path directly causes NS_ERROR_FILE_NOT_FOUND from
+	// nsIFile.copyToFollowingLinks when the path resolves through a symlink
+	// that Zotero's process cannot follow (observed on Linux tmpfs mounts).
+	const sourceFile = Zotero.File.pathToFile(resolvedFilePath);
+	const tempDir = Zotero.getTempDirectory();
+	const tempName = `local-write-api-${Date.now()}-${sourceFile.leafName}`;
+	sourceFile.copyTo(tempDir, tempName);
+	const tempFile = tempDir.clone();
+	tempFile.append(tempName);
+	let attachment: Zotero.Item;
+	try {
+		const result = await Zotero.Attachments.importFromFile({
+			file: tempFile.path,
+			libraryID: parentItem.libraryID,
+			parentItemID: parentItem.id,
+			title: title,
+		});
+		if (!result) {
+			throw new Error("Failed to create attachment");
+		}
+		await result.saveTx();
+		attachment = result;
+	} finally {
+		if (tempFile.exists()) {
+			tempFile.remove(false);
+		}
 	}
-	await attachment.saveTx();
 	return attachment;
 }
 

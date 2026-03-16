@@ -14,6 +14,22 @@ lint:
 build:
     python3 build.py
 
+# Live runtime proof against a real Zotero with the current XPI installed
+smoke-live:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    if [[ -n "${EXPECTED_VERSION:-}" ]]; then
+        args+=(--expected-version "${EXPECTED_VERSION}")
+    fi
+    if [[ -n "${ZOTERO_LOCAL_BASE_URL:-}" ]]; then
+        args+=(--base-url "${ZOTERO_LOCAL_BASE_URL}")
+    fi
+    if [[ -n "${ZOTERO_LIBRARY_ID:-}" ]]; then
+        args+=(--library-id "${ZOTERO_LIBRARY_ID}")
+    fi
+    python3 examples/live_smoke.py "${args[@]}"
+
 # Run all checks (typecheck + lint)
 check: typecheck lint
 
@@ -91,6 +107,7 @@ _bump bump_type:
 _release bump_type: (_bump bump_type)
     #!/usr/bin/env bash
     set -euo pipefail
+    echo "Required before tagging: install the current working-tree XPI and run 'just smoke-live'" >&2
     bun run typecheck
     bun run lint
     python3 build.py
