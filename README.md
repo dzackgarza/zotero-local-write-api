@@ -18,6 +18,9 @@ The endpoints require no API key because they run on Zotero's local HTTP server.
 | `GET` | `/version` | none | Version, endpoint paths, Zotero compatibility, and capabilities. |
 | `POST` | `/attach` | JSON object matching the attachment schema below. | `success`, `operation`, `stage`, `version`, `details`, `attachment_key`, `attachment_id`, `message`, `handler`. |
 | `POST` | `/write` | JSON object with `operation` plus the operation schema below. | `success`, `operation`, `stage`, `version`, and operation-specific result fields. |
+| `GET` | `/api/plus` | none | Plain text health check compatible with `zotero-api-plus`. |
+| `POST` | `/api/plus/add-item-by-id` | JSON object with `identifier` and optional `collectionKey`. | `status`, `addedCount`, and `titles`, compatible with `zotero-api-plus`. |
+| `GET` | `/api/plus/selected-collection` | none | `name` and `key` for the collection selected in the active Zotero pane. |
 
 Failed requests return HTTP 500 with:
 
@@ -50,16 +53,96 @@ Returns:
   "endpoints": {
     "attach": "/attach",
     "write": "/write",
-    "version": "/version"
+    "version": "/version",
+    "api_plus": "/api/plus",
+    "add_item_by_identifier": "/api/plus/add-item-by-id",
+    "selected_collection": "/api/plus/selected-collection"
   },
   "compatibility": {
     "strict_min_version": "7.0",
     "strict_max_version": "*",
     "tested_zotero_version": "8.0.1"
   },
-  "capabilities": ["attach", "attach_bytes", "write", "version_probe"]
+  "capabilities": [
+    "attach",
+    "attach_bytes",
+    "write",
+    "version_probe",
+    "api_plus_health",
+    "add_item_by_identifier_endpoint",
+    "selected_collection"
+  ]
 }
 ```
+
+## `zotero-api-plus` compatible endpoints
+
+These endpoints mirror the public API documented by
+[`GOKORURI007/zotero-api-plus`](https://github.com/GOKORURI007/zotero-api-plus)
+at commit `437864afdd09d642bcb59607082a063f94994ad4`.
+
+### `/api/plus`
+
+```bash
+curl http://127.0.0.1:23119/api/plus
+```
+
+Returns plain text:
+
+```text
+Zotero Local API Plus is running.
+```
+
+### `/api/plus/add-item-by-id`
+
+```http
+POST /api/plus/add-item-by-id
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "identifier": "10.1038/nature12373",
+  "collectionKey": "ABC123"
+}
+```
+
+Schema:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `identifier` | non-empty string | yes | DOI, ISBN, PMID, arXiv ID, or another identifier parsed by Zotero. |
+| `collectionKey` | non-empty string | no | Existing user-library collection key. Invalid keys fail the request. |
+
+Response:
+
+```json
+{
+  "status": "success",
+  "addedCount": 1,
+  "titles": ["Article Title"]
+}
+```
+
+### `/api/plus/selected-collection`
+
+```bash
+curl http://127.0.0.1:23119/api/plus/selected-collection
+```
+
+Response:
+
+```json
+{
+  "name": "My Collection",
+  "key": "ABC123"
+}
+```
+
+If no ordinary collection is selected in the active Zotero pane, the endpoint
+returns HTTP 500 with plain text `No Collection selected.`.
 
 ## `/attach`
 
