@@ -3,14 +3,12 @@
 Zotero add-on that registers local HTTP write endpoints on Zotero's existing server at `http://127.0.0.1:23119`.
 Zotero's built-in local API is read-only; this add-on adds item, note, attachment, collection, and tag mutations for the user library.
 
-The repository is `dzackgarza/zotero-local-write-api`.
-The add-on ID, endpoint paths, compatibility range, and update URL live in [`config.yml`](./config.yml).
-
 ## Install
 
 Install the release `.xpi` in Zotero from `Tools -> Add-ons -> Install Add-on From File`.
 
 Zotero must be running while clients call these endpoints.
+Zotero's local HTTP server must be enabled at `http://127.0.0.1:23119`.
 The endpoints require no API key because they run on Zotero's local HTTP server.
 
 ## Endpoints
@@ -67,6 +65,11 @@ Returns:
 
 Attaches a stored file to an existing Zotero parent item.
 
+```http
+POST /attach
+Content-Type: application/json
+```
+
 Path-backed request:
 
 ```json
@@ -98,9 +101,35 @@ Schema:
 | `file_name` | non-empty string | required when only `file_bytes_base64` is supplied | Used for the temporary uploaded file. |
 | `file_bytes_base64` | non-empty string | one of `file_path` or `file_bytes_base64` | Base64 bytes. If `file_path` is present and missing at runtime, bytes are used as a fallback. |
 
+Response:
+
+```json
+{
+  "success": true,
+  "operation": "attach_file_to_item",
+  "stage": "completed",
+  "version": "3.2.0-dev",
+  "details": {
+    "parent_item_key": "ABCD1234",
+    "file_path": null,
+    "source_mode": "bytes",
+    "title": "Uploaded PDF"
+  },
+  "attachment_key": "WXYZ5678",
+  "attachment_id": 123,
+  "message": "File attached successfully to item ABCD1234",
+  "handler": "fulltext-attach"
+}
+```
+
 ## `/write`
 
 Every write request is a JSON object with an `operation` string.
+
+```http
+POST /write
+Content-Type: application/json
+```
 
 ```json
 {
@@ -151,6 +180,25 @@ String fields marked `string` must be non-empty unless the table says otherwise.
 String arrays must contain strings; blank entries and duplicates are ignored.
 Collection keys are validated before item collection writes.
 
+Response shape:
+
+```json
+{
+  "success": true,
+  "operation": "create_item",
+  "stage": "completed",
+  "version": "3.2.0-dev",
+  "details": {
+    "item_type": "book",
+    "field_names": ["title"],
+    "tag_count": 1,
+    "collection_count": 0
+  },
+  "item_key": "ABCD1234",
+  "item_id": 123
+}
+```
+
 ## Examples
 
 Create an item:
@@ -171,13 +219,9 @@ curl -X POST http://127.0.0.1:23119/attach \
 
 See [`examples/`](./examples/) for Python clients and the live smoke proof.
 
-## Development
+## Configuration
 
-Run `just` to list project recipes.
-Run `just check` for TypeScript checks.
-Run `just smoke-live` against a real Zotero with the current XPI installed before tagging a release.
-
-`build.py` derives generated release artifacts from `VERSION`, `config.yml`, and `src/`.
+The add-on ID, endpoint paths, compatibility range, update URL, and file-path attachment allowlist live in [`config.yml`](./config.yml).
 
 ## License
 
