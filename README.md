@@ -1,79 +1,184 @@
-# Zotero Attachment Plugin
+# Local Write API
 
-Local Zotero add-on that fills the write gap in Zotero's built-in HTTP API.
+Zotero add-on that registers local HTTP write endpoints on Zotero's existing server at `http://127.0.0.1:23119`.
+Zotero's built-in local API is read-only; this add-on adds item, note, attachment, collection, and tag mutations for the user library.
 
-## Why This Exists
+The repository is `dzackgarza/zotero-local-write-api`.
+The add-on ID, endpoint paths, compatibility range, and update URL live in [`config.yml`](./config.yml).
 
-Zotero 7 ships a read-only local HTTP API at `localhost:23119/api/` that covers every read operation an agent needs: fetch items by key, search the library, list collections, read tags, retrieve full-text, and execute saved searches. It requires no authentication and has no rate limits.
+## Install
 
-That API has **no write capability whatsoever.** Every endpoint is GET-only. This add-on exists to cover that gap until write support is implemented upstream. It registers additional endpoints on the same Zotero server that handle:
+Install the release `.xpi` in Zotero from `Tools -> Add-ons -> Install Add-on From File`.
 
-- Mutating item fields, tags, and collection membership
-- Creating and trashing items, notes, and collections
-- Attaching files and URLs to items
-- Collection and tag management (rename, merge, move, delete)
-- Creating items from scratch
+Zotero must be running while clients call these endpoints.
+The endpoints require no API key because they run on Zotero's local HTTP server.
 
-It also exposes a file-attachment workflow that stages a file from disk into Zotero's storage, which the native API does not provide.
+## Endpoints
 
-See [issue #1](https://github.com/dzackgarza/zotero-attachment-plugin/issues/1) for write operations not yet implemented.
+| Method | Path | Request | Response |
+| --- | --- | --- | --- |
+| `GET` | `/version` | none | Version, endpoint paths, Zotero compatibility, and capabilities. |
+| `POST` | `/attach` | JSON object matching the attachment schema below. | `success`, `operation`, `stage`, `version`, `details`, `attachment_key`, `attachment_id`, `message`, `handler`. |
+| `POST` | `/write` | JSON object with `operation` plus the operation schema below. | `success`, `operation`, `stage`, `version`, and operation-specific result fields. |
 
-## What It Ships
+Failed requests return HTTP 500 with:
 
-The endpoint names, add-on ID, compatibility range, and update URL live in [`config.yml`](./config.yml). The add-on registers three endpoints on Zotero's local HTTP server:
-
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `/attach` | POST | Attach a file from disk to a Zotero item |
-| `/write` | POST | All write operations (dispatched by `operation` field) |
-| `/version` | GET | Version probe and capability list |
-
-The version probe lets consumers require a minimum installed add-on version before issuing write requests.
-
-## Compatibility
-
-- Zotero: `7.0` and later
-- Tested against: `8.0.1`
-
-## Repo Layout
-
-```text
-src/               Plugin source (bootstrap.js, icons, generated manifest.json)
-examples/          Example python scripts demonstrating how to interact with the API
-build.py           Builds the XPI from src/ and writes updates.json
-config.yml         All stable constants — addon ID, repo, Zotero compatibility, endpoints
-VERSION            Current version number (plain text, bumped by justfile)
-updates.json       Committed; fetched by Zotero at the update_url for auto-update
-justfile           Release workflow
+```json
+{
+  "success": false,
+  "operation": "operation_name",
+  "stage": "write_endpoint",
+  "error": "message",
+  "details": { "request": {} },
+  "version": "3.2.0-dev"
+}
 ```
+
+## `/version`
+
+```bash
+curl http://127.0.0.1:23119/version
+```
+
+Returns:
+
+```json
+{
+  "success": true,
+  "version": "3.2.0-dev",
+  "addon_id": "local-write-api@dzackgarza.com",
+  "homepage_url": "https://github.com/dzackgarza/zotero-local-write-api",
+  "update_url": "https://raw.githubusercontent.com/dzackgarza/zotero-local-write-api/main/updates.json",
+  "endpoints": {
+    "attach": "/attach",
+    "write": "/write",
+    "version": "/version"
+  },
+  "compatibility": {
+    "strict_min_version": "7.0",
+    "strict_max_version": "*",
+    "tested_zotero_version": "8.0.1"
+  },
+  "capabilities": ["attach", "attach_bytes", "write", "version_probe"]
+}
+```
+
+## `/attach`
+
+Attaches a stored file to an existing Zotero parent item.
+
+Path-backed request:
+
+```json
+{
+  "item_key": "ABCD1234",
+  "title": "Extracted full text",
+  "file_path": "/tmp/extracted.txt"
+}
+```
+
+Byte-backed request:
+
+```json
+{
+  "item_key": "ABCD1234",
+  "title": "Uploaded PDF",
+  "file_name": "paper.pdf",
+  "file_bytes_base64": "JVBERi0xLjQK..."
+}
+```
+
+Schema:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `item_key` | non-empty string | yes | Parent item key in the user library. |
+| `title` | non-empty string | yes | Attachment title. |
+| `file_path` | non-empty string | one of `file_path` or `file_bytes_base64` | Must be under `/tmp` or `/var/tmp`. |
+| `file_name` | non-empty string | required when only `file_bytes_base64` is supplied | Used for the temporary uploaded file. |
+| `file_bytes_base64` | non-empty string | one of `file_path` or `file_bytes_base64` | Base64 bytes. If `file_path` is present and missing at runtime, bytes are used as a fallback. |
+
+## `/write`
+
+Every write request is a JSON object with an `operation` string.
+
+```json
+{
+  "operation": "create_item",
+  "item_type": "book",
+  "fields": {
+    "title": "Example Book"
+  },
+  "tags": ["to-read"],
+  "collection_keys": ["COLL1234"]
+}
+```
+
+Accepted operations:
+
+| Operation | Required fields | Optional fields | Effect |
+| --- | --- | --- | --- |
+| `update_item_fields` | `item_key: string`, `fields: object` | none | Merge fields into an existing item's Zotero JSON. |
+| `replace_item_json` | `item_key: string`, `item_json: object` | none | Replace an existing item from Zotero item JSON. |
+| `set_item_tags` | `item_key: string`, `tags: string[]` | none | Replace all tags on an item. |
+| `add_item_tags` | `item_key: string`, `tags: string[]` | none | Add tags that are not already present. |
+| `remove_item_tags` | `item_key: string`, `tags: string[]` | none | Remove matching tags. |
+| `set_item_collections` | `item_key: string`, `collection_keys: string[]` | none | Replace collection membership. |
+| `add_item_to_collection` | `item_key: string`, `collection_key: string` | none | Add an item to one collection. |
+| `remove_item_from_collection` | `item_key: string`, `collection_key: string` | none | Remove an item from one collection. |
+| `attach_note` | `parent_item_key: string`, `note_text: string` | `title: string` | Create a child note. `title` is reported back but Zotero note content comes from `note_text`. |
+| `update_note` | `note_key: string`, `new_content: string` | none | Replace note HTML/text content. |
+| `attach_url` | `parent_item_key: string`, `url: string` | `title: string` | Create a linked URL attachment. |
+| `trash_item` | `item_key: string` | none | Move an item to the trash. |
+| `restore_item` | `item_key: string` | none | Restore a trashed item. |
+| `trash_collection` | `collection_key: string` | none | Move a collection to the trash. |
+| `relink_attachment_file` | `attachment_key: string`, `file_path: string` | none | Relink an existing attachment to a local file. |
+| `update_attachment_title` | `attachment_key: string`, `new_title: string` | none | Change an attachment title. |
+| `create_collection` | `name: string` | `parent_key: string` | Create a collection, optionally under a parent collection. |
+| `rename_collection` | `collection_key: string`, `new_name: string` | none | Rename a collection. |
+| `move_collection` | `collection_key: string` | `new_parent_key: string` | Move a collection. Omit `new_parent_key` to make it top-level. |
+| `merge_collections` | `source_keys: string[]`, `target_key: string` | none | Move source items and child collections into target, then trash sources. |
+| `rename_tag` | `old_name: string`, `new_name: string` | none | Rename a tag across the user library. |
+| `merge_tags` | `source_tags: string[]`, `target_tag: string` | none | Rename source tags to the target tag. |
+| `delete_tag` | `tag_name: string` | none | Remove a tag from the user library. |
+| `delete_unused_tags` | none | none | Purge unused tags. |
+| `copy_item` | `item_key: string` | none | Clone an item. Regular items include child notes and attachments. |
+| `merge_items` | `source_key: string`, `target_key: string` | none | Move tags, relations, notes, and attachments to target, then trash source. |
+| `create_item` | `item_type: string` | `fields: object`, `tags: string[]`, `collection_keys: string[]` | Create a user-library item from a Zotero item type and fields. |
+| `import_by_identifier` | `identifier: string` | none | Import by DOI, ISBN, arXiv ID, or PMID through Zotero translators. |
+
+String fields marked `string` must be non-empty unless the table says otherwise.
+String arrays must contain strings; blank entries and duplicates are ignored.
+Collection keys are validated before item collection writes.
 
 ## Examples
 
-The `examples/` directory contains standalone python scripts demonstrating how to interact with local Zotero plus this API:
-
-1. **[`find_item_by_bibtex.py`](./examples/find_item_by_bibtex.py)**: Shows how to search for an item in a local library through the `pyzotero` interface via its Better BibTeX citation key.
-2. **[`offline_pipeline.py`](./examples/offline_pipeline.py)**: Demonstrates an end-to-end local text extraction pipeline, reading a PDF with standard APIs, extracting text via `PyMuPDF`, and attaching the result back to the Zotero item seamlessly using the `/write` endpoint.
-
-## Build and Release
+Create an item:
 
 ```bash
-python3 build.py        # build the current working tree XPI
-just smoke-live         # prove /version, /attach, delete_tag, and trash_item live
-just release          # bump patch version, build, commit, tag, push
-just release-minor    # bump minor version
-just release-major    # bump major version
+curl -X POST http://127.0.0.1:23119/write \
+  -H 'Content-Type: application/json' \
+  -d '{"operation":"create_item","item_type":"book","fields":{"title":"Example Book"},"tags":["to-read"]}'
 ```
 
-`VERSION` and `config.yml` are the two sources of truth. `build.py` derives everything else — `updates.json`, the XPI, and the injected constants in `bootstrap.js`.
+Attach uploaded bytes:
 
-Do not tag a release until the current working-tree XPI has been installed into a real Zotero and `just smoke-live` has passed. Static checks alone are not enough for this add-on because `/attach` and `/write` run inside Zotero's XPCOM runtime.
+```bash
+curl -X POST http://127.0.0.1:23119/attach \
+  -H 'Content-Type: application/json' \
+  -d '{"item_key":"ABCD1234","title":"paper.pdf","file_name":"paper.pdf","file_bytes_base64":"JVBERi0xLjQK"}'
+```
 
-GitHub Actions picks up the tag and publishes the GitHub Release with the `.xpi` asset. Zotero polls `update_url` in the installed manifest and offers the update automatically.
+See [`examples/`](./examples/) for Python clients and the live smoke proof.
 
-Install the `.xpi` from Zotero's `Tools → Add-ons → Install Add-on From File`, then verify:
+## Development
 
-- `GET http://127.0.0.1:23119/version`
-- `POST http://127.0.0.1:23119/attach`
-- `POST http://127.0.0.1:23119/write`
+Run `just` to list project recipes.
+Run `just check` for TypeScript checks.
+Run `just smoke-live` against a real Zotero with the current XPI installed before tagging a release.
 
-The live smoke recipe accepts `EXPECTED_VERSION`, `ZOTERO_LOCAL_BASE_URL`, and `ZOTERO_LIBRARY_ID` from the environment when you need to pin the installed version or use a forwarded Zotero server.
+`build.py` derives generated release artifacts from `VERSION`, `config.yml`, and `src/`.
+
+## License
+
+MIT; see [`LICENSE`](./LICENSE).
