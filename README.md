@@ -15,12 +15,9 @@ The endpoints require no API key because they run on Zotero's local HTTP server.
 
 | Method | Path | Request | Response |
 | --- | --- | --- | --- |
-| `GET` | `/version` | none | Version, endpoint paths, Zotero compatibility, and capabilities. |
+| `GET` | `/version` | none | Health check plus version, endpoint paths, Zotero compatibility, and capabilities. |
 | `POST` | `/attach` | JSON object matching the attachment schema below. | `success`, `operation`, `stage`, `version`, `details`, `attachment_key`, `attachment_id`, `message`, `handler`. |
 | `POST` | `/write` | JSON object with `operation` plus the operation schema below. | `success`, `operation`, `stage`, `version`, and operation-specific result fields. |
-| `GET` | `/api/plus` | none | Plain text health check compatible with `zotero-api-plus`. |
-| `POST` | `/api/plus/add-item-by-id` | JSON object with `identifier` and optional `collectionKey`. | `status`, `addedCount`, and `titles`, compatible with `zotero-api-plus`. |
-| `GET` | `/api/plus/selected-collection` | none | `name` and `key` for the collection selected in the active Zotero pane. |
 
 Failed requests return HTTP 500 with:
 
@@ -46,6 +43,9 @@ Returns:
 ```json
 {
   "success": true,
+  "healthy": true,
+  "status": "ok",
+  "message": "Local Write API is running.",
   "version": "3.2.0-dev",
   "addon_id": "local-write-api@dzackgarza.com",
   "homepage_url": "https://github.com/dzackgarza/zotero-local-write-api",
@@ -53,10 +53,7 @@ Returns:
   "endpoints": {
     "attach": "/attach",
     "write": "/write",
-    "version": "/version",
-    "api_plus": "/api/plus",
-    "add_item_by_identifier": "/api/plus/add-item-by-id",
-    "selected_collection": "/api/plus/selected-collection"
+    "version": "/version"
   },
   "compatibility": {
     "strict_min_version": "7.0",
@@ -68,81 +65,12 @@ Returns:
     "attach_bytes",
     "write",
     "version_probe",
-    "api_plus_health",
-    "add_item_by_identifier_endpoint",
+    "health_probe",
+    "import_by_identifier",
     "selected_collection"
   ]
 }
 ```
-
-## `zotero-api-plus` compatible endpoints
-
-These endpoints mirror the public API documented by
-[`GOKORURI007/zotero-api-plus`](https://github.com/GOKORURI007/zotero-api-plus)
-at commit `437864afdd09d642bcb59607082a063f94994ad4`.
-
-### `/api/plus`
-
-```bash
-curl http://127.0.0.1:23119/api/plus
-```
-
-Returns plain text:
-
-```text
-Zotero Local API Plus is running.
-```
-
-### `/api/plus/add-item-by-id`
-
-```http
-POST /api/plus/add-item-by-id
-Content-Type: application/json
-```
-
-Request:
-
-```json
-{
-  "identifier": "10.1038/nature12373",
-  "collectionKey": "ABC123"
-}
-```
-
-Schema:
-
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `identifier` | non-empty string | yes | DOI, ISBN, PMID, arXiv ID, or another identifier parsed by Zotero. |
-| `collectionKey` | non-empty string | no | Existing user-library collection key. Invalid keys fail the request. |
-
-Response:
-
-```json
-{
-  "status": "success",
-  "addedCount": 1,
-  "titles": ["Article Title"]
-}
-```
-
-### `/api/plus/selected-collection`
-
-```bash
-curl http://127.0.0.1:23119/api/plus/selected-collection
-```
-
-Response:
-
-```json
-{
-  "name": "My Collection",
-  "key": "ABC123"
-}
-```
-
-If no ordinary collection is selected in the active Zotero pane, the endpoint
-returns HTTP 500 with plain text `No Collection selected.`.
 
 ## `/attach`
 
@@ -207,7 +135,21 @@ Response:
 
 ## `/write`
 
-Every write request is a JSON object with an `operation` string.
+`/write` is the general Zotero operation endpoint.
+It performs the library mutations and local UI queries that Zotero's built-in
+local API does not expose for the user library:
+
+- create, update, copy, merge, trash, and restore Zotero items
+- import new Zotero items from DOI, ISBN, arXiv ID, PMID, or other identifiers
+  Zotero can parse
+- create, update, and attach child notes and URL attachments
+- attach, relink, and retitle attachment files
+- create, rename, move, merge, trash, and assign collections
+- add, remove, replace, rename, merge, and purge tags
+- return the collection currently selected in the active Zotero pane
+
+Every request is a JSON object with an `operation` string and the fields required
+by that operation.
 
 ```http
 POST /write
@@ -230,38 +172,45 @@ Accepted operations:
 
 | Operation | Required fields | Optional fields | Effect |
 | --- | --- | --- | --- |
+| `create_item` | `item_type: string` | `fields: object`, `tags: string[]`, `collection_keys: string[]` | Create a new Zotero item in the user library. |
+| `import_by_identifier` | `identifier: string` | `collection_keys: string[]` | Ask Zotero translators to import items from DOI, ISBN, arXiv ID, PMID, or another identifier Zotero can parse. Attachments are saved when Zotero's translator provides them. |
 | `update_item_fields` | `item_key: string`, `fields: object` | none | Merge fields into an existing item's Zotero JSON. |
 | `replace_item_json` | `item_key: string`, `item_json: object` | none | Replace an existing item from Zotero item JSON. |
-| `set_item_tags` | `item_key: string`, `tags: string[]` | none | Replace all tags on an item. |
-| `add_item_tags` | `item_key: string`, `tags: string[]` | none | Add tags that are not already present. |
-| `remove_item_tags` | `item_key: string`, `tags: string[]` | none | Remove matching tags. |
-| `set_item_collections` | `item_key: string`, `collection_keys: string[]` | none | Replace collection membership. |
-| `add_item_to_collection` | `item_key: string`, `collection_key: string` | none | Add an item to one collection. |
-| `remove_item_from_collection` | `item_key: string`, `collection_key: string` | none | Remove an item from one collection. |
+| `copy_item` | `item_key: string` | none | Clone an item. Regular items include child notes and attachments. |
+| `merge_items` | `source_key: string`, `target_key: string` | none | Move tags, relations, notes, and attachments to target, then trash source. |
+| `trash_item` | `item_key: string` | none | Move an item to the trash. |
+| `restore_item` | `item_key: string` | none | Restore a trashed item. |
 | `attach_note` | `parent_item_key: string`, `note_text: string` | `title: string` | Create a child note. `title` is reported back but Zotero note content comes from `note_text`. |
 | `update_note` | `note_key: string`, `new_content: string` | none | Replace note HTML/text content. |
 | `attach_url` | `parent_item_key: string`, `url: string` | `title: string` | Create a linked URL attachment. |
-| `trash_item` | `item_key: string` | none | Move an item to the trash. |
-| `restore_item` | `item_key: string` | none | Restore a trashed item. |
-| `trash_collection` | `collection_key: string` | none | Move a collection to the trash. |
 | `relink_attachment_file` | `attachment_key: string`, `file_path: string` | none | Relink an existing attachment to a local file. |
 | `update_attachment_title` | `attachment_key: string`, `new_title: string` | none | Change an attachment title. |
-| `create_collection` | `name: string` | `parent_key: string` | Create a collection, optionally under a parent collection. |
-| `rename_collection` | `collection_key: string`, `new_name: string` | none | Rename a collection. |
-| `move_collection` | `collection_key: string` | `new_parent_key: string` | Move a collection. Omit `new_parent_key` to make it top-level. |
-| `merge_collections` | `source_keys: string[]`, `target_key: string` | none | Move source items and child collections into target, then trash sources. |
+| `set_item_tags` | `item_key: string`, `tags: string[]` | none | Replace all tags on an item. |
+| `add_item_tags` | `item_key: string`, `tags: string[]` | none | Add tags that are not already present. |
+| `remove_item_tags` | `item_key: string`, `tags: string[]` | none | Remove matching tags. |
 | `rename_tag` | `old_name: string`, `new_name: string` | none | Rename a tag across the user library. |
 | `merge_tags` | `source_tags: string[]`, `target_tag: string` | none | Rename source tags to the target tag. |
 | `delete_tag` | `tag_name: string` | none | Remove a tag from the user library. |
 | `delete_unused_tags` | none | none | Purge unused tags. |
-| `copy_item` | `item_key: string` | none | Clone an item. Regular items include child notes and attachments. |
-| `merge_items` | `source_key: string`, `target_key: string` | none | Move tags, relations, notes, and attachments to target, then trash source. |
-| `create_item` | `item_type: string` | `fields: object`, `tags: string[]`, `collection_keys: string[]` | Create a user-library item from a Zotero item type and fields. |
-| `import_by_identifier` | `identifier: string` | none | Import by DOI, ISBN, arXiv ID, or PMID through Zotero translators. |
+| `create_collection` | `name: string` | `parent_key: string` | Create a collection, optionally under a parent collection. |
+| `rename_collection` | `collection_key: string`, `new_name: string` | none | Rename a collection. |
+| `move_collection` | `collection_key: string` | `new_parent_key: string` | Move a collection. Omit `new_parent_key` to make it top-level. |
+| `merge_collections` | `source_keys: string[]`, `target_key: string` | none | Move source items and child collections into target, then trash sources. |
+| `trash_collection` | `collection_key: string` | none | Move a collection to the trash. |
+| `set_item_collections` | `item_key: string`, `collection_keys: string[]` | none | Replace collection membership. |
+| `add_item_to_collection` | `item_key: string`, `collection_key: string` | none | Add an item to one collection. |
+| `remove_item_from_collection` | `item_key: string`, `collection_key: string` | none | Remove an item from one collection. |
+| `get_selected_collection` | none | none | Return the key and name of the collection selected in Zotero's active pane. |
 
 String fields marked `string` must be non-empty unless the table says otherwise.
 String arrays must contain strings; blank entries and duplicates are ignored.
 Collection keys are validated before item collection writes.
+
+The `import_by_identifier` implementation follows Zotero's own identifier
+extraction and translator flow: it parses identifiers with
+`Zotero.Utilities.extractIdentifiers`, runs `Zotero.Translate.Search`, saves
+translated items into the user library, and saves translator-provided
+attachments.
 
 Response shape:
 

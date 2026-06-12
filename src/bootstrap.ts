@@ -4,17 +4,11 @@ declare const APP_SHUTDOWN: number;
 let AttachEndpoint: any;
 let WriteEndpoint: any;
 let VersionEndpoint: any;
-let ApiPlusEndpoint: any;
-let AddItemByIdentifierEndpoint: any;
-let SelectedCollectionEndpoint: any;
 
 const PLUGIN_VERSION = "3.2.0-dev";
 const FULLTEXT_ATTACH_PATH = "/attach";
 const LOCAL_WRITE_PATH = "/write";
 const VERSION_PATH = "/version";
-const API_PLUS_PATH = "/api/plus";
-const ADD_ITEM_BY_IDENTIFIER_PATH = "/api/plus/add-item-by-id";
-const SELECTED_COLLECTION_PATH = "/api/plus/selected-collection";
 const FULLTEXT_ALLOWED_DIRS = ["/tmp", "/var/tmp"];
 const ADDON_ID = "local-write-api@dzackgarza.com";
 const HOMEPAGE_URL = "https://github.com/dzackgarza/zotero-local-write-api";
@@ -27,8 +21,8 @@ const PLUGIN_CAPABILITIES = [
 	"attach_bytes",
 	"write",
 	"version_probe",
-	"api_plus_health",
-	"add_item_by_identifier_endpoint",
+	"health_probe",
+	"import_by_identifier",
 	"selected_collection",
 ];
 
@@ -80,6 +74,9 @@ function errorResult(operation: string, stage: string, error: string, details?: 
 function pluginVersionPayload(): JsonPayload {
 	return {
 		success: true,
+		healthy: true,
+		status: "ok",
+		message: "Local Write API is running.",
 		version: PLUGIN_VERSION,
 		addon_id: ADDON_ID,
 		homepage_url: HOMEPAGE_URL,
@@ -88,9 +85,6 @@ function pluginVersionPayload(): JsonPayload {
 			attach: FULLTEXT_ATTACH_PATH,
 			write: LOCAL_WRITE_PATH,
 			version: VERSION_PATH,
-			api_plus: API_PLUS_PATH,
-			add_item_by_identifier: ADD_ITEM_BY_IDENTIFIER_PATH,
-			selected_collection: SELECTED_COLLECTION_PATH,
 		},
 		compatibility: {
 			strict_min_version: STRICT_MIN_VERSION,
@@ -851,25 +845,6 @@ async function handleRemoveItemFromCollection(data: RequestData): Promise<JsonPa
 	});
 }
 
-function detectIdentifier(raw: string): Record<string, string> | null {
-	const doi = Zotero.Utilities.cleanDOI(raw);
-	if (doi) {
-		return { DOI: doi };
-	}
-	const isbn = Zotero.Utilities.cleanISBN(raw, false);
-	if (isbn) {
-		return { ISBN: isbn };
-	}
-	const arxivMatch = raw.match(/(?:arxiv:)?(\d{4}\.\d{4,}(?:v\d+)?|[a-z][a-z0-9\-.]+\/\d{7})/i);
-	if (arxivMatch) {
-		return { arXiv: arxivMatch[1] };
-	}
-	if (/^\d{1,10}$/.test(raw.trim())) {
-		return { PMID: raw.trim() };
-	}
-	return null;
-}
-
 function extractIdentifiers(raw: string): Identifier[] {
 	const utilities = Zotero.Utilities as typeof Zotero.Utilities & {
 		extractIdentifiers(identifier: string): Identifier[];
@@ -902,72 +877,47 @@ async function translateIdentifier(identifier: Identifier, collections: number[]
 
 async function handleImportByIdentifier(data: RequestData): Promise<JsonPayload> {
 	const raw = requireNonEmptyString(data.identifier, "identifier");
-	const identifier = detectIdentifier(raw);
-	if (!identifier) {
-		throw new Error("Could not detect identifier type for: " + raw);
+	const collectionKeys = data.collection_keys
+		? normalizeStringList(data.collection_keys, "collection_keys")
+		: [];
+	const collections: number[] = [];
+	for (const collectionKey of collectionKeys) {
+		const collection = await getUserCollectionOrThrow(collectionKey);
+		collections.push(collection.id);
 	}
-	const identifierType = Object.keys(identifier)[0];
 
-	const search = new Zotero.Translate.Search();
-	search.setIdentifier(identifier);
-	const translators = await search.getTranslators();
-	if (!translators || translators.length === 0) {
-		throw new Error("No translator available for " + identifierType + ": " + raw);
-	}
-	search.setTranslator(translators);
-	const items = await search.translate({
-		libraryID: userLibraryID(),
-		collections: [],
-	});
-	if (!items || items.length === 0) {
-		throw new Error("No item found for " + identifierType + ": " + raw);
+	const items: Zotero.Item[] = [];
+	for (const identifier of extractIdentifiers(raw)) {
+		items.push(...await translateIdentifier(identifier, collections));
 	}
 
 	return successResult(
 		"import_by_identifier",
 		{
 			identifier: raw,
-			identifier_type: identifierType,
 			item_count: items.length,
+			collection_keys: collectionKeys,
 		},
 		{
 			item_key: items[0].key,
 			item_id: items[0].id,
+			item_keys: items.map(item => item.key),
+			item_ids: items.map(item => item.id),
+			titles: items.map(item => item.getField("title")),
 		}
 	);
 }
 
-async function handleAddItemByIdentifier(data: RequestData): Promise<JsonPayload> {
-	const raw = requireNonEmptyString(data.identifier, "identifier");
-	const collectionKey = optionalNonEmptyString(data.collectionKey);
-	let collections: number[] | false = false;
-	if (collectionKey) {
-		const collection = await getUserCollectionOrThrow(collectionKey);
-		collections = [collection.id];
-	}
-
-	const newItems: Zotero.Item[] = [];
-	for (const identifier of extractIdentifiers(raw)) {
-		newItems.push(...await translateIdentifier(identifier, collections));
-	}
-
-	return {
-		status: "success",
-		addedCount: newItems.length,
-		titles: newItems.map(item => item.getField("title")),
-	};
-}
-
-function handleSelectedCollection(): JsonPayload {
+function handleGetSelectedCollection(): JsonPayload {
 	const pane = Zotero.getActiveZoteroPane() as ActiveZoteroPane;
 	const collection = pane.getSelectedCollection();
 	if (!collection) {
 		throw new Error("No Collection selected.");
 	}
-	return {
-		name: collection.name,
-		key: collection.key,
-	};
+	return successResult("get_selected_collection", {
+		collection_key: collection.key,
+		collection_name: collection.name,
+	});
 }
 
 async function handleRestoreItem(data: RequestData): Promise<JsonPayload> {
@@ -1051,6 +1001,8 @@ async function runWrite(data: RequestData): Promise<JsonPayload> {
 			return handleCreateItem(data);
 		case "import_by_identifier":
 			return handleImportByIdentifier(data);
+		case "get_selected_collection":
+			return handleGetSelectedCollection();
 		case "restore_item":
 			return handleRestoreItem(data);
 		case "update_attachment_title":
@@ -1133,60 +1085,12 @@ async function startup({ id, version, rootURI }: { id: string; version: string; 
 		}
 	};
 
-	ApiPlusEndpoint = function() {};
-	ApiPlusEndpoint.prototype = {
-		supportedMethods: ["GET"],
-		init: function(_data: unknown, sendResponse: SendResponse) {
-			log("Received GET request to " + API_PLUS_PATH + " [v" + PLUGIN_VERSION + "]");
-			sendResponse(200, "text/plain", "Zotero Local API Plus is running.");
-		}
-	};
-
-	AddItemByIdentifierEndpoint = function() {};
-	AddItemByIdentifierEndpoint.prototype = {
-		supportedMethods: ["POST"],
-		supportedDataTypes: ["application/json"],
-		init: async function(data: RequestData, sendResponse: SendResponse) {
-			try {
-				log("Received POST request to " + ADD_ITEM_BY_IDENTIFIER_PATH + " [v" + PLUGIN_VERSION + "]");
-				sendJSON(sendResponse, 200, await handleAddItemByIdentifier(data ?? {}));
-			}
-			catch (error) {
-				const msg = (error as Error).message;
-				log("Error in " + ADD_ITEM_BY_IDENTIFIER_PATH + " [v" + PLUGIN_VERSION + "]: " + msg);
-				sendResponse(500, "text/plain", msg);
-			}
-		}
-	};
-
-	SelectedCollectionEndpoint = function() {};
-	SelectedCollectionEndpoint.prototype = {
-		supportedMethods: ["GET"],
-		init: function(_data: unknown, sendResponse: SendResponse) {
-			try {
-				log("Received GET request to " + SELECTED_COLLECTION_PATH + " [v" + PLUGIN_VERSION + "]");
-				sendJSON(sendResponse, 200, handleSelectedCollection());
-			}
-			catch (error) {
-				const msg = (error as Error).message;
-				log("Error in " + SELECTED_COLLECTION_PATH + " [v" + PLUGIN_VERSION + "]: " + msg);
-				sendResponse(500, "text/plain", msg);
-			}
-		}
-	};
-
 	Zotero.Server.Endpoints[FULLTEXT_ATTACH_PATH] = AttachEndpoint;
 	Zotero.Server.Endpoints[LOCAL_WRITE_PATH] = WriteEndpoint;
 	Zotero.Server.Endpoints[VERSION_PATH] = VersionEndpoint;
-	Zotero.Server.Endpoints[API_PLUS_PATH] = ApiPlusEndpoint;
-	Zotero.Server.Endpoints[ADD_ITEM_BY_IDENTIFIER_PATH] = AddItemByIdentifierEndpoint;
-	Zotero.Server.Endpoints[SELECTED_COLLECTION_PATH] = SelectedCollectionEndpoint;
 	log("Registered " + FULLTEXT_ATTACH_PATH + " endpoint");
 	log("Registered " + LOCAL_WRITE_PATH + " endpoint");
 	log("Registered " + VERSION_PATH + " endpoint");
-	log("Registered " + API_PLUS_PATH + " endpoint");
-	log("Registered " + ADD_ITEM_BY_IDENTIFIER_PATH + " endpoint");
-	log("Registered " + SELECTED_COLLECTION_PATH + " endpoint");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1207,21 +1111,12 @@ function shutdown({ id, version, rootURI }: { id: string; version: string; rootU
 	delete Zotero.Server.Endpoints[FULLTEXT_ATTACH_PATH];
 	delete Zotero.Server.Endpoints[LOCAL_WRITE_PATH];
 	delete Zotero.Server.Endpoints[VERSION_PATH];
-	delete Zotero.Server.Endpoints[API_PLUS_PATH];
-	delete Zotero.Server.Endpoints[ADD_ITEM_BY_IDENTIFIER_PATH];
-	delete Zotero.Server.Endpoints[SELECTED_COLLECTION_PATH];
 	AttachEndpoint = undefined;
 	WriteEndpoint = undefined;
 	VersionEndpoint = undefined;
-	ApiPlusEndpoint = undefined;
-	AddItemByIdentifierEndpoint = undefined;
-	SelectedCollectionEndpoint = undefined;
 	log("Unregistered " + FULLTEXT_ATTACH_PATH + " endpoint");
 	log("Unregistered " + LOCAL_WRITE_PATH + " endpoint");
 	log("Unregistered " + VERSION_PATH + " endpoint");
-	log("Unregistered " + API_PLUS_PATH + " endpoint");
-	log("Unregistered " + ADD_ITEM_BY_IDENTIFIER_PATH + " endpoint");
-	log("Unregistered " + SELECTED_COLLECTION_PATH + " endpoint");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
