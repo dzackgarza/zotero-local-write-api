@@ -17,6 +17,10 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
+      # build.py runs via `uv run` (PEP 723 inline deps); the build-artifacts
+      # test shells out to it.
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+
       - name: Install dependencies (frozen)
         run: bun install --frozen-lockfile
 
@@ -46,8 +50,12 @@ jobs:
       # directory, so a $RUNNER_TEMP path does not exist in the container.
       - name: Resolve base schema
         id: base
+        env:
+          # Expanded via env, not inline ${{ }}, so a crafted branch name
+          # cannot inject into the shell.
+          BASE_REF: ${{ github.base_ref || github.ref_name }}
         run: |
-          base_ref="${{ github.base_ref || github.ref_name }}"
+          base_ref="${BASE_REF}"
           if git cat-file -e "origin/${base_ref}:openapi.yaml" 2>/dev/null; then
             git show "origin/${base_ref}:openapi.yaml" > base-openapi.yaml
             echo "Base schema found on origin/${base_ref}."
@@ -59,20 +67,22 @@ jobs:
           echo "path=base-openapi.yaml" >> "$GITHUB_OUTPUT"
 
       - name: Validate revised schema
-        uses: oasdiff/oasdiff-action/validate@v0
+        uses: oasdiff/oasdiff-action/validate@033c15c845bef10f148afb0fa781bf1b2a7fe1bf # v0
         with:
+          # The validate action's input is `spec`; `file` is silently ignored
+          # and the action then fails with "failed to load original spec".
           spec: openapi.yaml
           fail-on: WARN
 
       - name: Breaking-change check vs base
-        uses: oasdiff/oasdiff-action/breaking@v0
+        uses: oasdiff/oasdiff-action/breaking@033c15c845bef10f148afb0fa781bf1b2a7fe1bf # v0
         with:
           base: ${{ steps.base.outputs.path }}
           revision: openapi.yaml
           fail-on: WARN
 
       - name: Changelog (markdown)
-        uses: oasdiff/oasdiff-action/changelog@v0
+        uses: oasdiff/oasdiff-action/changelog@033c15c845bef10f148afb0fa781bf1b2a7fe1bf # v0
         with:
           base: ${{ steps.base.outputs.path }}
           revision: openapi.yaml

@@ -114,29 +114,51 @@ function requireRequestObject(data: unknown): RequestData {
 
 // A Zotero HTTP endpoint is registered as a constructor function whose prototype carries
 // the request metadata and init handler. The slot is cleared to undefined on shutdown.
+// Single-parameter init receives {headers, data, ...} and returns [status, contentType,
+// body]; the two-parameter form receives (data, sendResponse). Both are dispatched by
+// arity in zotero/zotero chrome/content/zotero/xpcom/server/server.js.
+type EndpointResult = [number, string, string];
 type EndpointPrototype = {
   supportedMethods: string[];
   supportedDataTypes?: string[];
-  init: (...args: never[]) => void | Promise<void>;
+  allowRequestsFromUnsafeWebContent?: boolean;
+  init: (
+    ...args: never[]
+  ) => void | EndpointResult | Promise<void | EndpointResult>;
 };
 type EndpointConstructor = { (): void; prototype: EndpointPrototype };
+
+// Header names arrive lowercased (server.js parses them into Zotero.Server.Headers
+// with lowercase keys).
+type EndpointRequest = {
+  headers: Record<string, string | undefined>;
+  data: unknown;
+};
 
 let AttachEndpoint: EndpointConstructor | undefined;
 let WriteEndpoint: EndpointConstructor | undefined;
 let VersionEndpoint: EndpointConstructor | undefined;
+let OpenApiEndpoint: EndpointConstructor | undefined;
 
-let PLUGIN_VERSION = "3.2.0-dev";
-let FULLTEXT_ATTACH_PATH = "/attach";
-let LOCAL_WRITE_PATH = "/write";
-let VERSION_PATH = "/version";
-let FULLTEXT_ALLOWED_DIRS = ["/tmp", "/var/tmp"];
-let ADDON_ID = "local-write-api@dzackgarza.com";
-let HOMEPAGE_URL = "https://github.com/dzackgarza/zotero-local-write-api";
-let UPDATE_URL =
-  "https://raw.githubusercontent.com/dzackgarza/zotero-local-write-api/main/updates.json";
-let STRICT_MIN_VERSION = "7.0";
-let STRICT_MAX_VERSION = "*";
-let TESTED_ZOTERO_VERSION = "8.0.1";
+// Build-time constants, injected by build.py via esbuild --define from
+// config.yml and VERSION (the single sources). They are ambient free
+// identifiers with no `let` binding: esbuild's define only substitutes free
+// identifiers, so a `let X = "default"` declaration silently defeated every
+// define and shipped the source defaults (e.g. /version reported "3.2.0-dev"
+// forever). All references are inside functions, never at module scope, so the
+// unbuilt module still type-checks and loads.
+declare const PLUGIN_VERSION: string;
+declare const FULLTEXT_ATTACH_PATH: string;
+declare const LOCAL_WRITE_PATH: string;
+declare const VERSION_PATH: string;
+declare const OPENAPI_PATH: string;
+declare const FULLTEXT_ALLOWED_DIRS: string[];
+declare const ADDON_ID: string;
+declare const HOMEPAGE_URL: string;
+declare const UPDATE_URL: string;
+declare const STRICT_MIN_VERSION: string;
+declare const STRICT_MAX_VERSION: string;
+declare const TESTED_ZOTERO_VERSION: string;
 let PLUGIN_CAPABILITIES = [
   "attach",
   "attach_bytes",
@@ -148,9 +170,85 @@ let PLUGIN_CAPABILITIES = [
   "selected_collection",
   "sync",
   "run_javascript",
+  "openapi_spec",
 ];
 
 let BIBTEX_TRANSLATOR_ID = "9cb70025-a888-4a29-a210-93ec52da40d4";
+
+// Optional bearer-token auth for the write surface. With the token pref unset
+// the API keeps its historical loopback-only, no-auth behavior. Setting the
+// pref is REQUIRED before exposing these endpoints through a tunnel (see
+// docs/gpt-action.md): a Custom GPT Action then sends the token as
+// "Authorization: Bearer <token>", the one credential the GPT builder supports.
+//
+// The plugin cannot tell a loopback request from a tunnelled one (cloudflared
+// forwards to 127.0.0.1:23119, so both look identical to Zotero's server), but it does
+// know whether it has been published: publicBaseURL is set precisely when the surface is
+// reachable off-loopback. bearerAuthFailure reads both prefs per request and refuses when
+// the surface is published without a token, so clearing the token mid-run is caught
+// immediately. The `just tunnel-setup`/`tunnel-install` recipes and the unit's
+// ExecStartPre (justfile `_require-write-token`) still refuse at bring-up.
+let TOKEN_PREF = "extensions.zotero.localWriteAPI.token";
+// When set, /openapi.yaml advertises this server URL instead of the loopback
+// one, so the GPT builder can import the schema straight from the tunnel.
+let PUBLIC_BASE_URL_PREF = "extensions.zotero.localWriteAPI.publicBaseURL";
+
+function bearerAuthFailure(request: EndpointRequest): EndpointResult | null {
+  // Loopback with no token is the documented default and stays open. What must never
+  // happen is an unauthenticated surface being *published*: publicBaseURL is what makes
+  // the plugin reachable beyond loopback, and both prefs are editable at runtime with no
+  // restart, so the two are checked together on every request rather than once at
+  // tunnel bring-up.
+  let token = Zotero.Prefs.get(TOKEN_PREF, true);
+  let published = Zotero.Prefs.get(PUBLIC_BASE_URL_PREF, true);
+  let hasToken = typeof token === "string" && token !== "";
+  if (!hasToken) {
+    if (typeof published === "string" && published !== "") {
+      return bearerDenied(
+        request,
+        "Write API is published via publicBaseURL but no token is configured",
+      );
+    }
+    return null;
+  }
+  if (secretEquals(request.headers.authorization, "Bearer " + token)) {
+    return null;
+  }
+  return bearerDenied(request, "Missing or invalid bearer token");
+}
+
+// A plain === short-circuits on the first mismatching byte, so response timing leaks
+// how much of the token a caller has guessed. When publicBaseURL is set this surface is
+// reachable from the internet, so the compare runs over the full length regardless of
+// where the first difference falls. Length is still distinguishable, which is the
+// standard trade-off for this construction.
+function secretEquals(candidate: string | undefined, expected: string): boolean {
+  if (candidate === undefined || candidate.length !== expected.length) {
+    return false;
+  }
+  let difference = 0;
+  for (let index = 0; index < expected.length; index += 1) {
+    difference |= candidate.charCodeAt(index) ^ expected.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+function bearerDenied(
+  request: EndpointRequest,
+  reason: string,
+): EndpointResult {
+  return [
+    401,
+    "application/json",
+    JSON.stringify(
+      // details.request echoes the body per the ErrorResponse schema; the 401
+      // is documented on /write and /attach in openapi.yaml.
+      errorResult("authorize", "auth", reason, {
+        request: request.data,
+      }),
+    ),
+  ];
+}
 
 type RequestData = Record<string, unknown>;
 type SendResponse = (status: number, contentType: string, body: string) => void;
@@ -232,6 +330,7 @@ function pluginVersionPayload(): JsonPayload {
       attach: FULLTEXT_ATTACH_PATH,
       write: LOCAL_WRITE_PATH,
       version: VERSION_PATH,
+      openapi: OPENAPI_PATH,
     },
     compatibility: {
       strict_min_version: STRICT_MIN_VERSION,
@@ -323,6 +422,17 @@ async function getUserCollectionOrThrow(collectionKey: string) {
   return collection;
 }
 
+function collectionKeyForID(collectionID: number): string {
+  // Zotero.Collections.get returns the documented `false` sentinel for an id that no
+  // longer resolves. Dropping such an id silently would rewrite the item's collection
+  // memberships during an unrelated add/remove, so an unresolvable id fails loudly.
+  let collection = Zotero.Collections.get(collectionID);
+  if (collection === false) {
+    throw notFound("Collection not found for id: " + String(collectionID));
+  }
+  return collection.key;
+}
+
 function collectionDetails(collection: Zotero.Collection): JsonPayload {
   // parentKey is the documented `false` sentinel when the collection has no parent;
   // zotero-types models only the `string` case, so read through the real runtime type.
@@ -368,10 +478,23 @@ function resolveAttachFilePath(filePath: string): string {
   return file.path;
 }
 
-function isMissingFileError(error: unknown): boolean {
+// XPCOM file errors all sit in the NS_ERROR_MODULE_FILES block, so matching the module
+// covers every way a path can fail to resolve rather than the single name that was
+// previously substring-matched out of the message text. Values read from this runtime
+// via Cr: NOT_FOUND 0x80520012, UNRECOGNIZED_PATH 0x80520001, INVALID_PATH 0x80520009,
+// NOT_DIRECTORY 0x8052000c, NAME_TOO_LONG 0x80520011, ACCESS_DENIED 0x80520015 — only
+// the first of which used to engage the caller-supplied-bytes path.
+let NS_ERROR_MODULE_FILES_FIRST = 0x80520000;
+let NS_ERROR_MODULE_FILES_LAST = 0x8052ffff;
+
+function isUnusableFilePathError(error: unknown): boolean {
+  let result = (error as { result?: unknown }).result;
+  if (typeof result !== "number") {
+    return false;
+  }
+  let code = result >>> 0;
   return (
-    typeof (error as Error).message === "string" &&
-    (error as Error).message.includes("NS_ERROR_FILE_NOT_FOUND")
+    code >= NS_ERROR_MODULE_FILES_FIRST && code <= NS_ERROR_MODULE_FILES_LAST
   );
 }
 
@@ -466,7 +589,7 @@ async function handleFulltextAttach(data: RequestData) {
       try {
         attachment = await importStoredAttachment(parentItem, filePath, title);
       } catch (error) {
-        if (fileBytesBase64 === null || !isMissingFileError(error)) {
+        if (fileBytesBase64 === null || !isUnusableFilePathError(error)) {
           throw error;
         }
         let fallbackName =
@@ -833,16 +956,11 @@ async function handleDeleteTag(data: RequestData) {
   search.addCondition("tag", "is", tagName);
   let itemIDs = await search.search();
 
-  let modifiedCount = 0;
-  if (itemIDs.length > 0) {
-    let items = await Zotero.Items.getAsync(itemIDs);
-    for (let item of items) {
-      if (item.removeTag(tagName)) {
-        await item.saveTx();
-        modifiedCount++;
-      }
-    }
-  }
+  // Zotero.Tags.removeFromLibrary already detaches the tag from every item that
+  // carries it. Doing that here first left it with an empty item set, and its
+  // UPDATE then built "WHERE itemID IN ()" and failed with "Parameter 1 is
+  // undefined". The search above is kept only to report how many items changed.
+  let modifiedCount = itemIDs.length;
 
   await removeTagsFromUserLibrary(userLibraryID(), [tagID]);
 
@@ -1089,7 +1207,7 @@ async function handleAddItemToCollection(data: RequestData) {
   let collection = await getUserCollectionOrThrow(collectionKey);
   let currentKeys = item
     .getCollections()
-    .map((id) => Zotero.Collections.get(id).key);
+    .map(collectionKeyForID);
   if (!currentKeys.includes(collectionKey)) {
     item.setCollections([...currentKeys, collectionKey]);
     await item.saveTx();
@@ -1111,7 +1229,7 @@ async function handleRemoveItemFromCollection(data: RequestData) {
   let collection = await getUserCollectionOrThrow(collectionKey);
   let currentKeys = item
     .getCollections()
-    .map((id) => Zotero.Collections.get(id).key)
+    .map(collectionKeyForID)
     .filter((k) => k !== collectionKey);
   item.setCollections(currentKeys);
   await item.saveTx();
@@ -1402,6 +1520,122 @@ async function runWrite(data: RequestData) {
   }
 }
 
+function jsonResult(status: number, payload: JsonPayload): EndpointResult {
+  return [status, "application/json", JSON.stringify(payload)];
+}
+
+async function handleAttachRequest(data: unknown): Promise<EndpointResult> {
+  try {
+    log(
+      "Received POST request to " +
+        FULLTEXT_ATTACH_PATH +
+        " [v" +
+        PLUGIN_VERSION +
+        "]",
+    );
+    return jsonResult(
+      200,
+      await handleFulltextAttach(requireRequestObject(data)),
+    );
+  } catch (error) {
+    let msg = (error as Error).message;
+    let status = isApiError(error) ? error.status : 500;
+    log(
+      "Error in " + FULLTEXT_ATTACH_PATH + " [v" + PLUGIN_VERSION + "]: " + msg,
+    );
+    return jsonResult(
+      status,
+      errorResult("attach_file_to_item", "attach_endpoint", msg, {
+        request: data,
+      }),
+    );
+  }
+}
+
+async function handleWriteRequest(data: unknown): Promise<EndpointResult> {
+  // operation may be absent on a malformed request; label it explicitly for
+  // diagnostics. This is the error-rendering boundary, not a runtime default.
+  // It is computed inside the try: reading data.operation on a null body
+  // throws, and doing that outside the try left the error unrendered, which
+  // hung the request forever instead of answering 400.
+  let operationLabel = "unknown_operation";
+  try {
+    let body = requireRequestObject(data);
+    if (typeof body.operation === "string") {
+      operationLabel = body.operation;
+    }
+    log(
+      "Received POST request to " +
+        LOCAL_WRITE_PATH +
+        " [operation=" +
+        operationLabel +
+        "]",
+    );
+    return jsonResult(200, await runWrite(body));
+  } catch (error) {
+    let msg = (error as Error).message;
+    let status = isApiError(error) ? error.status : 500;
+    log(
+      "Error in " +
+        LOCAL_WRITE_PATH +
+        " [operation=" +
+        operationLabel +
+        "]: " +
+        msg,
+    );
+    return jsonResult(
+      status,
+      errorResult(operationLabel, "write_endpoint", msg, { request: data }),
+    );
+  }
+}
+
+// rootURI of the installed XPI, captured at startup; the bundled openapi.yaml
+// is read back from it.
+let pluginRootURI = "";
+
+async function openApiSpecText(): Promise<string> {
+  // Bundled into the XPI by build.py next to bootstrap.js. rootURI is a
+  // jar:file://…!/ URI for a packaged install, and Zotero.File.getContentsFromURLAsync
+  // cannot read those: it routes through Zotero.HTTP._parseURI, which reads
+  // nsIURI.username and throws NS_ERROR_FAILURE on a jar: URI. fetch() reads it
+  // directly in the add-on's privileged scope.
+  let response = await fetch(pluginRootURI + "openapi.yaml");
+  if (!response.ok) {
+    throw new Error(
+      "bundled openapi.yaml could not be read: HTTP " + String(response.status),
+    );
+  }
+  let text = await response.text();
+  let publicBaseUrl = Zotero.Prefs.get(PUBLIC_BASE_URL_PREF, true);
+  if (typeof publicBaseUrl === "string" && publicBaseUrl !== "") {
+    // The spec's single server entry is the loopback URL; a set pref rewrites
+    // it so a schema imported by URL points at the tunnel hostname. Fail loud
+    // if that exact server line is absent rather than silently serving a spec
+    // that still points at loopback — the whole point of the pref is to not do
+    // that.
+    // A presence check plus a first-match replace cannot tell the servers entry from
+    // any other line that happens to contain the same URL — it would rewrite the wrong
+    // one and serve a spec still pointing at loopback while claiming to be published.
+    // Requiring exactly one occurrence makes that ambiguity impossible to reach.
+    let loopbackServer = "url: http://127.0.0.1:23119";
+    let occurrences = text.split(loopbackServer).length - 1;
+    if (occurrences !== 1) {
+      throw new Error(
+        "openapi.yaml must contain exactly one '" +
+          loopbackServer +
+          "' entry to rewrite for publicBaseURL, found " +
+          String(occurrences),
+      );
+    }
+    return text.replace(
+      loopbackServer,
+      "url: " + publicBaseUrl.replace(/\/+$/, ""),
+    );
+  }
+  return text;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function install(): void {
   log("Installed " + PLUGIN_VERSION);
@@ -1419,46 +1653,35 @@ async function startup({
 }): Promise<void> {
   void id;
   void version;
-  void rootURI;
+  pluginRootURI = rootURI;
   log("Starting " + PLUGIN_VERSION);
+
+  // Make the auth state visible in the log, so an operator can confirm the
+  // write surface is gated before exposing it (or see that it is open).
+  let tokenPref = Zotero.Prefs.get(TOKEN_PREF, true);
+  let publicPref = Zotero.Prefs.get(PUBLIC_BASE_URL_PREF, true);
+  let authEnabled = typeof tokenPref === "string" && tokenPref !== "";
+  let published = typeof publicPref === "string" && publicPref !== "";
+  log(
+    authEnabled
+      ? "Bearer auth ENABLED for /write and /attach (token pref set)"
+      : published
+        ? "Bearer auth REQUIRED but no token pref set: /write and /attach are " +
+          "refused because publicBaseURL publishes them beyond loopback."
+        : "Bearer auth DISABLED: /write and /attach are unauthenticated " +
+          "(loopback-only default). Do not expose beyond loopback in this state.",
+  );
 
   AttachEndpoint = function () {};
   AttachEndpoint.prototype = {
     supportedMethods: ["POST"],
     supportedDataTypes: ["application/json"],
-    init: async function (data: RequestData, sendResponse: SendResponse) {
-      try {
-        log(
-          "Received POST request to " +
-            FULLTEXT_ATTACH_PATH +
-            " [v" +
-            PLUGIN_VERSION +
-            "]",
-        );
-        sendJSON(
-          sendResponse,
-          200,
-          await handleFulltextAttach(requireRequestObject(data)),
-        );
-      } catch (error) {
-        let msg = (error as Error).message;
-        let status = isApiError(error) ? error.status : 500;
-        log(
-          "Error in " +
-            FULLTEXT_ATTACH_PATH +
-            " [v" +
-            PLUGIN_VERSION +
-            "]: " +
-            msg,
-        );
-        sendJSON(
-          sendResponse,
-          status,
-          errorResult("attach_file_to_item", "attach_endpoint", msg, {
-            request: data,
-          }),
-        );
+    init: function (request: EndpointRequest) {
+      let denied = bearerAuthFailure(request);
+      if (denied !== null) {
+        return denied;
       }
+      return handleAttachRequest(request.data);
     },
   };
 
@@ -1466,43 +1689,12 @@ async function startup({
   WriteEndpoint.prototype = {
     supportedMethods: ["POST"],
     supportedDataTypes: ["application/json"],
-    init: async function (data: RequestData, sendResponse: SendResponse) {
-      // operation may be absent on a malformed request; label it explicitly for
-      // diagnostics. This is the error-rendering boundary, not a runtime default.
-      // It is computed inside the try: reading data.operation on a null body
-      // throws, and doing that outside the try left sendResponse uncalled, which
-      // hung the request forever instead of answering 400.
-      let operationLabel = "unknown_operation";
-      try {
-        let body = requireRequestObject(data);
-        if (typeof body.operation === "string") {
-          operationLabel = body.operation;
-        }
-        log(
-          "Received POST request to " +
-            LOCAL_WRITE_PATH +
-            " [operation=" +
-            operationLabel +
-            "]",
-        );
-        sendJSON(sendResponse, 200, await runWrite(body));
-      } catch (error) {
-        let msg = (error as Error).message;
-        let status = isApiError(error) ? error.status : 500;
-        log(
-          "Error in " +
-            LOCAL_WRITE_PATH +
-            " [operation=" +
-            operationLabel +
-            "]: " +
-            msg,
-        );
-        sendJSON(
-          sendResponse,
-          status,
-          errorResult(operationLabel, "write_endpoint", msg, { request: data }),
-        );
+    init: function (request: EndpointRequest) {
+      let denied = bearerAuthFailure(request);
+      if (denied !== null) {
+        return denied;
       }
+      return handleWriteRequest(request.data);
     },
   };
 
@@ -1521,12 +1713,33 @@ async function startup({
     },
   };
 
+  OpenApiEndpoint = function () {};
+  OpenApiEndpoint.prototype = {
+    supportedMethods: ["GET"],
+    // The schema is a public static document: the GPT builder imports it by
+    // URL and humans open it in a browser, so Zotero's browser-request block
+    // is opted out for this path only.
+    allowRequestsFromUnsafeWebContent: true,
+    init: async function (_request: EndpointRequest): Promise<EndpointResult> {
+      log(
+        "Received GET request to " +
+          OPENAPI_PATH +
+          " [v" +
+          PLUGIN_VERSION +
+          "]",
+      );
+      return [200, "text/yaml; charset=utf-8", await openApiSpecText()];
+    },
+  };
+
   Zotero.Server.Endpoints[FULLTEXT_ATTACH_PATH] = AttachEndpoint;
   Zotero.Server.Endpoints[LOCAL_WRITE_PATH] = WriteEndpoint;
   Zotero.Server.Endpoints[VERSION_PATH] = VersionEndpoint;
+  Zotero.Server.Endpoints[OPENAPI_PATH] = OpenApiEndpoint;
   log("Registered " + FULLTEXT_ATTACH_PATH + " endpoint");
   log("Registered " + LOCAL_WRITE_PATH + " endpoint");
   log("Registered " + VERSION_PATH + " endpoint");
+  log("Registered " + OPENAPI_PATH + " endpoint");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1554,12 +1767,15 @@ function shutdown(
   Reflect.deleteProperty(Zotero.Server.Endpoints, FULLTEXT_ATTACH_PATH);
   Reflect.deleteProperty(Zotero.Server.Endpoints, LOCAL_WRITE_PATH);
   Reflect.deleteProperty(Zotero.Server.Endpoints, VERSION_PATH);
+  Reflect.deleteProperty(Zotero.Server.Endpoints, OPENAPI_PATH);
   AttachEndpoint = undefined;
   WriteEndpoint = undefined;
   VersionEndpoint = undefined;
+  OpenApiEndpoint = undefined;
   log("Unregistered " + FULLTEXT_ATTACH_PATH + " endpoint");
   log("Unregistered " + LOCAL_WRITE_PATH + " endpoint");
   log("Unregistered " + VERSION_PATH + " endpoint");
+  log("Unregistered " + OPENAPI_PATH + " endpoint");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

@@ -11,8 +11,12 @@ Zotero's local HTTP server must be enabled at `http://127.0.0.1:23119`. The endp
 
 ## Endpoints
 
-Full request/response schemas for all three endpoints (`GET /version`, `POST /attach`, `POST /write` and its ~32 `operation` variants) live in [`openapi.yaml`](./openapi.yaml), an OpenAPI 3.1 document.
+Full request/response schemas for all endpoints (`GET /version`, `GET /openapi.yaml`, `POST /attach`, `POST /write` and its ~32 `operation` variants) live in [`openapi.yaml`](./openapi.yaml), an OpenAPI 3.1 document.
 Paste it into [Swagger Editor](https://editor.swagger.io/) or any OpenAPI viewer to browse it.
+The running plugin also serves it at `GET /openapi.yaml`.
+
+`POST /write` and `POST /attach` optionally require `Authorization: Bearer <token>` — set the `extensions.zotero.localWriteAPI.token` preference to enable this.
+That is mandatory before exposing the API beyond loopback: [docs/gpt-action.md](./docs/gpt-action.md) walks through publishing it at a Cloudflare tunnel and importing it into a Custom GPT as an Action, with a systemd user service (`just tunnel-setup`, `just tunnel-install`) keeping the tunnel up.
 
 ## Examples
 

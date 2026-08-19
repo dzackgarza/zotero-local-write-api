@@ -9,6 +9,7 @@ jobs:
       issues: read
     with:
       tier: test-ci
+      profile: 'bun'
       infra_ref: 'main'
   deterministic-diff:
     uses: dzackgarza/ai-review-ci/.github/workflows/_gates.yml@main

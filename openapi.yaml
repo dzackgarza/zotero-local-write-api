@@ -1,13 +1,10 @@
 openapi: 3.1.0
 info:
   title: Zotero Local Write API
-  version: '3.3.1'
+  version: '3.4.0'
   description: >
-    Zotero add-on that registers local HTTP write endpoints on Zotero's existing
-    server. Zotero's built-in local API is read-only; this add-on adds item, note,
-    attachment, collection, and tag mutations for the user library.
-    Zotero must be running with its local HTTP server enabled. No API key is
-    required because the server only listens on loopback.
+    Zotero add-on that registers local HTTP write endpoints on Zotero's existing server. Zotero's built-in local API is read-only; this add-on adds item, note, attachment, collection, and tag mutations for the user library. Zotero must be running with its local HTTP server enabled. On loopback with no token configured, no API key is required. Setting the publicBaseURL pref publishes the surface beyond loopback, and in that state the write operations require the bearer token declared on them.
+
   license:
     name: MIT
     url: https://github.com/dzackgarza/zotero-local-write-api/blob/main/LICENSE
@@ -18,7 +15,6 @@ security: []
 servers:
   - url: http://127.0.0.1:23119
     description: Zotero's local HTTP server (loopback only)
-
 paths:
   /version:
     get:
@@ -31,7 +27,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/VersionResponse'
-
   /attach:
     post:
       operationId: attachFile
@@ -67,7 +62,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-
+        '401':
+          description: Missing or invalid bearer token (when the localWriteAPI.token pref is set).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
   /write:
     post:
       operationId: write
@@ -109,31 +111,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-
+        '401':
+          description: Missing or invalid bearer token (when the localWriteAPI.token pref is set).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+        - bearerAuth: []
+  /openapi.yaml:
+    get:
+      operationId: getOpenApiSpec
+      summary: This OpenAPI document
+      description: 'Serves the schema bundled with the running plugin. When the extensions.zotero.localWriteAPI.publicBaseURL preference is set, the server URL is rewritten to it so a schema imported by URL points at the public hostname. Always public: no authentication.'
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI schema for this plugin version.
+          content:
+            text/yaml:
+              schema:
+                type: string
 components:
   schemas:
     # ── Common schemas ──────────────────────────────────────────────
-
     NonBlankString:
       type: string
       pattern: \S
       description: String containing at least one non-whitespace character.
-
     NormalizedStringArray:
       type: array
       items:
         type: string
         pattern: \S
       description: >
-        Array of non-blank strings. Runtime trims entries, drops blanks,
-        and de-duplicates.
+        Array of non-blank strings. Runtime trims entries, drops blanks, and de-duplicates.
 
     ItemKey:
       $ref: '#/components/schemas/NonBlankString'
-
     CollectionKey:
       $ref: '#/components/schemas/NonBlankString'
-
     SuccessEnvelope:
       type: object
       required:
@@ -154,7 +171,6 @@ components:
         details:
           type: object
           additionalProperties: true
-
     ErrorResponse:
       type: object
       required:
@@ -180,13 +196,10 @@ components:
           properties:
             request:
               description: >
-                The request body exactly as received, echoed back for
-                diagnostics. Usually an object, but a malformed body is echoed
-                as-is (a JSON null, array, or scalar) alongside the 400 that
-                rejects it, so this is deliberately not constrained to an object.
+                The request body exactly as received, echoed back for diagnostics. Usually an object, but a malformed body is echoed as-is (a JSON null, array, or scalar) alongside the 400 that rejects it, so this is deliberately not constrained to an object.
+
         version:
           type: string
-
     CollectionDetails:
       type: object
       required:
@@ -202,9 +215,7 @@ components:
           type:
             - string
             - 'null'
-
     # ── /version response ───────────────────────────────────────────
-
     VersionResponse:
       type: object
       required:
@@ -277,9 +288,7 @@ components:
               - selected_collection
               - sync
               - run_javascript
-
     # ── /attach request ─────────────────────────────────────────────
-
     AttachRequest:
       type: object
       required:
@@ -299,25 +308,19 @@ components:
             - $ref: '#/components/schemas/NonBlankString'
           contentEncoding: base64
           description: >
-            Base64-encoded file bytes. Must be non-blank: the endpoint reads it
-            with the same trim-to-null rule as the other optional strings, so a
-            blank value counts as absent and fails the anyOf below rather than
-            being accepted as bytes.
+            Base64-encoded file bytes. Must be non-blank: the endpoint reads it with the same trim-to-null rule as the other optional strings, so a blank value counts as absent and fails the anyOf below rather than being accepted as bytes.
+
       allOf:
         - description: >
-            Either file_path is present, or both file_name and file_bytes_base64
-            are present. This allows path-only, bytes-only, and path+bytes
-            fallback (where file_name is optional because runtime can use the
-            path basename).
+            Either file_path is present, or both file_name and file_bytes_base64 are present. This allows path-only, bytes-only, and path+bytes fallback (where file_name is optional because runtime can use the path basename).
+
           anyOf:
             - required:
                 - file_path
             - required:
                 - file_name
                 - file_bytes_base64
-
     # ── /attach success response ────────────────────────────────────
-
     AttachSuccessResponse:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -358,9 +361,7 @@ components:
                 title:
                   type: string
       unevaluatedProperties: false
-
     # ── /write request union ────────────────────────────────────────
-
     WriteRequest:
       oneOf:
         - $ref: '#/components/schemas/SyncRequest'
@@ -430,9 +431,7 @@ components:
           get_selected_collection: '#/components/schemas/GetSelectedCollectionRequest'
           restore_item: '#/components/schemas/RestoreItemRequest'
           update_attachment_title: '#/components/schemas/UpdateAttachmentTitleRequest'
-
     # ── Request schemas (one per operation) ────────────────────────
-
     SyncRequest:
       type: object
       required:
@@ -440,7 +439,6 @@ components:
       properties:
         operation:
           const: sync
-
     RunJavascriptRequest:
       type: object
       required:
@@ -454,10 +452,7 @@ components:
           description: Arbitrary JavaScript to evaluate in the add-on's privileged scope.
       x-dangerous: true
       description: >
-        DANGEROUS: Evaluates arbitrary JavaScript in the add-on's privileged
-        chrome scope with full Zotero access. Single-user dev tool. Do NOT
-        expose to untrusted clients. Authentication/feature-gating hardening
-        is a separate concern.
+        DANGEROUS: Evaluates arbitrary JavaScript in the add-on's privileged chrome scope with full Zotero access. Single-user dev tool. Do NOT expose to untrusted clients. Authentication/feature-gating hardening is a separate concern.
 
     UpdateItemFieldsRequest:
       type: object
@@ -473,7 +468,6 @@ components:
         fields:
           type: object
           additionalProperties: true
-
     ReplaceItemJsonRequest:
       type: object
       required:
@@ -488,7 +482,6 @@ components:
         item_json:
           type: object
           additionalProperties: true
-
     SetItemTagsRequest:
       type: object
       required:
@@ -502,7 +495,6 @@ components:
           $ref: '#/components/schemas/ItemKey'
         tags:
           $ref: '#/components/schemas/NormalizedStringArray'
-
     AddItemTagsRequest:
       type: object
       required:
@@ -516,7 +508,6 @@ components:
           $ref: '#/components/schemas/ItemKey'
         tags:
           $ref: '#/components/schemas/NormalizedStringArray'
-
     RemoveItemTagsRequest:
       type: object
       required:
@@ -530,7 +521,6 @@ components:
           $ref: '#/components/schemas/ItemKey'
         tags:
           $ref: '#/components/schemas/NormalizedStringArray'
-
     SetItemCollectionsRequest:
       type: object
       required:
@@ -544,7 +534,6 @@ components:
           $ref: '#/components/schemas/ItemKey'
         collection_keys:
           $ref: '#/components/schemas/NormalizedStringArray'
-
     AddItemToCollectionRequest:
       type: object
       required:
@@ -558,7 +547,6 @@ components:
           $ref: '#/components/schemas/ItemKey'
         collection_key:
           $ref: '#/components/schemas/CollectionKey'
-
     RemoveItemFromCollectionRequest:
       type: object
       required:
@@ -572,7 +560,6 @@ components:
           $ref: '#/components/schemas/ItemKey'
         collection_key:
           $ref: '#/components/schemas/CollectionKey'
-
     AttachNoteRequest:
       type: object
       required:
@@ -589,7 +576,6 @@ components:
           description: Note body. May be an empty string.
         title:
           type: string
-
     UpdateNoteRequest:
       type: object
       required:
@@ -604,7 +590,6 @@ components:
         new_content:
           type: string
           description: New note content. May be an empty string.
-
     AttachUrlRequest:
       type: object
       required:
@@ -620,7 +605,6 @@ components:
           $ref: '#/components/schemas/NonBlankString'
         title:
           $ref: '#/components/schemas/NonBlankString'
-
     TrashItemRequest:
       type: object
       required:
@@ -631,7 +615,6 @@ components:
           const: trash_item
         item_key:
           $ref: '#/components/schemas/ItemKey'
-
     TrashCollectionRequest:
       type: object
       required:
@@ -642,7 +625,6 @@ components:
           const: trash_collection
         collection_key:
           $ref: '#/components/schemas/CollectionKey'
-
     RelinkAttachmentFileRequest:
       type: object
       required:
@@ -656,7 +638,6 @@ components:
           $ref: '#/components/schemas/ItemKey'
         file_path:
           $ref: '#/components/schemas/NonBlankString'
-
     CreateCollectionRequest:
       type: object
       required:
@@ -669,7 +650,6 @@ components:
           $ref: '#/components/schemas/NonBlankString'
         parent_key:
           $ref: '#/components/schemas/CollectionKey'
-
     RenameCollectionRequest:
       type: object
       required:
@@ -683,7 +663,6 @@ components:
           $ref: '#/components/schemas/CollectionKey'
         new_name:
           $ref: '#/components/schemas/NonBlankString'
-
     MoveCollectionRequest:
       type: object
       required:
@@ -696,7 +675,6 @@ components:
           $ref: '#/components/schemas/CollectionKey'
         new_parent_key:
           $ref: '#/components/schemas/CollectionKey'
-
     MergeCollectionsRequest:
       type: object
       required:
@@ -710,7 +688,6 @@ components:
           $ref: '#/components/schemas/NormalizedStringArray'
         target_key:
           $ref: '#/components/schemas/CollectionKey'
-
     RenameTagRequest:
       type: object
       required:
@@ -724,7 +701,6 @@ components:
           $ref: '#/components/schemas/NonBlankString'
         new_name:
           $ref: '#/components/schemas/NonBlankString'
-
     MergeTagsRequest:
       type: object
       required:
@@ -738,7 +714,6 @@ components:
           $ref: '#/components/schemas/NormalizedStringArray'
         target_tag:
           $ref: '#/components/schemas/NonBlankString'
-
     DeleteTagRequest:
       type: object
       required:
@@ -749,7 +724,6 @@ components:
           const: delete_tag
         tag_name:
           $ref: '#/components/schemas/NonBlankString'
-
     DeleteUnusedTagsRequest:
       type: object
       required:
@@ -757,7 +731,6 @@ components:
       properties:
         operation:
           const: delete_unused_tags
-
     CopyItemRequest:
       type: object
       required:
@@ -768,7 +741,6 @@ components:
           const: copy_item
         item_key:
           $ref: '#/components/schemas/ItemKey'
-
     MergeItemsRequest:
       type: object
       required:
@@ -782,7 +754,6 @@ components:
           $ref: '#/components/schemas/ItemKey'
         target_key:
           $ref: '#/components/schemas/ItemKey'
-
     CreateItemRequest:
       type: object
       required:
@@ -800,7 +771,6 @@ components:
           $ref: '#/components/schemas/NormalizedStringArray'
         collection_keys:
           $ref: '#/components/schemas/NormalizedStringArray'
-
     ImportBibtexRequest:
       type: object
       required:
@@ -813,7 +783,6 @@ components:
           $ref: '#/components/schemas/NonBlankString'
         collection_keys:
           $ref: '#/components/schemas/NormalizedStringArray'
-
     ImportByIdentifierRequest:
       type: object
       required:
@@ -826,7 +795,6 @@ components:
           $ref: '#/components/schemas/NonBlankString'
         collection_keys:
           $ref: '#/components/schemas/NormalizedStringArray'
-
     GetSelectedCollectionRequest:
       type: object
       required:
@@ -834,7 +802,6 @@ components:
       properties:
         operation:
           const: get_selected_collection
-
     RestoreItemRequest:
       type: object
       required:
@@ -845,7 +812,6 @@ components:
           const: restore_item
         item_key:
           $ref: '#/components/schemas/ItemKey'
-
     UpdateAttachmentTitleRequest:
       type: object
       required:
@@ -859,9 +825,7 @@ components:
           $ref: '#/components/schemas/ItemKey'
         new_title:
           $ref: '#/components/schemas/NonBlankString'
-
     # ── /write success response union ──────────────────────────────
-
     WriteSuccessResponse:
       oneOf:
         - $ref: '#/components/schemas/SyncSuccess'
@@ -931,9 +895,7 @@ components:
           get_selected_collection: '#/components/schemas/GetSelectedCollectionSuccess'
           restore_item: '#/components/schemas/RestoreItemSuccess'
           update_attachment_title: '#/components/schemas/UpdateAttachmentTitleSuccess'
-
     # ── Success schemas (one per operation) ────────────────────────
-
     SyncSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -951,7 +913,6 @@ components:
                   const: true
                 result: {}
       unevaluatedProperties: false
-
     RunJavascriptSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -966,7 +927,6 @@ components:
               properties:
                 result: {}
       unevaluatedProperties: false
-
     UpdateItemFieldsSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -987,7 +947,6 @@ components:
                   items:
                     type: string
       unevaluatedProperties: false
-
     ReplaceItemJsonSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1006,7 +965,6 @@ components:
                 item_type:
                   type: string
       unevaluatedProperties: false
-
     SetItemTagsSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1030,7 +988,6 @@ components:
                 tag_count:
                   type: integer
       unevaluatedProperties: false
-
     AddItemTagsSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1054,7 +1011,6 @@ components:
                 total_tag_count:
                   type: integer
       unevaluatedProperties: false
-
     RemoveItemTagsSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1076,7 +1032,6 @@ components:
                 remaining_tag_count:
                   type: integer
       unevaluatedProperties: false
-
     SetItemCollectionsSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1097,7 +1052,6 @@ components:
                   items:
                     type: string
       unevaluatedProperties: false
-
     AddItemToCollectionSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1119,7 +1073,6 @@ components:
                 collection_name:
                   type: string
       unevaluatedProperties: false
-
     RemoveItemFromCollectionSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1141,7 +1094,6 @@ components:
                 collection_name:
                   type: string
       unevaluatedProperties: false
-
     AttachNoteSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1172,7 +1124,6 @@ components:
                     - string
                     - 'null'
       unevaluatedProperties: false
-
     UpdateNoteSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1196,7 +1147,6 @@ components:
                 content_length:
                   type: integer
       unevaluatedProperties: false
-
     AttachUrlSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1227,7 +1177,6 @@ components:
                     - string
                     - 'null'
       unevaluatedProperties: false
-
     TrashItemSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1246,7 +1195,6 @@ components:
                 item_type:
                   type: string
       unevaluatedProperties: false
-
     TrashCollectionSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1257,7 +1205,6 @@ components:
             details:
               $ref: '#/components/schemas/CollectionDetails'
       unevaluatedProperties: false
-
     RelinkAttachmentFileSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1276,7 +1223,6 @@ components:
                 file_path:
                   type: string
       unevaluatedProperties: false
-
     CreateCollectionSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1287,7 +1233,6 @@ components:
             details:
               $ref: '#/components/schemas/CollectionDetails'
       unevaluatedProperties: false
-
     RenameCollectionSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1298,7 +1243,6 @@ components:
             details:
               $ref: '#/components/schemas/CollectionDetails'
       unevaluatedProperties: false
-
     MoveCollectionSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1309,7 +1253,6 @@ components:
             details:
               $ref: '#/components/schemas/CollectionDetails'
       unevaluatedProperties: false
-
     MergeCollectionsSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1339,7 +1282,6 @@ components:
                 trashed_source_count:
                   type: integer
       unevaluatedProperties: false
-
     RenameTagSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1358,7 +1300,6 @@ components:
                 new_name:
                   type: string
       unevaluatedProperties: false
-
     MergeTagsSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1379,7 +1320,6 @@ components:
                 target_tag:
                   type: string
       unevaluatedProperties: false
-
     DeleteTagSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1398,7 +1338,6 @@ components:
                 modified_item_count:
                   type: integer
       unevaluatedProperties: false
-
     DeleteUnusedTagsSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1410,7 +1349,6 @@ components:
               type: object
               required: []
       unevaluatedProperties: false
-
     CopyItemSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1439,7 +1377,6 @@ components:
                 copied_attachment_count:
                   type: integer
       unevaluatedProperties: false
-
     MergeItemsSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1475,7 +1412,6 @@ components:
                     relations:
                       type: integer
       unevaluatedProperties: false
-
     CreateItemSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1509,7 +1445,6 @@ components:
                 collection_count:
                   type: integer
       unevaluatedProperties: false
-
     ImportBibtexSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1555,7 +1490,6 @@ components:
                 translator_id:
                   type: string
       unevaluatedProperties: false
-
     ImportByIdentifierSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1601,7 +1535,6 @@ components:
                   items:
                     type: string
       unevaluatedProperties: false
-
     GetSelectedCollectionSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1620,7 +1553,6 @@ components:
                 collection_name:
                   type: string
       unevaluatedProperties: false
-
     RestoreItemSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1639,7 +1571,6 @@ components:
                 item_type:
                   type: string
       unevaluatedProperties: false
-
     UpdateAttachmentTitleSuccess:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'
@@ -1658,3 +1589,8 @@ components:
                 new_title:
                   type: string
       unevaluatedProperties: false
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 'Optional shared token. When the extensions.zotero.localWriteAPI.token preference is set in Zotero, /write and /attach require Authorization: Bearer <token>. With the preference unset (the loopback-only default), no authentication is required.'

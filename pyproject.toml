@@ -13,6 +13,10 @@ dependencies = [
 # tests to run against a live Zotero instance.
 [tool.uv]
 package = false
+# Dependency cooldown (uv >= 0.9.17): wait 7 days before resolving a newly
+# published release, so a freshly compromised or broken version cannot enter a
+# resolve. Older uv ignores this with a warning; CI runs a version that honors it.
+exclude-newer = "7 days"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/schemathesis"]
