@@ -209,6 +209,7 @@ let PLUGIN_CAPABILITIES = [
   "run_javascript",
   "openapi_spec",
   "import_from_url",
+  "resolve_url",
 ];
 
 let BIBTEX_TRANSLATOR_ID = "9cb70025-a888-4a29-a210-93ec52da40d4";
@@ -2132,11 +2133,8 @@ async function saveIdentification(
 // attachment, and the recognizer creates its parent item from the DOI or ISBN
 // in the text, or from Zotero's recognizer service. The recognizer logs its
 // own errors instead of throwing, so a missing parent is the only failure
-// signal. The attachment is scratch and is erased: the operation saves metadata.
-async function recognizePdf(
-  finalUrl: string,
-  collectionIDs: number[],
-): Promise<Omit<ImportOutcome, "method"> & { message: string }> {
+// signal. The attachment is scratch and is erased; the saved parent is returned.
+async function recognizeParent(finalUrl: string): Promise<Zotero.Item> {
   let attachment = await Zotero.Attachments.importFromURL({
     libraryID: userLibraryID(),
     url: finalUrl,
@@ -2157,6 +2155,14 @@ async function recognizePdf(
   if (parent === false) {
     throw new Error("recognized parent item " + parentID + " is missing");
   }
+  return parent;
+}
+
+async function recognizePdf(
+  finalUrl: string,
+  collectionIDs: number[],
+): Promise<Omit<ImportOutcome, "method"> & { message: string }> {
+  let parent = await recognizeParent(finalUrl);
   let existing = await findExistingItem(duplicateKeysFromItem(parent), parent.id);
   if (existing) {
     await parent.eraseTx();
@@ -2239,6 +2245,115 @@ async function handleImportFromUrl(data: RequestData) {
       method: outcome.method,
       existing: outcome.existing,
     },
+  );
+}
+
+// ── resolve_url ─────────────────────────────────────────────────────
+// import_from_url without the save: the same fetch and the same methods in the
+// same order, answered with the identified work as CSL-JSON. The recognizer
+// can only save, so its parent item is converted and then erased.
+
+// Zotero.Utilities.Item.itemToCSLJSON accepts a Zotero.Item or translator item
+// JSON; zotero-types does not declare it.
+// Models zotero/utilities utilities_item.js `itemToCSLJSON`.
+type CslItem = JsonPayload & { type: string };
+type ItemUtilitiesApi = { itemToCSLJSON(item: Zotero.Item | TranslatorItemJSON): CslItem };
+type Resolution = {
+  csl: CslItem;
+  itemType: string;
+  method: SourceMethod;
+  translator: WebTranslatorInfo | null;
+};
+
+function itemToCsl(item: Zotero.Item | TranslatorItemJSON): CslItem {
+  let utilities = Zotero.Utilities as typeof Zotero.Utilities & { Item: ItemUtilitiesApi };
+  return utilities.Item.itemToCSLJSON(item);
+}
+
+function resolveIdentification(
+  identification: Identification & { method: SourceMethod },
+): Resolution {
+  return {
+    csl: itemToCsl(identification.json),
+    itemType: identification.json.itemType,
+    method: identification.method,
+    translator: identification.translator,
+  };
+}
+
+async function recognizeWithoutSaving(
+  finalUrl: string,
+): Promise<{ csl: CslItem; itemType: string; message: string }> {
+  let parent = await recognizeParent(finalUrl);
+  try {
+    let csl = itemToCsl(parent);
+    // The CSL id is the URI of the parent, which is erased below.
+    delete csl.id;
+    return {
+      csl,
+      itemType: parent.itemType,
+      message: parent.getField("title"),
+    };
+  } finally {
+    await parent.eraseTx();
+  }
+}
+
+async function resolvePdfSource(
+  requestedUrl: string,
+  finalUrl: string,
+  attempts: Attempt[],
+): Promise<Resolution | null> {
+  let recognized = await tryMethod(attempts, "pdf_recognition", () =>
+    recognizeWithoutSaving(finalUrl),
+  );
+  if (recognized) {
+    return {
+      csl: recognized.csl,
+      itemType: recognized.itemType,
+      method: "pdf_recognition",
+      translator: null,
+    };
+  }
+  let byIdentifier = await tryMethod(attempts, "identifier", () =>
+    identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
+  );
+  if (byIdentifier) {
+    return resolveIdentification({ ...byIdentifier, method: "identifier" });
+  }
+  return null;
+}
+
+async function handleResolveUrl(data: RequestData) {
+  let url = requireHttpUrl(data.url);
+  let attempts: Attempt[] = [];
+  let source = await fetchSource(url);
+  let resolution: Resolution | null;
+  if (source.kind === "pdf") {
+    resolution = await resolvePdfSource(url, source.finalUrl, attempts);
+  } else {
+    let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
+    resolution = identification === null ? null : resolveIdentification(identification);
+  }
+  if (resolution === null) {
+    throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
+  }
+
+  return successResult(
+    "resolve_url",
+    {
+      url,
+      final_url: source.finalUrl,
+      translator:
+        resolution.translator === null
+          ? null
+          : {
+              translator_id: resolution.translator.translatorID,
+              label: resolution.translator.label,
+            },
+      attempts,
+    },
+    { method: resolution.method, item_type: resolution.itemType, csl: resolution.csl },
   );
 }
 
@@ -2379,6 +2494,8 @@ async function runWrite(data: RequestData) {
       return handleUpdateAttachmentTitle(data);
     case "import_from_url":
       return handleImportFromUrl(data);
+    case "resolve_url":
+      return handleResolveUrl(data);
     default:
       throw badRequest("Unsupported operation: " + operation);
   }
