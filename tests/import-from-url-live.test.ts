@@ -296,3 +296,76 @@ test.skipIf(!LIVE)(
   },
   REMOTE_TIMEOUT_MS,
 );
+
+async function resolveUrl(url: string) {
+  const { data, error } = await client.POST("/write", {
+    body: { operation: "resolve_url", url },
+  });
+  if (error !== undefined) {
+    throw new Error(`resolve_url ${url} failed: ${error.stage}: ${error.error}`);
+  }
+  if (data === undefined || data.operation !== "resolve_url") {
+    throw new Error(`resolve_url ${url} returned no resolve_url success`);
+  }
+  return data;
+}
+
+/** The number of top-level items the library holds, from the read-only local API. */
+async function libraryItemCount(): Promise<number> {
+  const url = `${BASE_URL}/api/users/${LIBRARY_ID}/items/top?limit=1`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`item count failed: HTTP ${response.status}`);
+  }
+  return Number(response.headers.get("Total-Results"));
+}
+
+test.skipIf(!LIVE)(
+  "resolve_url returns the metadata import_from_url would save, and saves nothing",
+  async () => {
+    const title = `lw-resolve-${uid}`;
+    const url = servePage(`/resolve-${uid}`, citationHead(title));
+    const before = await libraryItemCount();
+    const data = await resolveUrl(url);
+    expect(data.method).toBe("page_metadata");
+    expect(data.item_type).toBe("journalArticle");
+    expect(data.csl.title).toBe(title);
+    expect(data.csl.author).toEqual([{ family: "Fixture", given: "Ada" }]);
+    expect(data.csl.issued).toEqual({ "date-parts": [["2021", 3, 4]] });
+    expect(await libraryItemCount()).toBe(before);
+  },
+  REMOTE_TIMEOUT_MS,
+);
+
+test.skipIf(!LIVE)(
+  "resolve_url recognizes a direct PDF URL and leaves no item behind",
+  async () => {
+    const before = await libraryItemCount();
+    const data = await resolveUrl(
+      "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0000308&type=printable",
+    );
+    expect(data.method).toBe("pdf_recognition");
+    expect(data.item_type).toBe("journalArticle");
+    expect(String(data.csl.DOI).toLowerCase()).toBe("10.1371/journal.pone.0000308");
+    expect(await libraryItemCount()).toBe(before);
+  },
+  REMOTE_TIMEOUT_MS,
+);
+
+test.skipIf(!LIVE)(
+  "resolve_url on a URL that no method identifies returns the typed error",
+  async () => {
+    const url = servePage(`/plain-resolve-${uid}`, "<title>Nothing here</title>");
+    const { data, error, response } = await client.POST("/write", {
+      body: { operation: "resolve_url", url },
+    });
+    expect(data).toBeUndefined();
+    expect(response.status).toBe(422);
+    if (error === undefined) {
+      throw new Error("expected the error branch");
+    }
+    expect(error.operation).toBe("resolve_url");
+    expect(error.stage).toBe("identify_source");
+  },
+  REMOTE_TIMEOUT_MS,
+);

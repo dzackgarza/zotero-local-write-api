@@ -118,13 +118,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: 'import_from_url: no method identified the source as exactly one work. stage is identify_source and details.attempts lists every method tried with its outcome.'
+          description: 'import_from_url, resolve_url: no method identified the source as exactly one work. stage is identify_source and details.attempts lists every method tried with its outcome.'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '502':
-          description: 'import_from_url: the source URL could not be fetched.'
+          description: 'import_from_url, resolve_url: the source URL could not be fetched.'
           content:
             application/json:
               schema:
@@ -302,6 +302,7 @@ components:
               - run_javascript
               - openapi_spec
               - import_from_url
+              - resolve_url
     # ── /attach request ─────────────────────────────────────────────
     AttachRequest:
       type: object
@@ -411,6 +412,7 @@ components:
         - $ref: '#/components/schemas/RestoreItemRequest'
         - $ref: '#/components/schemas/UpdateAttachmentTitleRequest'
         - $ref: '#/components/schemas/ImportFromUrlRequest'
+        - $ref: '#/components/schemas/ResolveUrlRequest'
       discriminator:
         propertyName: operation
         mapping:
@@ -447,6 +449,7 @@ components:
           restore_item: '#/components/schemas/RestoreItemRequest'
           update_attachment_title: '#/components/schemas/UpdateAttachmentTitleRequest'
           import_from_url: '#/components/schemas/ImportFromUrlRequest'
+          resolve_url: '#/components/schemas/ResolveUrlRequest'
     # ── Request schemas (one per operation) ────────────────────────
     SyncRequest:
       type: object
@@ -877,6 +880,7 @@ components:
         - $ref: '#/components/schemas/RestoreItemSuccess'
         - $ref: '#/components/schemas/UpdateAttachmentTitleSuccess'
         - $ref: '#/components/schemas/ImportFromUrlSuccess'
+        - $ref: '#/components/schemas/ResolveUrlSuccess'
       discriminator:
         propertyName: operation
         mapping:
@@ -913,6 +917,7 @@ components:
           restore_item: '#/components/schemas/RestoreItemSuccess'
           update_attachment_title: '#/components/schemas/UpdateAttachmentTitleSuccess'
           import_from_url: '#/components/schemas/ImportFromUrlSuccess'
+          resolve_url: '#/components/schemas/ResolveUrlSuccess'
     # ── Success schemas (one per operation) ────────────────────────
     SyncSuccess:
       allOf:
@@ -1689,6 +1694,77 @@ components:
                   type: array
                   items:
                     type: string
+                translator:
+                  oneOf:
+                    - type: 'null'
+                    - type: object
+                      required:
+                        - translator_id
+                        - label
+                      properties:
+                        translator_id:
+                          type: string
+                        label:
+                          type: string
+                      additionalProperties: false
+                attempts:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ImportFromUrlAttempt'
+      unevaluatedProperties: false
+    ResolveUrlRequest:
+      type: object
+      description: Identify a source URL exactly as import_from_url does, with the same methods in the same order, and return the metadata of the one work it identifies without saving anything to the library. The metadata is Zotero's CSL-JSON rendering of the item import_from_url would create.
+      required:
+        - operation
+        - url
+      properties:
+        operation:
+          const: resolve_url
+        url:
+          allOf:
+            - $ref: '#/components/schemas/NonBlankString'
+          format: uri
+          description: An http or https URL.
+    ResolveUrlSuccess:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required:
+            - method
+            - item_type
+            - csl
+            - details
+          properties:
+            operation:
+              const: resolve_url
+            method:
+              $ref: '#/components/schemas/ImportFromUrlMethod'
+            item_type:
+              type: string
+              description: The Zotero item type of the identified work.
+            csl:
+              type: object
+              description: The identified work as CSL-JSON (Zotero.Utilities.Item.itemToCSLJSON).
+              required:
+                - type
+              properties:
+                type:
+                  type: string
+              additionalProperties: true
+            details:
+              type: object
+              required:
+                - url
+                - final_url
+                - translator
+                - attempts
+              properties:
+                url:
+                  type: string
+                final_url:
+                  type: string
+                  description: The URL after redirects.
                 translator:
                   oneOf:
                     - type: 'null'
