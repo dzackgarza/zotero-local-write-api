@@ -11,7 +11,7 @@ Zotero's local HTTP server must be enabled at `http://127.0.0.1:23119`. The endp
 
 ## Endpoints
 
-Full request/response schemas for all endpoints (`GET /version`, `GET /openapi.yaml`, `POST /attach`, `POST /write` and its ~32 `operation` variants) live in [`openapi.yaml`](./openapi.yaml), an OpenAPI 3.1 document.
+Full request/response schemas for all endpoints (`GET /version`, `GET /openapi.yaml`, `POST /attach`, `POST /write` and its ~33 `operation` variants) live in [`openapi.yaml`](./openapi.yaml), an OpenAPI 3.1 document.
 Paste it into [Swagger Editor](https://editor.swagger.io/) or any OpenAPI viewer to browse it.
 The running plugin also serves it at `GET /openapi.yaml`.
 

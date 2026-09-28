@@ -135,7 +135,7 @@ export interface components {
                 strict_max_version: string;
                 tested_zotero_version: string;
             };
-            capabilities: ("attach" | "attach_bytes" | "write" | "version_probe" | "health_probe" | "import_bibtex" | "import_by_identifier" | "selected_collection" | "sync" | "run_javascript")[];
+            capabilities: ("attach" | "attach_bytes" | "write" | "version_probe" | "health_probe" | "import_bibtex" | "import_by_identifier" | "selected_collection" | "sync" | "run_javascript" | "openapi_spec" | "import_from_url")[];
         };
         AttachRequest: {
             item_key: components["schemas"]["ItemKey"];
@@ -159,7 +159,7 @@ export interface components {
                 title: string;
             };
         };
-        WriteRequest: components["schemas"]["SyncRequest"] | components["schemas"]["RunJavascriptRequest"] | components["schemas"]["UpdateItemFieldsRequest"] | components["schemas"]["ReplaceItemJsonRequest"] | components["schemas"]["SetItemTagsRequest"] | components["schemas"]["AddItemTagsRequest"] | components["schemas"]["RemoveItemTagsRequest"] | components["schemas"]["SetItemCollectionsRequest"] | components["schemas"]["AddItemToCollectionRequest"] | components["schemas"]["RemoveItemFromCollectionRequest"] | components["schemas"]["AttachNoteRequest"] | components["schemas"]["UpdateNoteRequest"] | components["schemas"]["AttachUrlRequest"] | components["schemas"]["TrashItemRequest"] | components["schemas"]["TrashCollectionRequest"] | components["schemas"]["RelinkAttachmentFileRequest"] | components["schemas"]["CreateCollectionRequest"] | components["schemas"]["RenameCollectionRequest"] | components["schemas"]["MoveCollectionRequest"] | components["schemas"]["MergeCollectionsRequest"] | components["schemas"]["RenameTagRequest"] | components["schemas"]["MergeTagsRequest"] | components["schemas"]["DeleteTagRequest"] | components["schemas"]["DeleteUnusedTagsRequest"] | components["schemas"]["CopyItemRequest"] | components["schemas"]["MergeItemsRequest"] | components["schemas"]["CreateItemRequest"] | components["schemas"]["ImportBibtexRequest"] | components["schemas"]["ImportByIdentifierRequest"] | components["schemas"]["GetSelectedCollectionRequest"] | components["schemas"]["RestoreItemRequest"] | components["schemas"]["UpdateAttachmentTitleRequest"];
+        WriteRequest: components["schemas"]["SyncRequest"] | components["schemas"]["RunJavascriptRequest"] | components["schemas"]["UpdateItemFieldsRequest"] | components["schemas"]["ReplaceItemJsonRequest"] | components["schemas"]["SetItemTagsRequest"] | components["schemas"]["AddItemTagsRequest"] | components["schemas"]["RemoveItemTagsRequest"] | components["schemas"]["SetItemCollectionsRequest"] | components["schemas"]["AddItemToCollectionRequest"] | components["schemas"]["RemoveItemFromCollectionRequest"] | components["schemas"]["AttachNoteRequest"] | components["schemas"]["UpdateNoteRequest"] | components["schemas"]["AttachUrlRequest"] | components["schemas"]["TrashItemRequest"] | components["schemas"]["TrashCollectionRequest"] | components["schemas"]["RelinkAttachmentFileRequest"] | components["schemas"]["CreateCollectionRequest"] | components["schemas"]["RenameCollectionRequest"] | components["schemas"]["MoveCollectionRequest"] | components["schemas"]["MergeCollectionsRequest"] | components["schemas"]["RenameTagRequest"] | components["schemas"]["MergeTagsRequest"] | components["schemas"]["DeleteTagRequest"] | components["schemas"]["DeleteUnusedTagsRequest"] | components["schemas"]["CopyItemRequest"] | components["schemas"]["MergeItemsRequest"] | components["schemas"]["CreateItemRequest"] | components["schemas"]["ImportBibtexRequest"] | components["schemas"]["ImportByIdentifierRequest"] | components["schemas"]["GetSelectedCollectionRequest"] | components["schemas"]["RestoreItemRequest"] | components["schemas"]["UpdateAttachmentTitleRequest"] | components["schemas"]["ImportFromUrlRequest"];
         SyncRequest: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -450,7 +450,7 @@ export interface components {
             attachment_key: components["schemas"]["ItemKey"];
             new_title: components["schemas"]["NonBlankString"];
         };
-        WriteSuccessResponse: components["schemas"]["SyncSuccess"] | components["schemas"]["RunJavascriptSuccess"] | components["schemas"]["UpdateItemFieldsSuccess"] | components["schemas"]["ReplaceItemJsonSuccess"] | components["schemas"]["SetItemTagsSuccess"] | components["schemas"]["AddItemTagsSuccess"] | components["schemas"]["RemoveItemTagsSuccess"] | components["schemas"]["SetItemCollectionsSuccess"] | components["schemas"]["AddItemToCollectionSuccess"] | components["schemas"]["RemoveItemFromCollectionSuccess"] | components["schemas"]["AttachNoteSuccess"] | components["schemas"]["UpdateNoteSuccess"] | components["schemas"]["AttachUrlSuccess"] | components["schemas"]["TrashItemSuccess"] | components["schemas"]["TrashCollectionSuccess"] | components["schemas"]["RelinkAttachmentFileSuccess"] | components["schemas"]["CreateCollectionSuccess"] | components["schemas"]["RenameCollectionSuccess"] | components["schemas"]["MoveCollectionSuccess"] | components["schemas"]["MergeCollectionsSuccess"] | components["schemas"]["RenameTagSuccess"] | components["schemas"]["MergeTagsSuccess"] | components["schemas"]["DeleteTagSuccess"] | components["schemas"]["DeleteUnusedTagsSuccess"] | components["schemas"]["CopyItemSuccess"] | components["schemas"]["MergeItemsSuccess"] | components["schemas"]["CreateItemSuccess"] | components["schemas"]["ImportBibtexSuccess"] | components["schemas"]["ImportByIdentifierSuccess"] | components["schemas"]["GetSelectedCollectionSuccess"] | components["schemas"]["RestoreItemSuccess"] | components["schemas"]["UpdateAttachmentTitleSuccess"];
+        WriteSuccessResponse: components["schemas"]["SyncSuccess"] | components["schemas"]["RunJavascriptSuccess"] | components["schemas"]["UpdateItemFieldsSuccess"] | components["schemas"]["ReplaceItemJsonSuccess"] | components["schemas"]["SetItemTagsSuccess"] | components["schemas"]["AddItemTagsSuccess"] | components["schemas"]["RemoveItemTagsSuccess"] | components["schemas"]["SetItemCollectionsSuccess"] | components["schemas"]["AddItemToCollectionSuccess"] | components["schemas"]["RemoveItemFromCollectionSuccess"] | components["schemas"]["AttachNoteSuccess"] | components["schemas"]["UpdateNoteSuccess"] | components["schemas"]["AttachUrlSuccess"] | components["schemas"]["TrashItemSuccess"] | components["schemas"]["TrashCollectionSuccess"] | components["schemas"]["RelinkAttachmentFileSuccess"] | components["schemas"]["CreateCollectionSuccess"] | components["schemas"]["RenameCollectionSuccess"] | components["schemas"]["MoveCollectionSuccess"] | components["schemas"]["MergeCollectionsSuccess"] | components["schemas"]["RenameTagSuccess"] | components["schemas"]["MergeTagsSuccess"] | components["schemas"]["DeleteTagSuccess"] | components["schemas"]["DeleteUnusedTagsSuccess"] | components["schemas"]["CopyItemSuccess"] | components["schemas"]["MergeItemsSuccess"] | components["schemas"]["CreateItemSuccess"] | components["schemas"]["ImportBibtexSuccess"] | components["schemas"]["ImportByIdentifierSuccess"] | components["schemas"]["GetSelectedCollectionSuccess"] | components["schemas"]["RestoreItemSuccess"] | components["schemas"]["UpdateAttachmentTitleSuccess"] | components["schemas"]["ImportFromUrlSuccess"];
         SyncSuccess: components["schemas"]["SuccessEnvelope"] & {
             /** @constant */
             operation?: "sync";
@@ -924,6 +924,54 @@ export interface components {
              */
             operation: "update_attachment_title";
         };
+        /** @description Create one Zotero item from a source URL. Methods are tried in order until one identifies the source as exactly one work: web translators, the page embedded metadata (for a PDF: Zotero PDF recognition), identifier discovery (DOI, ISBN, arXiv ID), BibTeX the page links, and external services (Crossref, zbMATH Open, arXiv, Open Library). When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. The operation saves metadata only, never attachments. */
+        ImportFromUrlRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            operation: "import_from_url";
+            /**
+             * Format: uri
+             * @description An http or https URL.
+             */
+            url: components["schemas"]["NonBlankString"];
+            collection_keys?: components["schemas"]["NormalizedStringArray"];
+        };
+        ImportFromUrlAttempt: {
+            method: components["schemas"]["ImportFromUrlMethod"];
+            /** @enum {unknown} */
+            outcome: "identified" | "no_match" | "ambiguous" | "failed";
+            message: string;
+        };
+        /** @enum {unknown} */
+        ImportFromUrlMethod: "web_translator" | "page_metadata" | "identifier" | "published_bibtex" | "external_service" | "pdf_recognition";
+        ImportFromUrlSuccess: components["schemas"]["SuccessEnvelope"] & {
+            /** @constant */
+            operation?: "import_from_url";
+            item_key: string;
+            item_id: number;
+            method: components["schemas"]["ImportFromUrlMethod"];
+            /** @description true when the work was already in the library and that item is returned. */
+            existing: boolean;
+            details: {
+                url: string;
+                /** @description The URL after redirects. */
+                final_url: string;
+                collection_keys: string[];
+                translator: null | {
+                    translator_id: string;
+                    label: string;
+                };
+                attempts: components["schemas"]["ImportFromUrlAttempt"][];
+            };
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            operation: "import_from_url";
+        };
     };
     responses: never;
     parameters: never;
@@ -1071,8 +1119,26 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description import_from_url: no method identified the source as exactly one work. stage is identify_source and details.attempts lists every method tried with its outcome. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Unexpected server error. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description import_from_url: the source URL could not be fetched. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -222,14 +222,16 @@ test.skipIf(!LIVE)(
 );
 
 test.skipIf(!LIVE)(
-  "a page with no metadata is identified by the DOI in its URL",
+  "a page with no metadata is identified by the arXiv ID in its URL",
   async () => {
-    const url = servePage(`/article/10.1038/nature14539`, "<title>Article</title>");
+    // A DOI in the URL is claimed first by Zotero's DOI web translator; no
+    // web translator claims an arXiv ID outside arxiv.org.
+    const url = servePage(`/papers/1512.03385`, "<title>Article</title>");
     const data = await importFromUrl(url);
     expect(data.method).toBe("identifier");
     const item = await readItem(data.item_key);
-    expect(item.itemType).toBe("journalArticle");
-    expect(item.DOI?.toLowerCase()).toBe("10.1038/nature14539");
+    expect(item.itemType).toBe("preprint");
+    expect(item.DOI).toBe("10.48550/arXiv.1512.03385");
   },
   REMOTE_TIMEOUT_MS,
 );

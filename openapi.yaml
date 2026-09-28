@@ -117,6 +117,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 'import_from_url: no method identified the source as exactly one work. stage is identify_source and details.attempts lists every method tried with its outcome.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: 'import_from_url: the source URL could not be fetched.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
       security:
         - bearerAuth: []
   /openapi.yaml:
@@ -288,6 +300,8 @@ components:
               - selected_collection
               - sync
               - run_javascript
+              - openapi_spec
+              - import_from_url
     # ── /attach request ─────────────────────────────────────────────
     AttachRequest:
       type: object
@@ -396,6 +410,7 @@ components:
         - $ref: '#/components/schemas/GetSelectedCollectionRequest'
         - $ref: '#/components/schemas/RestoreItemRequest'
         - $ref: '#/components/schemas/UpdateAttachmentTitleRequest'
+        - $ref: '#/components/schemas/ImportFromUrlRequest'
       discriminator:
         propertyName: operation
         mapping:
@@ -431,6 +446,7 @@ components:
           get_selected_collection: '#/components/schemas/GetSelectedCollectionRequest'
           restore_item: '#/components/schemas/RestoreItemRequest'
           update_attachment_title: '#/components/schemas/UpdateAttachmentTitleRequest'
+          import_from_url: '#/components/schemas/ImportFromUrlRequest'
     # ── Request schemas (one per operation) ────────────────────────
     SyncRequest:
       type: object
@@ -860,6 +876,7 @@ components:
         - $ref: '#/components/schemas/GetSelectedCollectionSuccess'
         - $ref: '#/components/schemas/RestoreItemSuccess'
         - $ref: '#/components/schemas/UpdateAttachmentTitleSuccess'
+        - $ref: '#/components/schemas/ImportFromUrlSuccess'
       discriminator:
         propertyName: operation
         mapping:
@@ -895,6 +912,7 @@ components:
           get_selected_collection: '#/components/schemas/GetSelectedCollectionSuccess'
           restore_item: '#/components/schemas/RestoreItemSuccess'
           update_attachment_title: '#/components/schemas/UpdateAttachmentTitleSuccess'
+          import_from_url: '#/components/schemas/ImportFromUrlSuccess'
     # ── Success schemas (one per operation) ────────────────────────
     SyncSuccess:
       allOf:
@@ -1588,6 +1606,106 @@ components:
                   type: string
                 new_title:
                   type: string
+      unevaluatedProperties: false
+    ImportFromUrlRequest:
+      type: object
+      description: 'Create one Zotero item from a source URL. Methods are tried in order until one identifies the source as exactly one work: web translators, the page embedded metadata (for a PDF: Zotero PDF recognition), identifier discovery (DOI, ISBN, arXiv ID), BibTeX the page links, and external services (Crossref, zbMATH Open, arXiv, Open Library). When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. The operation saves metadata only, never attachments.'
+      required:
+        - operation
+        - url
+      properties:
+        operation:
+          const: import_from_url
+        url:
+          allOf:
+            - $ref: '#/components/schemas/NonBlankString'
+          format: uri
+          description: An http or https URL.
+        collection_keys:
+          $ref: '#/components/schemas/NormalizedStringArray'
+    ImportFromUrlAttempt:
+      type: object
+      required:
+        - method
+        - outcome
+        - message
+      properties:
+        method:
+          $ref: '#/components/schemas/ImportFromUrlMethod'
+        outcome:
+          enum:
+            - identified
+            - no_match
+            - ambiguous
+            - failed
+        message:
+          type: string
+      additionalProperties: false
+    ImportFromUrlMethod:
+      enum:
+        - web_translator
+        - page_metadata
+        - identifier
+        - published_bibtex
+        - external_service
+        - pdf_recognition
+    ImportFromUrlSuccess:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required:
+            - item_key
+            - item_id
+            - method
+            - existing
+            - details
+          properties:
+            operation:
+              const: import_from_url
+            item_key:
+              type: string
+            item_id:
+              type: integer
+            method:
+              $ref: '#/components/schemas/ImportFromUrlMethod'
+            existing:
+              type: boolean
+              description: true when the work was already in the library and that item is returned.
+            details:
+              type: object
+              required:
+                - url
+                - final_url
+                - collection_keys
+                - translator
+                - attempts
+              properties:
+                url:
+                  type: string
+                final_url:
+                  type: string
+                  description: The URL after redirects.
+                collection_keys:
+                  type: array
+                  items:
+                    type: string
+                translator:
+                  oneOf:
+                    - type: 'null'
+                    - type: object
+                      required:
+                        - translator_id
+                        - label
+                      properties:
+                        translator_id:
+                          type: string
+                        label:
+                          type: string
+                      additionalProperties: false
+                attempts:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ImportFromUrlAttempt'
       unevaluatedProperties: false
   securitySchemes:
     bearerAuth:
