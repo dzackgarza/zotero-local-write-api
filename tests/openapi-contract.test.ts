@@ -214,8 +214,8 @@ describe("OpenAPI contract conformance", () => {
   const runtimeCases = extractSwitchCases(switchStmt);
   const runtimeOps = runtimeCases.map((c) => c.op);
 
-  it("runtime has exactly 33 operations", () => {
-    expect(runtimeOps.length).toBe(33);
+  it("runtime dispatches each operation once", () => {
+    expect(new Set(runtimeOps).size).toBe(runtimeOps.length);
   });
 
   it("switch cases match WriteRequest discriminator mapping keys", () => {
@@ -227,7 +227,7 @@ describe("OpenAPI contract conformance", () => {
   it("switch cases match WriteRequest oneOf refs", () => {
     const writeReq = spec.components.schemas.WriteRequest;
     const oneOfRefs = writeReq.oneOf.map((s) => s.$ref.split("/").pop()!);
-    expect(oneOfRefs.length).toBe(33);
+    expect(oneOfRefs.length).toBe(runtimeOps.length);
     // Each ref should point to a schema whose operation const matches a runtime op
     for (const ref of oneOfRefs) {
       const schema = spec.components.schemas[ref];
@@ -246,7 +246,7 @@ describe("OpenAPI contract conformance", () => {
   it("switch cases match WriteSuccessResponse oneOf refs", () => {
     const writeSuccess = spec.components.schemas.WriteSuccessResponse;
     const oneOfRefs = writeSuccess.oneOf.map((s) => s.$ref.split("/").pop()!);
-    expect(oneOfRefs.length).toBe(33);
+    expect(oneOfRefs.length).toBe(runtimeOps.length);
     for (const ref of oneOfRefs) {
       const schema = spec.components.schemas[ref];
       expect(schema).toBeDefined();
