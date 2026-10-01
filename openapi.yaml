@@ -118,11 +118,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: 'import_from_url, resolve_url: no method identified the source as exactly one work. stage is identify_source and details.attempts lists every method tried with its outcome.'
+          description: 'import_from_url, resolve_url: no method identified the source as exactly one work. stage is identify_source; details.attempts lists every method tried with its outcome, and details.remediation names alternative sources that Zotero identifies reliably and the fallback_metadata field of import_from_url.'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: '#/components/schemas/SourceNotIdentifiedResponse'
         '502':
           description: 'import_from_url, resolve_url: the source URL could not be fetched.'
           content:
@@ -1442,6 +1442,7 @@ components:
           required:
             - item_key
             - item_id
+            - citation_key
           properties:
             operation:
               const: create_item
@@ -1467,6 +1468,9 @@ components:
                   type: integer
                 collection_count:
                   type: integer
+            citation_key:
+              type: string
+              description: The Better BibTeX citation key of the item (Zotero's citationKey field).
       unevaluatedProperties: false
     ImportBibtexSuccess:
       allOf:
@@ -1478,6 +1482,7 @@ components:
             - item_keys
             - item_ids
             - titles
+            - citation_keys
           properties:
             operation:
               const: import_bibtex
@@ -1512,6 +1517,11 @@ components:
                     type: string
                 translator_id:
                   type: string
+            citation_keys:
+              type: array
+              items:
+                type: string
+              description: The Better BibTeX citation key of each item, in item_keys order.
       unevaluatedProperties: false
     ImportByIdentifierSuccess:
       allOf:
@@ -1523,6 +1533,7 @@ components:
             - item_keys
             - item_ids
             - titles
+            - citation_keys
           properties:
             operation:
               const: import_by_identifier
@@ -1557,6 +1568,11 @@ components:
                   type: array
                   items:
                     type: string
+            citation_keys:
+              type: array
+              items:
+                type: string
+              description: The Better BibTeX citation key of each item, in item_keys order.
       unevaluatedProperties: false
     GetSelectedCollectionSuccess:
       allOf:
@@ -1614,7 +1630,7 @@ components:
       unevaluatedProperties: false
     ImportFromUrlRequest:
       type: object
-      description: 'Create one Zotero item from a source URL. Methods are tried in order until one identifies the source as exactly one work: web translators, the page embedded metadata (for a PDF: Zotero PDF recognition), identifier discovery (DOI, ISBN, arXiv ID), BibTeX the page links, and external services (Crossref, zbMATH Open, arXiv, Open Library). When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. The operation saves metadata only, never attachments.'
+      description: "Create one Zotero item from a source URL. Methods are tried in order until one identifies the source as exactly one work: web translators, the page embedded metadata (for a PDF: Zotero PDF recognition), identifier discovery (DOI, ISBN, arXiv ID), BibTeX the page links, and external services (Crossref, zbMATH Open, arXiv, Open Library). When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. The item stores the full text Zotero gets for the source: the translator's attachments, an open-access PDF when the translator gives none, and the PDF itself when the URL is a PDF. When no method identifies the source, the 422 names alternative sources in details.remediation; a second request with fallback_metadata then saves the source as the caller describes it."
       required:
         - operation
         - url
@@ -1628,6 +1644,8 @@ components:
           description: An http or https URL.
         collection_keys:
           $ref: '#/components/schemas/NormalizedStringArray'
+        fallback_metadata:
+          $ref: '#/components/schemas/FallbackMetadata'
     ImportFromUrlAttempt:
       type: object
       required:
@@ -1664,6 +1682,7 @@ components:
             - method
             - existing
             - details
+            - citation_key
           properties:
             operation:
               const: import_from_url
@@ -1672,7 +1691,10 @@ components:
             item_id:
               type: integer
             method:
-              $ref: '#/components/schemas/ImportFromUrlMethod'
+              anyOf:
+                - $ref: '#/components/schemas/ImportFromUrlMethod'
+                - const: caller_metadata
+                  description: No method identified the source; the item was made from fallback_metadata.
             existing:
               type: boolean
               description: true when the work was already in the library and that item is returned.
@@ -1684,6 +1706,7 @@ components:
                 - collection_keys
                 - translator
                 - attempts
+                - attachment_failures
               properties:
                 url:
                   type: string
@@ -1711,6 +1734,26 @@ components:
                   type: array
                   items:
                     $ref: '#/components/schemas/ImportFromUrlAttempt'
+                attachment_failures:
+                  type: array
+                  description: Attachments the translator named that Zotero could not store. The item is saved without them.
+                  items:
+                    type: object
+                    required:
+                      - title
+                      - url
+                      - error
+                    properties:
+                      title:
+                        type: string
+                      url:
+                        type: string
+                      error:
+                        type: string
+                    additionalProperties: false
+            citation_key:
+              type: string
+              description: The Better BibTeX citation key of the item (Zotero's citationKey field).
       unevaluatedProperties: false
     ResolveUrlRequest:
       type: object
@@ -1783,6 +1826,82 @@ components:
                   items:
                     $ref: '#/components/schemas/ImportFromUrlAttempt'
       unevaluatedProperties: false
+    FallbackMetadata:
+      type: object
+      description: "The caller's description of a source that no method identifies. import_from_url uses it only after every method failed: the item gets this title, these creators as authors, this year as its date, the source URL, the tag metadata:unresolved, and, when the URL is a PDF, that PDF stored under it. Better BibTeX mints the citation key from these fields."
+      required:
+        - title
+        - creators
+        - year
+      properties:
+        title:
+          $ref: '#/components/schemas/NonBlankString'
+        creators:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - last_name
+            properties:
+              first_name:
+                type: string
+              last_name:
+                $ref: '#/components/schemas/NonBlankString'
+            additionalProperties: false
+        year:
+          type: string
+          pattern: ^[0-9]{4}$
+      additionalProperties: false
+    SourceRemediation:
+      type: object
+      required:
+        - message
+        - alternative_sources
+        - fallback_field
+      properties:
+        message:
+          type: string
+        alternative_sources:
+          type: array
+          items:
+            type: object
+            required:
+              - name
+              - example
+            properties:
+              name:
+                type: string
+              example:
+                type: string
+                description: The form of a URL or identifier at this source.
+            additionalProperties: false
+        fallback_field:
+          const: fallback_metadata
+      additionalProperties: false
+    SourceNotIdentifiedResponse:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          required:
+            - stage
+            - details
+          properties:
+            stage:
+              const: identify_source
+            details:
+              type: object
+              required:
+                - request
+                - attempts
+                - remediation
+              properties:
+                attempts:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ImportFromUrlAttempt'
+                remediation:
+                  $ref: '#/components/schemas/SourceRemediation'
   securitySchemes:
     bearerAuth:
       type: http
