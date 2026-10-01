@@ -37,9 +37,15 @@ type ItemData = {
   itemType: string;
   title: string;
   DOI?: string;
-  creators: { lastName?: string }[];
+  date?: string;
+  url?: string;
+  citationKey: string;
+  creators: { creatorType?: string; firstName?: string; lastName?: string }[];
   collections: string[];
+  tags: { tag: string }[];
 };
+
+type ChildData = { itemType: string; contentType?: string; linkMode?: string };
 
 /** Read an item back through Zotero's built-in read-only local API. */
 async function readItem(itemKey: string): Promise<ItemData> {
@@ -50,6 +56,24 @@ async function readItem(itemKey: string): Promise<ItemData> {
   }
   // Parsed from text: zotero-types shadows the global JSON type for response.json().
   return JSON.parse(await response.text()).data;
+}
+
+/** The files Zotero stores under an item, from the read-only local API. */
+async function storedChildren(itemKey: string): Promise<ChildData[]> {
+  const url = `${BASE_URL}/api/users/${LIBRARY_ID}/items/${encodeURIComponent(itemKey)}/children`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`children of ${itemKey} failed: HTTP ${response.status}`);
+  }
+  const children: { data: ChildData }[] = JSON.parse(await response.text());
+  return children
+    .map((child) => child.data)
+    .filter((child) => child.itemType === "attachment" && child.linkMode === "imported_url");
+}
+
+async function expectStoredPdf(itemKey: string): Promise<void> {
+  const contentTypes = (await storedChildren(itemKey)).map((child) => child.contentType);
+  expect(contentTypes).toContain("application/pdf");
 }
 
 // The fixture server stands in for a publisher. Its routes are fixed per test
@@ -85,6 +109,40 @@ function citationHead(title: string): string {
     `<meta name="citation_journal_title" content="Journal of Fixtures">`,
   ].join("");
 }
+
+/**
+ * A one-page PDF whose only text is `text`: no DOI, ISBN or arXiv ID, so
+ * neither Zotero's recognizer nor identifier discovery can name the work.
+ * Layout per ISO 32000-1 section 7.5 (header, objects, xref table, trailer).
+ */
+function servePdf(path: string, text: string): string {
+  const stream = `BT /F1 12 Tf 72 720 Td (${text}) Tj ET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((object, index) => {
+    offsets.push(body.length);
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = body.length;
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  body += offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  fixtures.set(path, { body, type: "application/pdf" });
+  return origin + path;
+}
+
+const FALLBACK_METADATA = {
+  title: `lw-fallback-${uid}`,
+  creators: [{ first_name: "Ada", last_name: "Fallbackauthor" }],
+  year: "2019",
+};
 
 async function importFromUrl(url: string, collectionKeys?: string[]) {
   const body =
@@ -147,6 +205,9 @@ test.skipIf(!LIVE)(
     expect(item.itemType).toBe("preprint");
     expect(item.title).toBe("Attention Is All You Need");
     expect(item.DOI).toBe("10.48550/arXiv.1706.03762");
+    expect(data.citation_key).toBe(item.citationKey);
+    expect(data.citation_key).not.toBe("");
+    await expectStoredPdf(data.item_key);
   },
   REMOTE_TIMEOUT_MS,
 );
@@ -182,6 +243,7 @@ test.skipIf(!LIVE)(
     const item = await readItem(data.item_key);
     expect(item.itemType).toBe("journalArticle");
     expect(item.DOI?.toLowerCase()).toBe("10.1371/journal.pone.0000308");
+    await expectStoredPdf(data.item_key);
   },
   REMOTE_TIMEOUT_MS,
 );
@@ -293,6 +355,107 @@ test.skipIf(!LIVE)(
     }
     expect(error.operation).toBe("import_from_url");
     expect(error.stage).toBe("identify_source");
+    const remediation = (error.details as { remediation: Remediation }).remediation;
+    expect(remediation.fallback_field).toBe("fallback_metadata");
+    expect(remediation.alternative_sources.map((source) => source.name)).toContain("arXiv");
+  },
+  REMOTE_TIMEOUT_MS,
+);
+
+type Remediation = {
+  message: string;
+  alternative_sources: { name: string; example: string }[];
+  fallback_field: string;
+};
+
+async function importWithFallback(url: string) {
+  const { data, error } = await client.POST("/write", {
+    body: { operation: "import_from_url", url, fallback_metadata: FALLBACK_METADATA },
+  });
+  if (error !== undefined) {
+    throw new Error(`import_from_url ${url} failed: ${error.stage}: ${error.error}`);
+  }
+  if (data === undefined || data.operation !== "import_from_url") {
+    throw new Error(`import_from_url ${url} returned no import_from_url success`);
+  }
+  if (!data.existing) {
+    createdItemKeys.push(data.item_key);
+  }
+  return data;
+}
+
+test.skipIf(!LIVE)(
+  "an unidentified page with fallback_metadata becomes a citable item tagged for review",
+  async () => {
+    const url = servePage(`/plain-fallback-${uid}`, "<title>Nothing here</title>");
+    const data = await importWithFallback(url);
+    expect(data.method).toBe("caller_metadata");
+    expect(data.existing).toBe(false);
+    const item = await readItem(data.item_key);
+    expect(item.title).toBe(FALLBACK_METADATA.title);
+    expect(item.creators).toEqual([
+      { creatorType: "author", firstName: "Ada", lastName: "Fallbackauthor" },
+    ]);
+    expect(item.date).toBe("2019");
+    expect(item.url).toBe(url);
+    expect(item.tags.map((tag) => tag.tag)).toContain("metadata:unresolved");
+    expect(data.citation_key).toBe(item.citationKey);
+    expect(data.citation_key).not.toBe("");
+
+    const again = await importWithFallback(url);
+    expect(again.existing).toBe(true);
+    expect(again.item_key).toBe(data.item_key);
+  },
+  REMOTE_TIMEOUT_MS,
+);
+
+test.skipIf(!LIVE)(
+  "an unidentified PDF with fallback_metadata is stored under the new item",
+  async () => {
+    const url = servePdf(`/unidentified-${uid}.pdf`, `lw fixture body ${uid}`);
+    const data = await importWithFallback(url);
+    expect(data.method).toBe("caller_metadata");
+    await expectStoredPdf(data.item_key);
+  },
+  REMOTE_TIMEOUT_MS,
+);
+
+test.skipIf(!LIVE)(
+  "fallback_metadata without a year is rejected and creates nothing",
+  async () => {
+    const before = await libraryItemCount();
+    const url = servePage(`/plain-noyear-${uid}`, "<title>Nothing here</title>");
+    const { title, creators } = FALLBACK_METADATA;
+    // Sent as raw JSON: the typed client would refuse the missing year at compile time.
+    const response = await fetch(`${BASE_URL}/write`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operation: "import_from_url",
+        url,
+        fallback_metadata: { title, creators },
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await libraryItemCount()).toBe(before);
+  },
+  REMOTE_TIMEOUT_MS,
+);
+
+test.skipIf(!LIVE)(
+  "import_by_identifier answers the citation key of every item it creates",
+  async () => {
+    const { data, error } = await client.POST("/write", {
+      body: { operation: "import_by_identifier", identifier: "arXiv:1512.03385" },
+    });
+    if (error !== undefined || data === undefined || data.operation !== "import_by_identifier") {
+      throw new Error("import_by_identifier failed");
+    }
+    createdItemKeys.push(...data.item_keys);
+    const keys = await Promise.all(
+      data.item_keys.map(async (key) => (await readItem(key)).citationKey),
+    );
+    expect(data.citation_keys).toEqual(keys);
   },
   REMOTE_TIMEOUT_MS,
 );
