@@ -73,7 +73,12 @@ type ZoteroTranslateWebApi = {
 type ZoteroItemSaverApi = {
   saveItems(
     jsonItems: TranslatorItemJSON[],
-    attachmentCallback: () => void,
+    // Called with progress `false` and the error when an attachment fails.
+    attachmentCallback: (
+      attachment: { title?: string; url?: string },
+      progress: number | false,
+      error?: Error,
+    ) => void,
   ): Promise<Zotero.Item[]>;
 };
 type ZoteroItemSaverConstructor = new (options: {
@@ -88,7 +93,7 @@ type ZoteroTranslateApi = {
   Search: new () => ZoteroTranslateSearchApi;
   Import: new () => ImportTranslator;
   Web: new () => ZoteroTranslateWebApi;
-  ItemSaver: ZoteroItemSaverConstructor & { ATTACHMENT_MODE_IGNORE: number };
+  ItemSaver: ZoteroItemSaverConstructor & { ATTACHMENT_MODE_DOWNLOAD: number };
 };
 function createTranslateSearch(): ZoteroTranslateSearchApi {
   let TranslateSearch = (Zotero.Translate as ZoteroTranslateApi).Search;
@@ -311,6 +316,35 @@ function log(msg: string): void {
 
 function sendJSON(sendResponse: SendResponse, statusCode: number, payload: JsonPayload): void {
   sendResponse(statusCode, "application/json", JSON.stringify(payload));
+}
+
+// Better BibTeX keys a new item from its item notifier, after a delay
+// (content/better-bibtex.js, Events.updateCitationKeys). That handler calls
+// KeyManager.update and saves the item when it set a key; calling it here
+// gives the same key before the response. Without Better BibTeX, Zotero's
+// citationKey field is what the item has.
+type BetterBibTeXApi = {
+  ready: Promise<void>;
+  KeyManager: { update(item: Zotero.Item): Zotero.Item | undefined };
+};
+
+async function citationKey(item: Zotero.Item): Promise<string> {
+  let betterBibTeX = (Zotero as typeof Zotero & { BetterBibTeX?: BetterBibTeXApi }).BetterBibTeX;
+  if (betterBibTeX !== undefined) {
+    await betterBibTeX.ready;
+    if (betterBibTeX.KeyManager.update(item) !== undefined) {
+      await item.saveTx({ skipDateModifiedUpdate: true });
+    }
+  }
+  return item.getField("citationKey");
+}
+
+async function citationKeys(items: Zotero.Item[]): Promise<string[]> {
+  let keys: string[] = [];
+  for (let item of items) {
+    keys.push(await citationKey(item));
+  }
+  return keys;
 }
 
 function successResult(operation: string, details?: JsonPayload, extra?: JsonPayload): JsonPayload {
@@ -1140,6 +1174,7 @@ async function handleCreateItem(data: RequestData) {
     {
       item_key: item.key,
       item_id: item.id,
+      citation_key: await citationKey(item),
     },
   );
 }
@@ -1295,6 +1330,7 @@ async function handleImportBibTeX(data: RequestData) {
       item_keys: items.map((item) => item.key),
       item_ids: items.map((item) => item.id),
       titles: items.map((item) => item.getField("title")),
+      citation_keys: await citationKeys(items),
     },
   );
 }
@@ -1350,6 +1386,7 @@ async function handleImportByIdentifier(data: RequestData) {
       item_keys: items.map((item) => item.key),
       item_ids: items.map((item) => item.id),
       titles: items.map((item) => item.getField("title")),
+      citation_keys: await citationKeys(items),
     },
   );
 }
@@ -1378,6 +1415,31 @@ class SourceNotIdentifiedError extends ApiError {
   }
 }
 
+// The tag of an item made from fallback_metadata: citable now, reviewed later.
+let UNRESOLVED_TAG = "metadata:unresolved";
+
+// What a client does next with a source that no method identifies: send a
+// page that Zotero identifies reliably, or send import_from_url again with the
+// caller's own metadata. Each example is the form of a URL that a Zotero web
+// translator claims (translators/arXiv.org.js, zbMATH.js, AMS MathSciNet.js)
+// or of an identifier that import_by_identifier resolves.
+let SOURCE_REMEDIATION = {
+  message:
+    "Find the work at one of the alternative sources and import that URL or identifier, " +
+    "or send import_from_url again with fallback_metadata (title, creators, year); the item " +
+    "is then tagged " +
+    UNRESOLVED_TAG +
+    " for review.",
+  alternative_sources: [
+    { name: "arXiv", example: "https://arxiv.org/abs/<arXiv ID>" },
+    { name: "DOI", example: "https://doi.org/<DOI>" },
+    { name: "zbMATH Open", example: "https://zbmath.org/?q=an:<zbMATH number>" },
+    { name: "MathSciNet", example: "https://mathscinet.ams.org/mathscinet/article?mr=<MR number>" },
+    { name: "ISBN", example: "import_by_identifier with identifier <ISBN>" },
+  ],
+  fallback_field: "fallback_metadata",
+};
+
 // A method ran and found nothing usable: no work, or more than one.
 class MethodMiss extends Error {
   outcome: "no_match" | "ambiguous";
@@ -1398,11 +1460,14 @@ type Identification = {
   translator: WebTranslatorInfo | null;
   message: string;
 };
+// An attachment the translator named that Zotero could not store.
+type AttachmentFailure = { title: string; url: string; error: string };
 type ImportOutcome = {
   item: Zotero.Item;
   existing: boolean;
-  method: SourceMethod;
+  method: SourceMethod | "caller_metadata";
   translator: WebTranslatorInfo | null;
+  attachmentFailures: AttachmentFailure[];
 };
 type FetchedSource =
   | { kind: "pdf"; finalUrl: string }
@@ -2109,15 +2174,27 @@ async function saveIdentification(
       existing: true,
       method: identification.method,
       translator: identification.translator,
+      attachmentFailures: [],
     };
   }
+  let attachmentFailures: AttachmentFailure[] = [];
   let translateApi = Zotero.Translate as ZoteroTranslateApi;
   let saver = new translateApi.ItemSaver({
     libraryID: userLibraryID(),
     collections: collectionIDs.length ? collectionIDs : false,
-    attachmentMode: translateApi.ItemSaver.ATTACHMENT_MODE_IGNORE,
+    // The Zotero Connector's mode: the translator's attachments are stored, and
+    // an open-access PDF is looked up when the translator gives none.
+    attachmentMode: translateApi.ItemSaver.ATTACHMENT_MODE_DOWNLOAD,
   });
-  let items = await saver.saveItems([identification.json], () => {});
+  let items = await saver.saveItems([identification.json], (attachment, progress, error) => {
+    if (progress === false) {
+      attachmentFailures.push({
+        title: attachment.title ?? "",
+        url: attachment.url ?? "",
+        error: String(error),
+      });
+    }
+  });
   if (items.length !== 1) {
     throw new Error("import_from_url saved " + items.length + " items instead of one");
   }
@@ -2126,26 +2203,23 @@ async function saveIdentification(
     existing: false,
     method: identification.method,
     translator: identification.translator,
+    attachmentFailures,
   };
 }
 
 // Zotero's "Retrieve Metadata for PDF": the PDF is stored as a standalone
 // attachment, and the recognizer creates its parent item from the DOI or ISBN
-// in the text, or from Zotero's recognizer service. The recognizer logs its
-// own errors instead of throwing, so a missing parent is the only failure
-// signal. The attachment is scratch and is erased; the saved parent is returned.
-async function recognizeParent(finalUrl: string): Promise<Zotero.Item> {
-  let attachment = await Zotero.Attachments.importFromURL({
-    libraryID: userLibraryID(),
-    url: finalUrl,
-    contentType: "application/pdf",
-  });
+// in the text, or from Zotero's recognizer service, and moves the PDF under it.
+// The recognizer logs its own errors instead of throwing, so a missing parent
+// is the only failure signal; the parentless PDF is then erased.
+async function recognizeParent(finalUrl: string): Promise<{ parent: Zotero.Item; pdf: Zotero.Item }> {
+  let pdf = await storePdf(finalUrl, null);
   let recognizer = (Zotero as typeof Zotero & { RecognizeDocument: RecognizeDocumentApi })
     .RecognizeDocument;
-  await recognizer.recognizeItems([attachment]);
-  let parentID = attachment.parentItemID;
-  await attachment.eraseTx();
+  await recognizer.recognizeItems([pdf]);
+  let parentID = pdf.parentItemID;
   if (parentID === undefined || parentID === false) {
+    await pdf.eraseTx();
     throw new MethodMiss(
       "no_match",
       "the recognizer produced no parent item (see the Zotero debug log)",
@@ -2155,22 +2229,43 @@ async function recognizeParent(finalUrl: string): Promise<Zotero.Item> {
   if (parent === false) {
     throw new Error("recognized parent item " + parentID + " is missing");
   }
-  return parent;
+  return { parent, pdf };
 }
 
+// Zotero downloads the URL and stores the file in the library, as the
+// Connector does for a PDF it saves.
+async function storePdf(url: string, parentItemID: number | null): Promise<Zotero.Item> {
+  return Zotero.Attachments.importFromURL({
+    libraryID: userLibraryID(),
+    url,
+    contentType: "application/pdf",
+    ...(parentItemID === null ? {} : { parentItemID }),
+  });
+}
+
+function hasStoredPdf(item: Zotero.Item): boolean {
+  return Zotero.Items.get(item.getAttachments(false)).some(
+    (attachment) => attachment.attachmentContentType === "application/pdf",
+  );
+}
+
+// An existing item is the library's own: the recognized copy and its PDF are
+// erased, and the existing item only gains the requested collections.
 async function recognizePdf(
   finalUrl: string,
   collectionIDs: number[],
 ): Promise<Omit<ImportOutcome, "method"> & { message: string }> {
-  let parent = await recognizeParent(finalUrl);
+  let { parent, pdf } = await recognizeParent(finalUrl);
   let existing = await findExistingItem(duplicateKeysFromItem(parent), parent.id);
   if (existing) {
+    await pdf.eraseTx();
     await parent.eraseTx();
     await fileExistingItem(existing, collectionIDs);
     return {
       item: existing,
       existing: true,
       translator: null,
+      attachmentFailures: [],
       message: existing.getField("title"),
     };
   }
@@ -2178,7 +2273,13 @@ async function recognizePdf(
     parent.setCollections(collectionIDs);
     await parent.saveTx();
   }
-  return { item: parent, existing: false, translator: null, message: parent.getField("title") };
+  return {
+    item: parent,
+    existing: false,
+    translator: null,
+    attachmentFailures: [],
+    message: parent.getField("title"),
+  };
 }
 
 async function importPdfSource(
@@ -2196,14 +2297,118 @@ async function importPdfSource(
   let byIdentifier = await tryMethod(attempts, "identifier", () =>
     identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
   );
-  if (byIdentifier) {
-    return saveIdentification({ ...byIdentifier, method: "identifier" }, collectionIDs);
+  if (byIdentifier === null) {
+    return null;
   }
-  return null;
+  let outcome = await saveIdentification({ ...byIdentifier, method: "identifier" }, collectionIDs);
+  if (!outcome.existing && !hasStoredPdf(outcome.item)) {
+    await storePdf(finalUrl, outcome.item.id);
+  }
+  return outcome;
+}
+
+// ── fallback_metadata ───────────────────────────────────────────────
+// What the caller asserts about a source that no method identifies. The item
+// made from it carries UNRESOLVED_TAG, so it is citable now and reviewed later.
+
+type FallbackMetadata = {
+  title: string;
+  creators: { firstName: string; lastName: string }[];
+  year: string;
+};
+
+function requireFallbackMetadata(value: unknown): FallbackMetadata {
+  let fallback = requireObject(value, "fallback_metadata");
+  let title = requireNonEmptyString(fallback.title, "fallback_metadata.title");
+  let year = requireNonEmptyString(fallback.year, "fallback_metadata.year");
+  if (!/^\d{4}$/.test(year)) {
+    throw badRequest("fallback_metadata.year must be a four-digit year: " + year);
+  }
+  if (!Array.isArray(fallback.creators) || fallback.creators.length === 0) {
+    throw badRequest("fallback_metadata.creators must name at least one creator");
+  }
+  let creators = fallback.creators.map((creator: unknown, index: number) => {
+    let entry = requireObject(creator, "fallback_metadata.creators[" + index + "]");
+    let firstName = entry.first_name;
+    if (firstName !== undefined && typeof firstName !== "string") {
+      throw badRequest("fallback_metadata.creators[" + index + "].first_name must be a string");
+    }
+    return {
+      firstName: firstName ?? "",
+      lastName: requireNonEmptyString(
+        entry.last_name,
+        "fallback_metadata.creators[" + index + "].last_name",
+      ),
+    };
+  });
+  return { title, creators, year };
+}
+
+// The source as the caller describes it. A source already saved this way
+// (equal URL and title) is returned as it is.
+async function saveFallback(
+  url: string,
+  source: FetchedSource | null,
+  fallback: FallbackMetadata,
+  collectionIDs: number[],
+): Promise<ImportOutcome> {
+  let itemType = "document" as const;
+  let existing = await findExistingItem(
+    { itemType, title: fallback.title, DOI: "", ISBN: "", url },
+    null,
+  );
+  if (existing) {
+    await fileExistingItem(existing, collectionIDs);
+    return {
+      item: existing,
+      existing: true,
+      method: "caller_metadata",
+      translator: null,
+      attachmentFailures: [],
+    };
+  }
+  let item = new Zotero.Item(itemType);
+  item.libraryID = userLibraryID();
+  item.setField("title", fallback.title);
+  item.setField("date", fallback.year);
+  item.setField("url", url);
+  item.setCreators(
+    fallback.creators.map((creator) => ({ ...creator, creatorType: "author" as const })),
+  );
+  item.setTags([UNRESOLVED_TAG]);
+  if (collectionIDs.length) {
+    item.setCollections(collectionIDs);
+  }
+  await item.saveTx();
+  if (source !== null && source.kind === "pdf") {
+    await storePdf(source.finalUrl, item.id);
+  }
+  return {
+    item,
+    existing: false,
+    method: "caller_metadata",
+    translator: null,
+    attachmentFailures: [],
+  };
+}
+
+async function identifySource(
+  url: string,
+  source: FetchedSource,
+  collectionIDs: number[],
+  attempts: Attempt[],
+): Promise<ImportOutcome | null> {
+  if (source.kind === "pdf") {
+    return importPdfSource(url, source.finalUrl, collectionIDs, attempts);
+  }
+  let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
+  return identification === null ? null : saveIdentification(identification, collectionIDs);
 }
 
 async function handleImportFromUrl(data: RequestData) {
   let url = requireHttpUrl(data.url);
+  let fallback =
+    data.fallback_metadata === undefined ? null : requireFallbackMetadata(data.fallback_metadata);
   let collectionKeys = Boolean(data.collection_keys)
     ? normalizeStringList(data.collection_keys, "collection_keys")
     : [];
@@ -2214,34 +2419,42 @@ async function handleImportFromUrl(data: RequestData) {
   }
 
   let attempts: Attempt[] = [];
-  let source = await fetchSource(url);
-  let outcome: ImportOutcome | null;
-  if (source.kind === "pdf") {
-    outcome = await importPdfSource(url, source.finalUrl, collectionIDs, attempts);
-  } else {
-    let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
-    outcome =
-      identification === null ? null : await saveIdentification(identification, collectionIDs);
+  let source: FetchedSource | null = null;
+  let outcome: ImportOutcome | null = null;
+  try {
+    source = await fetchSource(url);
+    outcome = await identifySource(url, source, collectionIDs, attempts);
+  } catch (error) {
+    // A source that is neither HTML nor PDF is unidentified, like one that
+    // no method names; every other failure stands.
+    if (!(error instanceof SourceNotIdentifiedError && fallback !== null)) {
+      throw error;
+    }
   }
   if (outcome === null) {
-    throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
+    if (fallback === null) {
+      throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
+    }
+    outcome = await saveFallback(url, source, fallback, collectionIDs);
   }
 
   return successResult(
     "import_from_url",
     {
       url,
-      final_url: source.finalUrl,
+      final_url: source === null ? url : source.finalUrl,
       collection_keys: collectionKeys,
       translator:
         outcome.translator === null
           ? null
           : { translator_id: outcome.translator.translatorID, label: outcome.translator.label },
       attempts,
+      attachment_failures: outcome.attachmentFailures,
     },
     {
       item_key: outcome.item.key,
       item_id: outcome.item.id,
+      citation_key: await citationKey(outcome.item),
       method: outcome.method,
       existing: outcome.existing,
     },
@@ -2284,7 +2497,7 @@ function resolveIdentification(
 async function recognizeWithoutSaving(
   finalUrl: string,
 ): Promise<{ csl: CslItem; itemType: string; message: string }> {
-  let parent = await recognizeParent(finalUrl);
+  let { parent, pdf } = await recognizeParent(finalUrl);
   try {
     let csl = itemToCsl(parent);
     // The CSL id is the URI of the parent, which is erased below.
@@ -2295,6 +2508,7 @@ async function recognizeWithoutSaving(
       message: parent.getField("title"),
     };
   } finally {
+    await pdf.eraseTx();
     await parent.eraseTx();
   }
 }
@@ -2546,6 +2760,7 @@ async function handleWriteRequest(data: unknown): Promise<EndpointResult> {
         errorResult(operationLabel, "identify_source", msg, {
           request: data,
           attempts: error.attempts,
+          remediation: SOURCE_REMEDIATION,
         }),
       );
     }
