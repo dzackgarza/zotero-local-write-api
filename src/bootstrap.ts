@@ -2212,7 +2212,9 @@ async function saveIdentification(
 // in the text, or from Zotero's recognizer service, and moves the PDF under it.
 // The recognizer logs its own errors instead of throwing, so a missing parent
 // is the only failure signal; the parentless PDF is then erased.
-async function recognizeParent(finalUrl: string): Promise<{ parent: Zotero.Item; pdf: Zotero.Item }> {
+async function recognizeParent(
+  finalUrl: string,
+): Promise<{ parent: Zotero.Item; pdf: Zotero.Item }> {
   let pdf = await storePdf(finalUrl, null);
   let recognizer = (Zotero as typeof Zotero & { RecognizeDocument: RecognizeDocumentApi })
     .RecognizeDocument;
