@@ -66,7 +66,7 @@ test("build emits an update manifest for the exact generated XPI", () => {
   let scratchDir = mkdtempSync(join(tmpdir(), "local-write-api-build-"));
   let updatesOut = join(scratchDir, "updates.json");
 
-  runCommand(["python3", "build.py", "--updates-out", updatesOut]);
+  runCommand(["uv", "run", "build.py", "--updates-out", updatesOut]);
 
   try {
     expect(existsSync(xpiName)).toBe(true);

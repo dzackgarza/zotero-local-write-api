@@ -1,0 +1,36 @@
+# Cloudflare tunnel for the Zotero Local Write API.
+#
+# Exposes only /write, /attach, /version, and /openapi.yaml from Zotero's
+# loopback HTTP server (127.0.0.1:23119) at zotero-write.dzackgarza.com.
+# The ingress path filter lives in ~/.cloudflared/zotero-write.yml, which
+# `just tunnel-setup` generates from dev/cloudflared/zotero-write.yml.template.
+#
+# Authentication is the plugin's, not the edge's: /write and /attach require
+# "Authorization: Bearer <token>" once the extensions.zotero.localWriteAPI.token
+# pref is set. There is no Cloudflare Access policy in front, because Access
+# would demand a second credential that a Custom GPT Action cannot send
+# alongside the bearer token.
+#
+# ExecStartPre re-verifies on every start (including at boot) that the live
+# write surface rejects an unauthenticated request, so the tunnel never comes up
+# while /write is open. If the token is cleared while the unit is already
+# running, the surface stays exposed until the next restart — the plugin cannot
+# tell a loopback request from a tunnelled one (see docs/gpt-action.md).
+#
+# Modeled on cloudflared-zettlr.service.
+
+[Unit]
+Description=Cloudflare tunnel for the Zotero Local Write API
+Documentation=https://github.com/dzackgarza/zotero-local-write-api
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStartPre=/usr/bin/env bash %h/.cloudflared/require-write-token.sh
+ExecStart=/bin/cloudflared --no-autoupdate --config %h/.cloudflared/zotero-write.yml tunnel run
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

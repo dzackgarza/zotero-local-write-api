@@ -33,9 +33,11 @@ typecheck:
 lint:
     bun run lint
 
-# Compile TypeScript and build the XPI (does not bump version or release)
+# Compile TypeScript and build the XPI (does not bump version or release).
+# The update manifest goes to a scratch path so a dev build never rewrites the
+# tracked updates.json, whose hash must match the XPI on the GitHub release.
 build:
-    python3 build.py
+    uv run build.py --updates-out "$(mktemp -d)/updates.json"
 
 # Live runtime proof against a real Zotero with the current XPI installed
 smoke-live:
@@ -51,7 +53,10 @@ smoke-live:
     if [[ -n "${ZOTERO_LIBRARY_ID:-}" ]]; then
         args+=(--library-id "${ZOTERO_LIBRARY_ID}")
     fi
-    python3 examples/live_smoke.py "${args[@]}"
+    if [[ -n "${ZOTERO_WRITE_API_TOKEN:-}" ]]; then
+        args+=(--token "${ZOTERO_WRITE_API_TOKEN}")
+    fi
+    uv run examples/live_smoke.py "${args[@]}"
 
 # Build the working-tree XPI and hot-install it into a Zotero profile, then
 # restart Zotero with a cache purge so the current code is actually loaded, and
@@ -75,13 +80,20 @@ install-live:
     version="$(cat VERSION)"
     xpi="local-write-api-${version}.xpi"
 
-    # 1. Build from the working tree.
-    python3 build.py
-    test -f "$xpi" || { echo "expected $xpi was not built" >&2; exit 1; }
+    # 1. Build from the working tree. The update manifest goes to a scratch path
+    #    so this install never rewrites the tracked updates.json.
+    uv run build.py --updates-out "$(mktemp -d)/updates.json"
+    if [[ ! -f "$xpi" ]]; then
+        echo "expected $xpi was not built" >&2
+        exit 1
+    fi
 
     # 2. Resolve the target profile: CI provides one, otherwise Default=1.
     profile_dir="${ZOTERO_PROFILE_DIR:-$(just _default-profile-dir)}"
-    test -d "$profile_dir" || { echo "profile dir not found: $profile_dir" >&2; exit 1; }
+    if [[ ! -d "$profile_dir" ]]; then
+        echo "profile dir not found: $profile_dir" >&2
+        exit 1
+    fi
     ext_dir="${profile_dir}/extensions"
     installed="${ext_dir}/local-write-api@dzackgarza.com.xpi"
 
@@ -102,8 +114,8 @@ install-live:
 
     # 5. Restart Zotero with cache purge. Stop by exact process name (-x), never
     #    pkill -f, whose pattern would match this recipe's own shell (AGENTS.md).
-    pkill -x zotero-bin || true
-    pkill -x zotero || true
+    if pgrep -x zotero-bin > /dev/null; then pkill -x zotero-bin; fi
+    if pgrep -x zotero > /dev/null; then pkill -x zotero; fi
     sleep 3
     profile_args=()
     if [[ -n "${ZOTERO_PROFILE_NAME:-}" ]]; then
@@ -366,6 +378,16 @@ _bump bump_type:
         patch += 1
     new = f"{major}.{minor}.{patch}"
     path.write_text(new + "\n")
+    # openapi.yaml's info.version is served at /openapi.yaml and asserted equal
+    # to VERSION by the contract test, so it must move in lockstep.
+    spec = Path("openapi.yaml")
+    spec_text = spec.read_text()
+    spec_new, count = re.subn(
+        r"^(  version: )'[^']*'", rf"\g<1>'{new}'", spec_text, count=1, flags=re.M
+    )
+    if count != 1:
+        sys.exit("Could not find info.version in openapi.yaml to bump")
+    spec.write_text(spec_new)
     print(f"Bumped to {new}")
 
 _release bump_type: (_bump bump_type)
@@ -374,11 +396,80 @@ _release bump_type: (_bump bump_type)
     echo "Required before tagging: install the current working-tree XPI and run 'just smoke-live'" >&2
     bun run typecheck
     bun run lint
-    python3 build.py
+    uv run build.py
     version=$(cat VERSION)
-    git add VERSION updates.json
+    git add VERSION updates.json openapi.yaml src/generated/openapi.ts
     git commit -m "chore: release v${version}"
     git tag "v${version}"
     git push
     git push --tags
     echo "v${version} tagged — Actions will publish the release"
+
+# --- GPT Action tunnel (see docs/gpt-action.md) ---
+
+tunnel_name := "zotero-write"
+tunnel_hostname := "zotero-write.dzackgarza.com"
+tunnel_config := home_directory() / ".cloudflared/zotero-write.yml"
+tunnel_unit := "zotero-write-tunnel.service"
+
+# Fail loudly unless the LIVE write surface enforces a bearer token. The check
+# lives in one tracked script so the systemd unit's ExecStartPre runs the same
+# probe on every (re)start; see dev/cloudflared/require-write-token.sh.
+_require-write-token:
+    bash dev/cloudflared/require-write-token.sh
+
+# Create the named tunnel, route DNS, and write ~/.cloudflared/zotero-write.yml
+tunnel-setup: _require-write-token
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The ingress path allowlist is the security boundary that keeps Zotero's
+    # unauthenticated read API and connector off the public hostname. It must
+    # equal the plugin's endpoint set (config.yml, the same source build.py
+    # reads), so assert they match and fail loud on drift rather than letting a
+    # new endpoint silently miss the tunnel or a widened regex leak the read API.
+    config_paths=$(yq -r '.endpoints[]' config.yml | sed 's#^/##' | sort | paste -sd,)
+    regex=$(yq -r '.ingress[0].path' dev/cloudflared/zotero-write.yml.template)
+    alt=${regex#^/(}; alt=${alt%)$}
+    ingress_paths=$(printf '%s\n' "${alt//|/$'\n'}" | sed 's#\\\.#.#g' | sort | paste -sd,)
+    if [[ "$config_paths" != "$ingress_paths" ]]; then
+        echo "Tunnel ingress paths are out of sync with config.yml endpoints:" >&2
+        echo "  config.yml: $(echo "$config_paths" | paste -sd' ')" >&2
+        echo "  template:   $(echo "$ingress_paths" | paste -sd' ')" >&2
+        exit 1
+    fi
+    if ! cloudflared tunnel list --output json | jq -e --arg n "{{ tunnel_name }}" \
+        'map(select(.name == $n)) | length > 0' > /dev/null; then
+        cloudflared tunnel create "{{ tunnel_name }}"
+    fi
+    uuid=$(cloudflared tunnel list --output json | jq -r --arg n "{{ tunnel_name }}" \
+        'map(select(.name == $n)) | .[0].id')
+    cloudflared tunnel route dns "{{ tunnel_name }}" "{{ tunnel_hostname }}"
+    sed -e "s|__TUNNEL_UUID__|${uuid}|g" -e "s|__HOME__|${HOME}|g" \
+        dev/cloudflared/zotero-write.yml.template > "{{ tunnel_config }}"
+    echo "Wrote {{ tunnel_config }} (tunnel ${uuid})"
+
+# Install and start the systemd user unit that keeps the tunnel up
+tunnel-install: _require-write-token
+    mkdir -p ~/.config/systemd/user ~/.cloudflared
+    # The unit's ExecStartPre runs this from a stable path, decoupled from the
+    # repo checkout, so every start (including at boot) re-verifies auth.
+    cp dev/cloudflared/require-write-token.sh ~/.cloudflared/require-write-token.sh
+    chmod +x ~/.cloudflared/require-write-token.sh
+    cp systemd/{{ tunnel_unit }} ~/.config/systemd/user/
+    systemctl --user daemon-reload
+    systemctl --user enable --now {{ tunnel_unit }}
+    systemctl --user --no-pager status {{ tunnel_unit }}
+
+tunnel-status:
+    systemctl --user --no-pager status {{ tunnel_unit }}
+    cloudflared tunnel info {{ tunnel_name }}
+
+tunnel-logs:
+    journalctl --user -u {{ tunnel_unit }} -f
+
+tunnel-restart: _require-write-token
+    systemctl --user restart {{ tunnel_unit }}
+
+# Stop and disable the unit (the tunnel and DNS record survive)
+tunnel-uninstall:
+    systemctl --user disable --now {{ tunnel_unit }}

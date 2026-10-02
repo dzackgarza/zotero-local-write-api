@@ -8,20 +8,14 @@ declare let APP_SHUTDOWN: number;
 // Zotero accepts `false` for Collection.parentKey to detach a collection from its
 // parent, but zotero-types models the field as `string`. This is the single owned site
 // that writes that runtime contract; callers go through it instead of casting.
-function setCollectionParentKey(
-  collection: Zotero.Collection,
-  parentKey: string | false,
-): void {
+function setCollectionParentKey(collection: Zotero.Collection, parentKey: string | false): void {
   (collection as { parentKey: string | false }).parentKey = parentKey;
 }
 
 // Tags.js guards `if (onProgress)` and `if (types)`, so both are optional at runtime;
 // zotero-types incorrectly marks them required. This is the single owned site that calls
 // removeFromLibrary against its real two-argument contract.
-function removeTagsFromUserLibrary(
-  libraryID: number,
-  tagIDs: number[],
-): Promise<void> {
+function removeTagsFromUserLibrary(libraryID: number, tagIDs: number[]): Promise<void> {
   let remove = Zotero.Tags.removeFromLibrary as (
     this: typeof Zotero.Tags,
     libraryID: number,
@@ -43,13 +37,58 @@ type ZoteroTranslateSearchApi = {
     collections: number[] | false;
     saveAttachments: boolean;
   }): Promise<Zotero.Item[] | false>;
+  // With `libraryID: false` a translation saves nothing and resolves the
+  // translator's item JSON instead (translate.js `_prepareTranslation`).
+  translate(options: { libraryID: false; saveAttachments: false }): Promise<TranslatorItemJSON[]>;
 };
+// Item JSON as a Zotero translator emits it (translate.js `_itemDone`). Only the
+// fields this add-on reads are named; the rest pass through to the ItemSaver.
+type TranslatorItemJSON = JsonPayload & {
+  itemType: string;
+  title?: string;
+  date?: string;
+  url?: string;
+  DOI?: string;
+  ISBN?: string;
+  creators?: { lastName?: string; name?: string }[];
+};
+// A detected web translator, as Zotero.Translate.Web#getTranslators resolves it.
+type WebTranslatorInfo = { translatorID: string; label: string };
+type ZoteroTranslateWebApi = {
+  setDocument(doc: Document): void;
+  getTranslators(): Promise<WebTranslatorInfo[]>;
+  setTranslator(translator: WebTranslatorInfo): void;
+  setHandler(
+    type: "select",
+    handler: (
+      translate: ZoteroTranslateWebApi,
+      items: Record<string, string>,
+      callback: (selected: Record<string, string>) => void,
+    ) => void,
+  ): void;
+  translate(options: { libraryID: false; saveAttachments: false }): Promise<TranslatorItemJSON[]>;
+};
+// Models translation/translate_item.js: the saver the translators themselves
+// use to turn item JSON into saved items inside one transaction.
+type ZoteroItemSaverApi = {
+  saveItems(
+    jsonItems: TranslatorItemJSON[],
+    attachmentCallback: () => void,
+  ): Promise<Zotero.Item[]>;
+};
+type ZoteroItemSaverConstructor = new (options: {
+  libraryID: number;
+  collections: number[] | false;
+  attachmentMode: number;
+}) => ZoteroItemSaverApi;
 // zotero-types declares Zotero.Translate as `any`, so it cannot be narrowed by
 // declaration merging. This is the named shape every Zotero.Translate use asserts.
 // Models zotero/zotero chrome/content/zotero/xpcom/translation/translate.js.
 type ZoteroTranslateApi = {
   Search: new () => ZoteroTranslateSearchApi;
   Import: new () => ImportTranslator;
+  Web: new () => ZoteroTranslateWebApi;
+  ItemSaver: ZoteroItemSaverConstructor & { ATTACHMENT_MODE_IGNORE: number };
 };
 function createTranslateSearch(): ZoteroTranslateSearchApi {
   let TranslateSearch = (Zotero.Translate as ZoteroTranslateApi).Search;
@@ -114,29 +153,49 @@ function requireRequestObject(data: unknown): RequestData {
 
 // A Zotero HTTP endpoint is registered as a constructor function whose prototype carries
 // the request metadata and init handler. The slot is cleared to undefined on shutdown.
+// Single-parameter init receives {headers, data, ...} and returns [status, contentType,
+// body]; the two-parameter form receives (data, sendResponse). Both are dispatched by
+// arity in zotero/zotero chrome/content/zotero/xpcom/server/server.js.
+type EndpointResult = [number, string, string];
 type EndpointPrototype = {
   supportedMethods: string[];
   supportedDataTypes?: string[];
-  init: (...args: never[]) => void | Promise<void>;
+  allowRequestsFromUnsafeWebContent?: boolean;
+  init: (...args: never[]) => void | EndpointResult | Promise<void | EndpointResult>;
 };
 type EndpointConstructor = { (): void; prototype: EndpointPrototype };
+
+// Header names arrive lowercased (server.js parses them into Zotero.Server.Headers
+// with lowercase keys).
+type EndpointRequest = {
+  headers: Record<string, string | undefined>;
+  data: unknown;
+};
 
 let AttachEndpoint: EndpointConstructor | undefined;
 let WriteEndpoint: EndpointConstructor | undefined;
 let VersionEndpoint: EndpointConstructor | undefined;
+let OpenApiEndpoint: EndpointConstructor | undefined;
 
-let PLUGIN_VERSION = "3.2.0-dev";
-let FULLTEXT_ATTACH_PATH = "/attach";
-let LOCAL_WRITE_PATH = "/write";
-let VERSION_PATH = "/version";
-let FULLTEXT_ALLOWED_DIRS = ["/tmp", "/var/tmp"];
-let ADDON_ID = "local-write-api@dzackgarza.com";
-let HOMEPAGE_URL = "https://github.com/dzackgarza/zotero-local-write-api";
-let UPDATE_URL =
-  "https://raw.githubusercontent.com/dzackgarza/zotero-local-write-api/main/updates.json";
-let STRICT_MIN_VERSION = "7.0";
-let STRICT_MAX_VERSION = "*";
-let TESTED_ZOTERO_VERSION = "8.0.1";
+// Build-time constants, injected by build.py via esbuild --define from
+// config.yml and VERSION (the single sources). They are ambient free
+// identifiers with no `let` binding: esbuild's define only substitutes free
+// identifiers, so a `let X = "default"` declaration silently defeated every
+// define and shipped the source defaults (e.g. /version reported "3.2.0-dev"
+// forever). All references are inside functions, never at module scope, so the
+// unbuilt module still type-checks and loads.
+declare const PLUGIN_VERSION: string;
+declare const FULLTEXT_ATTACH_PATH: string;
+declare const LOCAL_WRITE_PATH: string;
+declare const VERSION_PATH: string;
+declare const OPENAPI_PATH: string;
+declare const FULLTEXT_ALLOWED_DIRS: string[];
+declare const ADDON_ID: string;
+declare const HOMEPAGE_URL: string;
+declare const UPDATE_URL: string;
+declare const STRICT_MIN_VERSION: string;
+declare const STRICT_MAX_VERSION: string;
+declare const TESTED_ZOTERO_VERSION: string;
 let PLUGIN_CAPABILITIES = [
   "attach",
   "attach_bytes",
@@ -148,9 +207,84 @@ let PLUGIN_CAPABILITIES = [
   "selected_collection",
   "sync",
   "run_javascript",
+  "openapi_spec",
+  "import_from_url",
+  "resolve_url",
 ];
 
 let BIBTEX_TRANSLATOR_ID = "9cb70025-a888-4a29-a210-93ec52da40d4";
+
+// Optional bearer-token auth for the write surface. With the token pref unset
+// the API keeps its historical loopback-only, no-auth behavior. Setting the
+// pref is REQUIRED before exposing these endpoints through a tunnel (see
+// docs/gpt-action.md): a Custom GPT Action then sends the token as
+// "Authorization: Bearer <token>", the one credential the GPT builder supports.
+//
+// The plugin cannot tell a loopback request from a tunnelled one (cloudflared
+// forwards to 127.0.0.1:23119, so both look identical to Zotero's server), but it does
+// know whether it has been published: publicBaseURL is set precisely when the surface is
+// reachable off-loopback. bearerAuthFailure reads both prefs per request and refuses when
+// the surface is published without a token, so clearing the token mid-run is caught
+// immediately. The `just tunnel-setup`/`tunnel-install` recipes and the unit's
+// ExecStartPre (justfile `_require-write-token`) still refuse at bring-up.
+let TOKEN_PREF = "extensions.zotero.localWriteAPI.token";
+// When set, /openapi.yaml advertises this server URL instead of the loopback
+// one, so the GPT builder can import the schema straight from the tunnel.
+let PUBLIC_BASE_URL_PREF = "extensions.zotero.localWriteAPI.publicBaseURL";
+
+function bearerAuthFailure(request: EndpointRequest): EndpointResult | null {
+  // Loopback with no token is the documented default and stays open. What must never
+  // happen is an unauthenticated surface being *published*: publicBaseURL is what makes
+  // the plugin reachable beyond loopback, and both prefs are editable at runtime with no
+  // restart, so the two are checked together on every request rather than once at
+  // tunnel bring-up.
+  let token = Zotero.Prefs.get(TOKEN_PREF, true);
+  let published = Zotero.Prefs.get(PUBLIC_BASE_URL_PREF, true);
+  let hasToken = typeof token === "string" && token !== "";
+  if (!hasToken) {
+    if (typeof published === "string" && published !== "") {
+      return bearerDenied(
+        request,
+        "Write API is published via publicBaseURL but no token is configured",
+      );
+    }
+    return null;
+  }
+  if (secretEquals(request.headers.authorization, "Bearer " + token)) {
+    return null;
+  }
+  return bearerDenied(request, "Missing or invalid bearer token");
+}
+
+// A plain === short-circuits on the first mismatching byte, so response timing leaks
+// how much of the token a caller has guessed. When publicBaseURL is set this surface is
+// reachable from the internet, so the compare runs over the full length regardless of
+// where the first difference falls. Length is still distinguishable, which is the
+// standard trade-off for this construction.
+function secretEquals(candidate: string | undefined, expected: string): boolean {
+  if (candidate === undefined || candidate.length !== expected.length) {
+    return false;
+  }
+  let difference = 0;
+  for (let index = 0; index < expected.length; index += 1) {
+    difference |= candidate.charCodeAt(index) ^ expected.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+function bearerDenied(request: EndpointRequest, reason: string): EndpointResult {
+  return [
+    401,
+    "application/json",
+    JSON.stringify(
+      // details.request echoes the body per the ErrorResponse schema; the 401
+      // is documented on /write and /attach in openapi.yaml.
+      errorResult("authorize", "auth", reason, {
+        request: request.data,
+      }),
+    ),
+  ];
+}
 
 type RequestData = Record<string, unknown>;
 type SendResponse = (status: number, contentType: string, body: string) => void;
@@ -165,6 +299,7 @@ type ImportTranslator = {
     collections: number[];
     saveAttachments: boolean;
   }): Promise<unknown>;
+  translate(options: { libraryID: false; saveAttachments: false }): Promise<TranslatorItemJSON[]>;
 };
 type ActiveZoteroPane = {
   getSelectedCollection(): Zotero.Collection | null;
@@ -174,19 +309,11 @@ function log(msg: string): void {
   Zotero.debug("Local Write API: " + msg);
 }
 
-function sendJSON(
-  sendResponse: SendResponse,
-  statusCode: number,
-  payload: JsonPayload,
-): void {
+function sendJSON(sendResponse: SendResponse, statusCode: number, payload: JsonPayload): void {
   sendResponse(statusCode, "application/json", JSON.stringify(payload));
 }
 
-function successResult(
-  operation: string,
-  details?: JsonPayload,
-  extra?: JsonPayload,
-): JsonPayload {
+function successResult(operation: string, details?: JsonPayload, extra?: JsonPayload): JsonPayload {
   let payload: JsonPayload = {
     success: true,
     operation: operation,
@@ -232,6 +359,7 @@ function pluginVersionPayload(): JsonPayload {
       attach: FULLTEXT_ATTACH_PATH,
       write: LOCAL_WRITE_PATH,
       version: VERSION_PATH,
+      openapi: OPENAPI_PATH,
     },
     compatibility: {
       strict_min_version: STRICT_MIN_VERSION,
@@ -313,14 +441,22 @@ async function getUserItemOrThrow(itemKey: string) {
 }
 
 async function getUserCollectionOrThrow(collectionKey: string) {
-  let collection = Zotero.Collections.getByLibraryAndKey(
-    userLibraryID(),
-    collectionKey,
-  );
+  let collection = Zotero.Collections.getByLibraryAndKey(userLibraryID(), collectionKey);
   if (collection === false) {
     throw notFound("Collection not found: " + collectionKey);
   }
   return collection;
+}
+
+function collectionKeyForID(collectionID: number): string {
+  // Zotero.Collections.get returns the documented `false` sentinel for an id that no
+  // longer resolves. Dropping such an id silently would rewrite the item's collection
+  // memberships during an unrelated add/remove, so an unresolvable id fails loudly.
+  let collection = Zotero.Collections.get(collectionID);
+  if (collection === false) {
+    throw notFound("Collection not found for id: " + String(collectionID));
+  }
+  return collection.key;
 }
 
 function collectionDetails(collection: Zotero.Collection): JsonPayload {
@@ -368,17 +504,25 @@ function resolveAttachFilePath(filePath: string): string {
   return file.path;
 }
 
-function isMissingFileError(error: unknown): boolean {
-  return (
-    typeof (error as Error).message === "string" &&
-    (error as Error).message.includes("NS_ERROR_FILE_NOT_FOUND")
-  );
+// XPCOM file errors all sit in the NS_ERROR_MODULE_FILES block, so matching the module
+// covers every way a path can fail to resolve rather than the single name that was
+// previously substring-matched out of the message text. Values read from this runtime
+// via Cr: NOT_FOUND 0x80520012, UNRECOGNIZED_PATH 0x80520001, INVALID_PATH 0x80520009,
+// NOT_DIRECTORY 0x8052000c, NAME_TOO_LONG 0x80520011, ACCESS_DENIED 0x80520015 — only
+// the first of which used to engage the caller-supplied-bytes path.
+let NS_ERROR_MODULE_FILES_FIRST = 0x80520000;
+let NS_ERROR_MODULE_FILES_LAST = 0x8052ffff;
+
+function isUnusableFilePathError(error: unknown): boolean {
+  let result = (error as { result?: unknown }).result;
+  if (typeof result !== "number") {
+    return false;
+  }
+  let code = result >>> 0;
+  return code >= NS_ERROR_MODULE_FILES_FIRST && code <= NS_ERROR_MODULE_FILES_LAST;
 }
 
-async function materializeUploadBytes(
-  fileName: string,
-  fileBytesBase64: string,
-) {
+async function materializeUploadBytes(fileName: string, fileBytesBase64: string) {
   let tempDir = Zotero.getTempDirectory();
   let safeFileName = Zotero.File.getValidFileName(fileName.trim());
   if (!safeFileName) {
@@ -459,20 +603,16 @@ async function handleFulltextAttach(data: RequestData) {
     if (filePath !== null) {
       if (!FULLTEXT_ALLOWED_DIRS.some((dir) => filePath.startsWith(dir))) {
         throw badRequest(
-          "File path must be within allowed directories: " +
-            FULLTEXT_ALLOWED_DIRS.join(", "),
+          "File path must be within allowed directories: " + FULLTEXT_ALLOWED_DIRS.join(", "),
         );
       }
       try {
         attachment = await importStoredAttachment(parentItem, filePath, title);
       } catch (error) {
-        if (fileBytesBase64 === null || !isMissingFileError(error)) {
+        if (fileBytesBase64 === null || !isUnusableFilePathError(error)) {
           throw error;
         }
-        let fallbackName =
-          fileName !== null
-            ? fileName
-            : Zotero.File.pathToFile(filePath).leafName;
+        let fallbackName = fileName !== null ? fileName : Zotero.File.pathToFile(filePath).leafName;
         tempPath = await materializeUploadBytes(fallbackName, fileBytesBase64);
         attachment = await importStoredAttachment(parentItem, tempPath, title);
         sourceMode = "bytes_fallback";
@@ -491,9 +631,7 @@ async function handleFulltextAttach(data: RequestData) {
       try {
         Zotero.File.pathToFile(tempPath).remove(false);
       } catch (error) {
-        Zotero.logError(
-          error instanceof Error ? error : new Error(String(error)),
-        );
+        Zotero.logError(error instanceof Error ? error : new Error(String(error)));
       }
     }
   }
@@ -556,10 +694,7 @@ async function handleSetItemTags(data: RequestData) {
 
 async function handleSetItemCollections(data: RequestData) {
   let itemKey = requireNonEmptyString(data.item_key, "item_key");
-  let collectionKeys = normalizeStringList(
-    data.collection_keys,
-    "collection_keys",
-  );
+  let collectionKeys = normalizeStringList(data.collection_keys, "collection_keys");
   for (let collectionKey of collectionKeys) {
     await getUserCollectionOrThrow(collectionKey);
   }
@@ -573,10 +708,7 @@ async function handleSetItemCollections(data: RequestData) {
 }
 
 async function handleAttachNote(data: RequestData) {
-  let parentItemKey = requireNonEmptyString(
-    data.parent_item_key,
-    "parent_item_key",
-  );
+  let parentItemKey = requireNonEmptyString(data.parent_item_key, "parent_item_key");
   let noteText = requireString(data.note_text, "note_text");
   let parentItem = await getUserItemOrThrow(parentItemKey);
 
@@ -620,16 +752,10 @@ async function handleUpdateNote(data: RequestData) {
 }
 
 async function handleAttachURL(data: RequestData) {
-  let parentItemKey = requireNonEmptyString(
-    data.parent_item_key,
-    "parent_item_key",
-  );
+  let parentItemKey = requireNonEmptyString(data.parent_item_key, "parent_item_key");
   let url = requireNonEmptyString(data.url, "url");
   let parentItem = await getUserItemOrThrow(parentItemKey);
-  let title =
-    typeof data.title === "string" && data.title.trim()
-      ? data.title.trim()
-      : null;
+  let title = typeof data.title === "string" && data.title.trim() ? data.title.trim() : null;
 
   let attachment = await Zotero.Attachments.linkFromURL({
     url: url,
@@ -664,10 +790,7 @@ async function handleTrashItem(data: RequestData) {
 }
 
 async function handleTrashCollection(data: RequestData) {
-  let collectionKey = requireNonEmptyString(
-    data.collection_key,
-    "collection_key",
-  );
+  let collectionKey = requireNonEmptyString(data.collection_key, "collection_key");
   let collection = await getUserCollectionOrThrow(collectionKey);
   collection.deleted = true;
   await collection.saveTx();
@@ -675,10 +798,7 @@ async function handleTrashCollection(data: RequestData) {
 }
 
 async function handleRelinkAttachmentFile(data: RequestData) {
-  let attachmentKey = requireNonEmptyString(
-    data.attachment_key,
-    "attachment_key",
-  );
+  let attachmentKey = requireNonEmptyString(data.attachment_key, "attachment_key");
   let filePath = requireNonEmptyString(data.file_path, "file_path");
   let attachment = await getUserItemOrThrow(attachmentKey);
   if (!attachment.isAttachment()) {
@@ -709,10 +829,7 @@ async function handleCreateCollection(data: RequestData) {
 }
 
 async function handleRenameCollection(data: RequestData) {
-  let collectionKey = requireNonEmptyString(
-    data.collection_key,
-    "collection_key",
-  );
+  let collectionKey = requireNonEmptyString(data.collection_key, "collection_key");
   let newName = requireNonEmptyString(data.new_name, "new_name");
   let collection = await getUserCollectionOrThrow(collectionKey);
   collection.name = newName;
@@ -722,10 +839,7 @@ async function handleRenameCollection(data: RequestData) {
 }
 
 async function handleMoveCollection(data: RequestData) {
-  let collectionKey = requireNonEmptyString(
-    data.collection_key,
-    "collection_key",
-  );
+  let collectionKey = requireNonEmptyString(data.collection_key, "collection_key");
   let collection = await getUserCollectionOrThrow(collectionKey);
   let newParentKey: string | null = null;
   if (typeof data.new_parent_key === "string" && data.new_parent_key.trim()) {
@@ -733,10 +847,7 @@ async function handleMoveCollection(data: RequestData) {
     await getUserCollectionOrThrow(newParentKey);
   }
   // `false` is Zotero's documented "no parent" sentinel when no new parent was given.
-  setCollectionParentKey(
-    collection,
-    newParentKey === null ? false : newParentKey,
-  );
+  setCollectionParentKey(collection, newParentKey === null ? false : newParentKey);
   await collection.saveTx();
 
   return successResult("move_collection", collectionDetails(collection));
@@ -756,9 +867,7 @@ async function handleMergeCollections(data: RequestData) {
   for (let sourceKey of sourceKeys) {
     let sourceCollection = await getUserCollectionOrThrow(sourceKey);
     let descendents = sourceCollection.getDescendents(false, null, false);
-    if (
-      descendents.some((d) => d.type === "collection" && d.key === targetKey)
-    ) {
+    if (descendents.some((d) => d.type === "collection" && d.key === targetKey)) {
       throw conflict("Cannot merge a collection into one of its descendants");
     }
 
@@ -833,16 +942,11 @@ async function handleDeleteTag(data: RequestData) {
   search.addCondition("tag", "is", tagName);
   let itemIDs = await search.search();
 
-  let modifiedCount = 0;
-  if (itemIDs.length > 0) {
-    let items = await Zotero.Items.getAsync(itemIDs);
-    for (let item of items) {
-      if (item.removeTag(tagName)) {
-        await item.saveTx();
-        modifiedCount++;
-      }
-    }
-  }
+  // Zotero.Tags.removeFromLibrary already detaches the tag from every item that
+  // carries it. Doing that here first left it with an empty item set, and its
+  // UPDATE then built "WHERE itemID IN ()" and failed with "Parameter 1 is
+  // undefined". The search above is kept only to report how many items changed.
+  let modifiedCount = itemIDs.length;
 
   await removeTagsFromUserLibrary(userLibraryID(), [tagID]);
 
@@ -1081,15 +1185,10 @@ async function handleRemoveItemTags(data: RequestData) {
 
 async function handleAddItemToCollection(data: RequestData) {
   let itemKey = requireNonEmptyString(data.item_key, "item_key");
-  let collectionKey = requireNonEmptyString(
-    data.collection_key,
-    "collection_key",
-  );
+  let collectionKey = requireNonEmptyString(data.collection_key, "collection_key");
   let item = await getUserItemOrThrow(itemKey);
   let collection = await getUserCollectionOrThrow(collectionKey);
-  let currentKeys = item
-    .getCollections()
-    .map((id) => Zotero.Collections.get(id).key);
+  let currentKeys = item.getCollections().map(collectionKeyForID);
   if (!currentKeys.includes(collectionKey)) {
     item.setCollections([...currentKeys, collectionKey]);
     await item.saveTx();
@@ -1103,15 +1202,12 @@ async function handleAddItemToCollection(data: RequestData) {
 
 async function handleRemoveItemFromCollection(data: RequestData) {
   let itemKey = requireNonEmptyString(data.item_key, "item_key");
-  let collectionKey = requireNonEmptyString(
-    data.collection_key,
-    "collection_key",
-  );
+  let collectionKey = requireNonEmptyString(data.collection_key, "collection_key");
   let item = await getUserItemOrThrow(itemKey);
   let collection = await getUserCollectionOrThrow(collectionKey);
   let currentKeys = item
     .getCollections()
-    .map((id) => Zotero.Collections.get(id).key)
+    .map(collectionKeyForID)
     .filter((k) => k !== collectionKey);
   item.setCollections(currentKeys);
   await item.saveTx();
@@ -1122,11 +1218,17 @@ async function handleRemoveItemFromCollection(data: RequestData) {
   });
 }
 
-function extractIdentifiers(raw: string): Identifier[] {
+// Zotero.Utilities.extractIdentifiers finds every DOI, ISBN, arXiv ID and PMID in
+// free text; zotero-types does not declare it.
+function findIdentifiers(text: string): Identifier[] {
   let utilities = Zotero.Utilities as typeof Zotero.Utilities & {
     extractIdentifiers(identifier: string): Identifier[];
   };
-  let identifiers = utilities.extractIdentifiers(raw);
+  return utilities.extractIdentifiers(text);
+}
+
+function extractIdentifiers(raw: string): Identifier[] {
+  let identifiers = findIdentifiers(raw);
   if (!identifiers.length) {
     throw badRequest("Could not parse identifier");
   }
@@ -1138,10 +1240,7 @@ function createImportTranslator(): ImportTranslator {
   return new translateApi.Import();
 }
 
-function requireImportedItems(
-  value: unknown,
-  operation: string,
-): Zotero.Item[] {
+function requireImportedItems(value: unknown, operation: string): Zotero.Item[] {
   if (!Array.isArray(value)) {
     throw new Error(operation + " did not return an item array");
   }
@@ -1208,9 +1307,7 @@ async function translateIdentifier(
   search.setIdentifier(identifier);
   let translators = await search.getTranslators();
   if (translators.length === 0) {
-    throw notFound(
-      "No translator available for identifier: " + JSON.stringify(identifier),
-    );
+    throw notFound("No translator available for identifier: " + JSON.stringify(identifier));
   }
   search.setTranslator(translators);
   let items = await search.translate({
@@ -1219,9 +1316,7 @@ async function translateIdentifier(
     saveAttachments: true,
   });
   if (items === false || items.length === 0) {
-    throw notFound(
-      "No item found for identifier: " + JSON.stringify(identifier),
-    );
+    throw notFound("No item found for identifier: " + JSON.stringify(identifier));
   }
   return items;
 }
@@ -1259,6 +1354,1009 @@ async function handleImportByIdentifier(data: RequestData) {
   );
 }
 
+// ── import_from_url ─────────────────────────────────────────────────
+// One source URL in, one Zotero item out. Each method below is tried in order
+// until one identifies the source as exactly one work; every try is recorded as
+// an attempt, and the attempts are returned with the result or the 422 error.
+
+type SourceMethod =
+  | "web_translator"
+  | "page_metadata"
+  | "identifier"
+  | "published_bibtex"
+  | "external_service"
+  | "pdf_recognition";
+type AttemptOutcome = "identified" | "no_match" | "ambiguous" | "failed";
+type Attempt = { method: SourceMethod; outcome: AttemptOutcome; message: string };
+
+class SourceNotIdentifiedError extends ApiError {
+  attempts: Attempt[];
+  constructor(message: string, attempts: Attempt[]) {
+    super(422, message);
+    this.name = "SourceNotIdentifiedError";
+    this.attempts = attempts;
+  }
+}
+
+// A method ran and found nothing usable: no work, or more than one.
+class MethodMiss extends Error {
+  outcome: "no_match" | "ambiguous";
+  constructor(outcome: "no_match" | "ambiguous", message: string) {
+    super(message);
+    this.name = "MethodMiss";
+    this.outcome = outcome;
+  }
+}
+
+// The generic translator that reads citation_*, Dublin Core, Open Graph and
+// other embedded tags (translators/Embedded Metadata.js).
+let EMBEDDED_METADATA_TRANSLATOR_ID = "951c027d-74ac-47d4-a107-9c3069ab7b48";
+
+// A method's result: metadata that describes exactly one work, not yet saved.
+type Identification = {
+  json: TranslatorItemJSON;
+  translator: WebTranslatorInfo | null;
+  message: string;
+};
+type ImportOutcome = {
+  item: Zotero.Item;
+  existing: boolean;
+  method: SourceMethod;
+  translator: WebTranslatorInfo | null;
+};
+type FetchedSource =
+  | { kind: "pdf"; finalUrl: string }
+  | { kind: "html"; finalUrl: string; document: Document };
+type BibliographicSeed = { title: string; surname: string; year: string | null };
+type ServiceCandidate = {
+  title: string;
+  authors: string[];
+  year: string | null;
+  identifier: Identifier | null;
+};
+type ExternalService = {
+  name: string;
+  search(seed: BibliographicSeed): Promise<ServiceCandidate[]>;
+};
+
+// zotero-types declares Zotero.ItemFields as `any`.
+// Models zotero/zotero chrome/content/zotero/xpcom/data/itemFields.js.
+type ItemFieldsApi = { getID(field: string): number | false };
+// zotero-types does not declare Zotero.RecognizeDocument.
+// Models zotero/zotero chrome/content/zotero/xpcom/recognizeDocument.js.
+type RecognizeDocumentApi = {
+  recognizeItems(items: Zotero.Item[]): Promise<void>;
+};
+type DuplicateKeys = {
+  itemType: string;
+  title: string;
+  DOI: string;
+  ISBN: string;
+  url: string;
+};
+type ItemValueRow = { itemID: number; value: string };
+
+async function tryMethod<T extends { message: string }>(
+  attempts: Attempt[],
+  method: SourceMethod,
+  run: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    let result = await run();
+    attempts.push({ method, outcome: "identified", message: result.message });
+    return result;
+  } catch (error) {
+    if (error instanceof MethodMiss) {
+      attempts.push({ method, outcome: error.outcome, message: error.message });
+      return null;
+    }
+    attempts.push({ method, outcome: "failed", message: (error as Error).message });
+    return null;
+  }
+}
+
+function requireHttpUrl(value: unknown): string {
+  let raw = requireNonEmptyString(value, "url");
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw badRequest("url is not a valid URL: " + raw);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw badRequest("url must be an http or https URL: " + raw);
+  }
+  return parsed.href;
+}
+
+async function fetchSource(url: string): Promise<FetchedSource> {
+  let xhr: XMLHttpRequest;
+  try {
+    xhr = await Zotero.HTTP.request("GET", url, { responseType: "document" });
+  } catch (error) {
+    throw new ApiError(502, "Source could not be fetched: " + (error as Error).message);
+  }
+  let finalUrl = xhr.responseURL || url;
+  let contentType = xhr.getResponseHeader("Content-Type") ?? "";
+  let page = xhr.responseXML;
+  if (
+    /application\/pdf/i.test(contentType) ||
+    (page === null && new URL(finalUrl).pathname.toLowerCase().endsWith(".pdf"))
+  ) {
+    return { kind: "pdf", finalUrl };
+  }
+  if (page === null) {
+    throw new SourceNotIdentifiedError(
+      "Source is neither an HTML page nor a PDF (Content-Type: " + contentType + ")",
+      [],
+    );
+  }
+  return {
+    kind: "html",
+    finalUrl,
+    document: Zotero.HTTP.wrapDocument(page, finalUrl),
+  };
+}
+
+function createTranslateWeb(page: Document): ZoteroTranslateWebApi {
+  let translateApi = Zotero.Translate as ZoteroTranslateApi;
+  let translate = new translateApi.Web();
+  translate.setDocument(page);
+  return translate;
+}
+
+// Runs one web translator without saving. A translator that offers a choice
+// of items (a search or table-of-contents page) marks the URL as not naming one
+// work: the choice is declined and the method reports it as ambiguous.
+async function translatePage(
+  page: Document,
+  translator: WebTranslatorInfo,
+): Promise<TranslatorItemJSON> {
+  let translate = createTranslateWeb(page);
+  translate.setTranslator(translator);
+  let offeredChoice = false;
+  translate.setHandler("select", (_translate, _items, callback) => {
+    offeredChoice = true;
+    callback({});
+  });
+  let items: TranslatorItemJSON[];
+  try {
+    items = await translate.translate({ libraryID: false, saveAttachments: false });
+  } catch (error) {
+    if (offeredChoice) {
+      throw new MethodMiss("ambiguous", translator.label + " lists several items");
+    }
+    throw error;
+  }
+  if (offeredChoice) {
+    throw new MethodMiss("ambiguous", translator.label + " lists several items");
+  }
+  if (items.length !== 1) {
+    throw new MethodMiss(
+      items.length === 0 ? "no_match" : "ambiguous",
+      translator.label + " returned " + items.length + " items",
+    );
+  }
+  return items[0];
+}
+
+// A "webpage" item says only that the URL is a page; it does not identify a work.
+function requireWork(json: TranslatorItemJSON, source: string): TranslatorItemJSON {
+  if (json.itemType === "webpage") {
+    throw new MethodMiss("no_match", source + " describes only a web page");
+  }
+  return json;
+}
+
+const XHTML_NS = "http://www.w3.org/1999/xhtml";
+
+// The page's elements named NAME. The add-on's DOM types give the result of
+// querySelectorAll and of getElementsByTagName as any; the namespaced lookup is typed.
+function htmlElements(page: Document, name: string): Element[] {
+  return [...page.getElementsByTagNameNS(XHTML_NS, name)];
+}
+
+// The text in which identifier discovery looks for a DOI, ISBN, arXiv ID or
+// PMID: the URLs and their query values, plus every <meta> content on the page.
+// citation_reference tags are skipped because they name the works a paper cites.
+function identifierText(urls: string[], page: Document | null): string {
+  let parts: string[] = [];
+  for (let url of urls) {
+    parts.push(url);
+    for (let value of new URL(url).searchParams.values()) {
+      parts.push(value);
+    }
+  }
+  if (page !== null) {
+    for (let meta of htmlElements(page, "meta")) {
+      let content = meta.getAttribute("content");
+      if (content === null || meta.getAttribute("name")?.toLowerCase() === "citation_reference") {
+        continue;
+      }
+      parts.push(content);
+    }
+  }
+  return parts.join("\n");
+}
+
+function identifierKey(identifier: Identifier): string {
+  let [type, value] = Object.entries(identifier)[0];
+  if (type === "ISBN") {
+    return "ISBN:" + Zotero.Utilities.toISBN13(value);
+  }
+  return type + ":" + value.toLowerCase();
+}
+
+// Resolves an identifier to metadata through Zotero's search translators
+// (Crossref/DataCite for DOI, arXiv, PubMed, library catalogs for ISBN).
+async function resolveIdentifier(identifier: Identifier): Promise<TranslatorItemJSON> {
+  let search = createTranslateSearch();
+  search.setIdentifier(identifier);
+  let translators = await search.getTranslators();
+  if (translators.length === 0) {
+    throw new MethodMiss("no_match", "no translator resolves " + JSON.stringify(identifier));
+  }
+  search.setTranslator(translators);
+  let items = await search.translate({ libraryID: false, saveAttachments: false });
+  if (items.length !== 1) {
+    throw new MethodMiss(
+      items.length === 0 ? "no_match" : "ambiguous",
+      JSON.stringify(identifier) + " resolved to " + items.length + " items",
+    );
+  }
+  return items[0];
+}
+
+// Zotero.Utilities.extractIdentifiers takes any bare number of up to nine
+// digits as a PMID when it finds nothing else, which suits a string the user
+// typed as an identifier but not page text, where a year or a page count is
+// such a number. A PubMed page is identified by the PubMed web translator.
+async function identifyByIdentifier(text: string): Promise<Identification> {
+  let distinct = new Map<string, Identifier>();
+  for (let identifier of findIdentifiers(text)) {
+    if (!("PMID" in identifier)) {
+      distinct.set(identifierKey(identifier), identifier);
+    }
+  }
+  if (distinct.size === 0) {
+    throw new MethodMiss("no_match", "no DOI, ISBN or arXiv ID found");
+  }
+  if (distinct.size > 1) {
+    throw new MethodMiss(
+      "ambiguous",
+      "several identifiers found: " + [...distinct.keys()].join(", "),
+    );
+  }
+  let [key, identifier] = [...distinct.entries()][0];
+  let json = await resolveIdentifier(identifier);
+  return { json, translator: null, message: key };
+}
+
+async function identifyByPublishedBibTeX(
+  page: Document,
+  finalUrl: string,
+): Promise<Identification> {
+  let links = new Set<string>();
+  // An alternate <link> of BibTeX type, or an <a> whose href ends in .bib.
+  for (let link of htmlElements(page, "link")) {
+    let rel = link.getAttribute("rel")?.split(/\s+/) ?? [];
+    if (rel.includes("alternate") && link.getAttribute("type") === "application/x-bibtex") {
+      let href = link.getAttribute("href");
+      if (href !== null) {
+        links.add(new URL(href, finalUrl).href);
+      }
+    }
+  }
+  for (let anchor of htmlElements(page, "a")) {
+    let href = anchor.getAttribute("href");
+    if (href?.endsWith(".bib") === true) {
+      links.add(new URL(href, finalUrl).href);
+    }
+  }
+  if (links.size === 0) {
+    throw new MethodMiss("no_match", "the page links no BibTeX");
+  }
+  if (links.size > 1) {
+    throw new MethodMiss(
+      "ambiguous",
+      "the page links several BibTeX files: " + [...links].join(", "),
+    );
+  }
+  let [bibUrl] = [...links];
+  let xhr = await Zotero.HTTP.request("GET", bibUrl, { responseType: "text" });
+  let translator = createImportTranslator();
+  translator.setTranslator(BIBTEX_TRANSLATOR_ID);
+  translator.setString(responseTextOf(xhr, bibUrl));
+  let items = await translator.translate({ libraryID: false, saveAttachments: false });
+  if (items.length !== 1) {
+    throw new MethodMiss(
+      items.length === 0 ? "no_match" : "ambiguous",
+      bibUrl + " holds " + items.length + " entries",
+    );
+  }
+  return { json: items[0], translator: null, message: bibUrl };
+}
+
+// Title normalization from zotero/zotero chrome/content/zotero/xpcom/duplicates.js
+// `normalizeString`: strip diacritics, ASCII punctuation to spaces, lowercase.
+function normalizeText(value: string): string {
+  return Zotero.Utilities.removeDiacritics(value)
+    .replace(/[ !-/:-@[-`{-~]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function yearOf(date: string | undefined): string | null {
+  if (date === undefined || date === "") {
+    return null;
+  }
+  return Zotero.Date.strToDate(date).year ?? null;
+}
+
+// What the external services search by: the title, first author's surname and
+// year of the page's own metadata, when the page describes only itself.
+function seedFromJSON(json: TranslatorItemJSON): BibliographicSeed | null {
+  let title = json.title?.trim();
+  let creator = json.creators?.[0];
+  let surname = creator?.lastName ?? creator?.name?.trim().split(/\s+/).pop();
+  if (title === undefined || title === "" || surname === undefined || surname === "") {
+    return null;
+  }
+  return { title, surname, year: yearOf(json.date) };
+}
+
+// A candidate is the seed's work when the normalized titles are equal, the
+// seed's surname is one of the candidate's author name tokens, and the years
+// agree whenever both are known. Title equality alone would confuse two works
+// of the same name (Tate 1974 and Silverman 1986 are both "The Arithmetic of
+// Elliptic Curves").
+function matchesSeed(seed: BibliographicSeed, candidate: ServiceCandidate): boolean {
+  if (normalizeText(candidate.title) !== normalizeText(seed.title)) {
+    return false;
+  }
+  let surname = normalizeText(seed.surname);
+  let authorTokens = candidate.authors.flatMap((name) => normalizeText(name).split(" "));
+  if (!authorTokens.includes(surname)) {
+    return false;
+  }
+  return seed.year === null || candidate.year === null || seed.year === candidate.year;
+}
+
+// A text request that succeeded always has a body; a null body is a fault.
+function responseTextOf(xhr: XMLHttpRequest, url: string): string {
+  if (xhr.responseText === null) {
+    throw new Error(url + " answered with no response text");
+  }
+  return xhr.responseText;
+}
+
+async function requestJSON<T>(url: string, successCodes: number[] = [200]): Promise<T | null> {
+  let xhr = await Zotero.HTTP.request("GET", url, {
+    responseType: "text",
+    successCodes,
+    headers: { Accept: "application/json" },
+  });
+  if (xhr.status !== 200) {
+    return null;
+  }
+  return JSON.parse(responseTextOf(xhr, url)) as T;
+}
+
+// https://api.crossref.org/swagger-ui/index.html, /works
+type CrossrefWorks = {
+  message: {
+    items: {
+      DOI: string;
+      title?: string[];
+      author?: { family?: string; name?: string }[];
+      issued?: { "date-parts"?: (number | null)[][] };
+    }[];
+  };
+};
+// https://api.zbmath.org/docs, /document/_search
+type ZbmathSearch = {
+  result?: {
+    title?: { title?: string };
+    year?: string;
+    contributors?: { authors?: { name: string }[] };
+    links?: { type: string; identifier: string }[];
+  }[];
+};
+// https://openlibrary.org/dev/docs/api/search
+type OpenLibrarySearch = {
+  docs: {
+    title?: string;
+    author_name?: string[];
+    first_publish_year?: number;
+    editions?: { docs?: { isbn?: string[] }[] };
+  }[];
+};
+
+let ATOM_NS = "http://www.w3.org/2005/Atom";
+
+let EXTERNAL_SERVICES: ExternalService[] = [
+  {
+    name: "Crossref",
+    async search(seed) {
+      let url =
+        "https://api.crossref.org/works?rows=20&select=DOI,title,author,issued" +
+        "&query.bibliographic=" +
+        encodeURIComponent(seed.title) +
+        "&query.author=" +
+        encodeURIComponent(seed.surname);
+      let works = await requestJSON<CrossrefWorks>(url);
+      return (works?.message.items ?? []).map((work) => {
+        let year = work.issued?.["date-parts"]?.[0]?.[0];
+        return {
+          title: work.title?.[0] ?? "",
+          authors: (work.author ?? []).map((author) => author.family ?? author.name ?? ""),
+          year: typeof year === "number" ? String(year) : null,
+          identifier: { DOI: work.DOI },
+        };
+      });
+    },
+  },
+  {
+    name: "zbMATH Open",
+    async search(seed) {
+      let query = 'ti:"' + seed.title + '" au:' + seed.surname;
+      let url =
+        "https://api.zbmath.org/v1/document/_search?page=0&results_per_page=20" +
+        "&search_string=" +
+        encodeURIComponent(query);
+      // zbMATH answers a search with no results with 404.
+      let found = await requestJSON<ZbmathSearch>(url, [200, 404]);
+      return (found?.result ?? []).map((document) => {
+        let doi = document.links?.find((link) => link.type === "doi")?.identifier;
+        return {
+          title: document.title?.title ?? "",
+          authors: (document.contributors?.authors ?? []).map((author) => author.name),
+          year: document.year ?? null,
+          identifier: doi === undefined ? null : { DOI: doi },
+        };
+      });
+    },
+  },
+  {
+    name: "arXiv",
+    async search(seed) {
+      let query = 'ti:"' + seed.title + '" AND au:' + seed.surname;
+      let url =
+        "https://export.arxiv.org/api/query?max_results=20&search_query=" +
+        encodeURIComponent(query);
+      let xhr = await Zotero.HTTP.request("GET", url, { responseType: "document" });
+      let feed = xhr.responseXML;
+      if (feed === null) {
+        throw new Error("arXiv returned no Atom feed");
+      }
+      return [...feed.getElementsByTagNameNS(ATOM_NS, "entry")].map((entry) => {
+        let text = (name: string) =>
+          entry.getElementsByTagNameNS(ATOM_NS, name)[0]?.textContent?.trim() ?? "";
+        let arXiv = text("id").match(/abs\/(.+?)(?:v\d+)?$/)?.[1];
+        return {
+          title: text("title").replace(/\s+/g, " "),
+          authors: [...entry.getElementsByTagNameNS(ATOM_NS, "author")].map(
+            (author) => author.getElementsByTagNameNS(ATOM_NS, "name")[0]?.textContent ?? "",
+          ),
+          year: text("published").slice(0, 4) || null,
+          identifier: arXiv === undefined ? null : { arXiv },
+        };
+      });
+    },
+  },
+  {
+    name: "Open Library",
+    async search(seed) {
+      let url =
+        "https://openlibrary.org/search.json?limit=20" +
+        "&fields=key,title,author_name,first_publish_year,editions,editions.isbn" +
+        "&title=" +
+        encodeURIComponent(seed.title) +
+        "&author=" +
+        encodeURIComponent(seed.surname);
+      let found = await requestJSON<OpenLibrarySearch>(url);
+      return (found?.docs ?? []).map((work) => {
+        // The first ISBN of the edition Open Library ranks first; the other
+        // ISBNs of that edition are its other formats.
+        let isbn = (work.editions?.docs?.[0]?.isbn ?? [])
+          .map((value) => Zotero.Utilities.cleanISBN(value))
+          .find((value) => value !== false);
+        return {
+          title: work.title ?? "",
+          authors: work.author_name ?? [],
+          year: work.first_publish_year === undefined ? null : String(work.first_publish_year),
+          identifier: isbn === undefined ? null : { ISBN: Zotero.Utilities.toISBN13(isbn) },
+        };
+      });
+    },
+  },
+];
+
+async function identifyByService(
+  service: ExternalService,
+  seed: BibliographicSeed,
+): Promise<Identification> {
+  let matches = new Map<string, Identifier>();
+  for (let candidate of await service.search(seed)) {
+    if (candidate.identifier !== null && matchesSeed(seed, candidate)) {
+      matches.set(identifierKey(candidate.identifier), candidate.identifier);
+    }
+  }
+  if (matches.size === 0) {
+    throw new MethodMiss(
+      "no_match",
+      service.name + ": no record matches the title, author and year",
+    );
+  }
+  if (matches.size > 1) {
+    throw new MethodMiss(
+      "ambiguous",
+      service.name + ": several records match: " + [...matches.keys()].join(", "),
+    );
+  }
+  let [key, identifier] = [...matches.entries()][0];
+  let json = await resolveIdentifier(identifier);
+  return { json, translator: null, message: service.name + ": " + key };
+}
+
+async function identifyPage(
+  requestedUrl: string,
+  finalUrl: string,
+  page: Document,
+  attempts: Attempt[],
+): Promise<(Identification & { method: SourceMethod }) | null> {
+  let detected = await createTranslateWeb(page).getTranslators();
+  let siteTranslators = detected.filter(
+    (translator) => translator.translatorID !== EMBEDDED_METADATA_TRANSLATOR_ID,
+  );
+  if (siteTranslators.length === 0) {
+    attempts.push({
+      method: "web_translator",
+      outcome: "no_match",
+      message: "no site translator detected the page",
+    });
+  }
+  for (let translator of siteTranslators) {
+    let found = await tryMethod(attempts, "web_translator", async () => ({
+      json: requireWork(await translatePage(page, translator), translator.label),
+      translator,
+      message: translator.label,
+    }));
+    if (found) {
+      return { ...found, method: "web_translator" };
+    }
+  }
+
+  // `as` keeps the declared union: the closure below assigns the seed, and
+  // TypeScript would otherwise narrow it to `null` for the rest of the function.
+  let seed = null as BibliographicSeed | null;
+  let embedded = detected.find(
+    (translator) => translator.translatorID === EMBEDDED_METADATA_TRANSLATOR_ID,
+  );
+  if (embedded === undefined) {
+    attempts.push({
+      method: "page_metadata",
+      outcome: "no_match",
+      message: "the page carries no embedded citation metadata",
+    });
+  } else {
+    let found = await tryMethod(attempts, "page_metadata", async () => {
+      let json = await translatePage(page, embedded);
+      seed = seedFromJSON(json);
+      return {
+        json: requireWork(json, embedded.label),
+        translator: embedded,
+        message: embedded.label,
+      };
+    });
+    if (found) {
+      return { ...found, method: "page_metadata" };
+    }
+  }
+
+  let byIdentifier = await tryMethod(attempts, "identifier", () =>
+    identifyByIdentifier(identifierText([requestedUrl, finalUrl], page)),
+  );
+  if (byIdentifier) {
+    return { ...byIdentifier, method: "identifier" };
+  }
+
+  let byBibTeX = await tryMethod(attempts, "published_bibtex", () =>
+    identifyByPublishedBibTeX(page, finalUrl),
+  );
+  if (byBibTeX) {
+    return { ...byBibTeX, method: "published_bibtex" };
+  }
+
+  if (seed === null) {
+    attempts.push({
+      method: "external_service",
+      outcome: "no_match",
+      message: "the page names no title and author to search for",
+    });
+    return null;
+  }
+  let knownSeed = seed;
+  for (let service of EXTERNAL_SERVICES) {
+    let found = await tryMethod(attempts, "external_service", () =>
+      identifyByService(service, knownSeed),
+    );
+    if (found) {
+      return { ...found, method: "external_service" };
+    }
+  }
+  return null;
+}
+
+function duplicateKeysFromJSON(json: TranslatorItemJSON): DuplicateKeys {
+  return {
+    itemType: json.itemType,
+    title: json.title ?? "",
+    DOI: json.DOI ?? "",
+    ISBN: json.ISBN ?? "",
+    url: json.url ?? "",
+  };
+}
+
+function duplicateKeysFromItem(item: Zotero.Item): DuplicateKeys {
+  return {
+    itemType: item.itemType,
+    title: item.getField("title"),
+    DOI: item.getField("DOI"),
+    ISBN: item.getField("ISBN"),
+    url: item.getField("url"),
+  };
+}
+
+async function fieldRows(field: string, itemType: string | null): Promise<ItemValueRow[]> {
+  let fieldID = (Zotero.ItemFields as ItemFieldsApi).getID(field);
+  if (fieldID === false) {
+    throw new Error("Zotero has no field " + field);
+  }
+  let params: number[] = [userLibraryID(), fieldID];
+  let sql =
+    "SELECT itemID, value FROM items JOIN itemData USING (itemID) " +
+    "JOIN itemDataValues USING (valueID) " +
+    "WHERE libraryID=? AND fieldID=? " +
+    "AND itemID NOT IN (SELECT itemID FROM deletedItems)";
+  if (itemType !== null) {
+    let itemTypeID = Zotero.ItemTypes.getID(itemType);
+    if (itemTypeID === false) {
+      throw new Error("Zotero has no item type " + itemType);
+    }
+    sql += " AND itemTypeID=?";
+    params.push(itemTypeID);
+  }
+  let rows = await Zotero.DB.queryAsync(sql, params);
+  return (rows ?? []) as ItemValueRow[];
+}
+
+// The item already in the library that is this work, by the rules of Zotero's
+// duplicate finder (chrome/content/zotero/xpcom/duplicates.js): equal DOI, or
+// equal ISBN between books. A URL counts only together with an equal title,
+// because one landing URL can serve different papers over time.
+async function findExistingItem(
+  keys: DuplicateKeys,
+  excludeID: number | null,
+): Promise<Zotero.Item | null> {
+  let matchIDs: number[] = [];
+  let doi = Zotero.Utilities.cleanDOI(keys.DOI);
+  if (doi !== null && doi !== "") {
+    for (let row of await fieldRows("DOI", null)) {
+      if (row.value.trim().toUpperCase() === doi.toUpperCase()) {
+        matchIDs.push(row.itemID);
+      }
+    }
+  }
+  let isbn = keys.itemType === "book" ? Zotero.Utilities.cleanISBN(keys.ISBN) : false;
+  if (isbn !== false) {
+    let wanted = Zotero.Utilities.toISBN13(isbn);
+    for (let row of await fieldRows("ISBN", "book")) {
+      let values = String(row.value)
+        .split(/\s+/)
+        .map((value) => Zotero.Utilities.cleanISBN(value));
+      if (values.some((value) => value !== false && Zotero.Utilities.toISBN13(value) === wanted)) {
+        matchIDs.push(row.itemID);
+      }
+    }
+  }
+  let title = normalizeText(keys.title);
+  if (keys.url && title) {
+    for (let row of await fieldRows("url", null)) {
+      if (row.value !== keys.url) {
+        continue;
+      }
+      let candidate = await Zotero.Items.getAsync(row.itemID);
+      if (candidate !== false && normalizeText(candidate.getField("title")) === title) {
+        matchIDs.push(row.itemID);
+      }
+    }
+  }
+  for (let itemID of [...new Set(matchIDs)].sort((a, b) => a - b)) {
+    if (itemID === excludeID) {
+      continue;
+    }
+    let item = await Zotero.Items.getAsync(itemID);
+    if (item !== false && item.isRegularItem()) {
+      return item;
+    }
+  }
+  return null;
+}
+
+// An existing item is returned as the result and gains the requested
+// collections; nothing else about it changes.
+async function fileExistingItem(item: Zotero.Item, collectionIDs: number[]): Promise<void> {
+  let missing = collectionIDs.filter((id) => !item.getCollections().includes(id));
+  if (missing.length === 0) {
+    return;
+  }
+  for (let id of missing) {
+    item.addToCollection(id);
+  }
+  await item.saveTx();
+}
+
+async function saveIdentification(
+  identification: Identification & { method: SourceMethod },
+  collectionIDs: number[],
+): Promise<ImportOutcome> {
+  let existing = await findExistingItem(duplicateKeysFromJSON(identification.json), null);
+  if (existing) {
+    await fileExistingItem(existing, collectionIDs);
+    return {
+      item: existing,
+      existing: true,
+      method: identification.method,
+      translator: identification.translator,
+    };
+  }
+  let translateApi = Zotero.Translate as ZoteroTranslateApi;
+  let saver = new translateApi.ItemSaver({
+    libraryID: userLibraryID(),
+    collections: collectionIDs.length ? collectionIDs : false,
+    attachmentMode: translateApi.ItemSaver.ATTACHMENT_MODE_IGNORE,
+  });
+  let items = await saver.saveItems([identification.json], () => {});
+  if (items.length !== 1) {
+    throw new Error("import_from_url saved " + items.length + " items instead of one");
+  }
+  return {
+    item: items[0],
+    existing: false,
+    method: identification.method,
+    translator: identification.translator,
+  };
+}
+
+// Zotero's "Retrieve Metadata for PDF": the PDF is stored as a standalone
+// attachment, and the recognizer creates its parent item from the DOI or ISBN
+// in the text, or from Zotero's recognizer service. The recognizer logs its
+// own errors instead of throwing, so a missing parent is the only failure
+// signal. The attachment is scratch and is erased; the saved parent is returned.
+async function recognizeParent(finalUrl: string): Promise<Zotero.Item> {
+  let attachment = await Zotero.Attachments.importFromURL({
+    libraryID: userLibraryID(),
+    url: finalUrl,
+    contentType: "application/pdf",
+  });
+  let recognizer = (Zotero as typeof Zotero & { RecognizeDocument: RecognizeDocumentApi })
+    .RecognizeDocument;
+  await recognizer.recognizeItems([attachment]);
+  let parentID = attachment.parentItemID;
+  await attachment.eraseTx();
+  if (parentID === undefined || parentID === false) {
+    throw new MethodMiss(
+      "no_match",
+      "the recognizer produced no parent item (see the Zotero debug log)",
+    );
+  }
+  let parent = await Zotero.Items.getAsync(parentID);
+  if (parent === false) {
+    throw new Error("recognized parent item " + parentID + " is missing");
+  }
+  return parent;
+}
+
+async function recognizePdf(
+  finalUrl: string,
+  collectionIDs: number[],
+): Promise<Omit<ImportOutcome, "method"> & { message: string }> {
+  let parent = await recognizeParent(finalUrl);
+  let existing = await findExistingItem(duplicateKeysFromItem(parent), parent.id);
+  if (existing) {
+    await parent.eraseTx();
+    await fileExistingItem(existing, collectionIDs);
+    return {
+      item: existing,
+      existing: true,
+      translator: null,
+      message: existing.getField("title"),
+    };
+  }
+  if (collectionIDs.length) {
+    parent.setCollections(collectionIDs);
+    await parent.saveTx();
+  }
+  return { item: parent, existing: false, translator: null, message: parent.getField("title") };
+}
+
+async function importPdfSource(
+  requestedUrl: string,
+  finalUrl: string,
+  collectionIDs: number[],
+  attempts: Attempt[],
+): Promise<ImportOutcome | null> {
+  let recognized = await tryMethod(attempts, "pdf_recognition", () =>
+    recognizePdf(finalUrl, collectionIDs),
+  );
+  if (recognized) {
+    return { ...recognized, method: "pdf_recognition" };
+  }
+  let byIdentifier = await tryMethod(attempts, "identifier", () =>
+    identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
+  );
+  if (byIdentifier) {
+    return saveIdentification({ ...byIdentifier, method: "identifier" }, collectionIDs);
+  }
+  return null;
+}
+
+async function handleImportFromUrl(data: RequestData) {
+  let url = requireHttpUrl(data.url);
+  let collectionKeys = Boolean(data.collection_keys)
+    ? normalizeStringList(data.collection_keys, "collection_keys")
+    : [];
+  let collectionIDs: number[] = [];
+  for (let collectionKey of collectionKeys) {
+    let collection = await getUserCollectionOrThrow(collectionKey);
+    collectionIDs.push(collection.id);
+  }
+
+  let attempts: Attempt[] = [];
+  let source = await fetchSource(url);
+  let outcome: ImportOutcome | null;
+  if (source.kind === "pdf") {
+    outcome = await importPdfSource(url, source.finalUrl, collectionIDs, attempts);
+  } else {
+    let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
+    outcome =
+      identification === null ? null : await saveIdentification(identification, collectionIDs);
+  }
+  if (outcome === null) {
+    throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
+  }
+
+  return successResult(
+    "import_from_url",
+    {
+      url,
+      final_url: source.finalUrl,
+      collection_keys: collectionKeys,
+      translator:
+        outcome.translator === null
+          ? null
+          : { translator_id: outcome.translator.translatorID, label: outcome.translator.label },
+      attempts,
+    },
+    {
+      item_key: outcome.item.key,
+      item_id: outcome.item.id,
+      method: outcome.method,
+      existing: outcome.existing,
+    },
+  );
+}
+
+// ── resolve_url ─────────────────────────────────────────────────────
+// import_from_url without the save: the same fetch and the same methods in the
+// same order, answered with the identified work as CSL-JSON. The recognizer
+// can only save, so its parent item is converted and then erased.
+
+// Zotero.Utilities.Item.itemToCSLJSON accepts a Zotero.Item or translator item
+// JSON; zotero-types does not declare it.
+// Models zotero/utilities utilities_item.js `itemToCSLJSON`.
+type CslItem = JsonPayload & { type: string };
+type ItemUtilitiesApi = { itemToCSLJSON(item: Zotero.Item | TranslatorItemJSON): CslItem };
+type Resolution = {
+  csl: CslItem;
+  itemType: string;
+  method: SourceMethod;
+  translator: WebTranslatorInfo | null;
+};
+
+function itemToCsl(item: Zotero.Item | TranslatorItemJSON): CslItem {
+  let utilities = Zotero.Utilities as typeof Zotero.Utilities & { Item: ItemUtilitiesApi };
+  return utilities.Item.itemToCSLJSON(item);
+}
+
+function resolveIdentification(
+  identification: Identification & { method: SourceMethod },
+): Resolution {
+  return {
+    csl: itemToCsl(identification.json),
+    itemType: identification.json.itemType,
+    method: identification.method,
+    translator: identification.translator,
+  };
+}
+
+async function recognizeWithoutSaving(
+  finalUrl: string,
+): Promise<{ csl: CslItem; itemType: string; message: string }> {
+  let parent = await recognizeParent(finalUrl);
+  try {
+    let csl = itemToCsl(parent);
+    // The CSL id is the URI of the parent, which is erased below.
+    delete csl.id;
+    return {
+      csl,
+      itemType: parent.itemType,
+      message: parent.getField("title"),
+    };
+  } finally {
+    await parent.eraseTx();
+  }
+}
+
+async function resolvePdfSource(
+  requestedUrl: string,
+  finalUrl: string,
+  attempts: Attempt[],
+): Promise<Resolution | null> {
+  let recognized = await tryMethod(attempts, "pdf_recognition", () =>
+    recognizeWithoutSaving(finalUrl),
+  );
+  if (recognized) {
+    return {
+      csl: recognized.csl,
+      itemType: recognized.itemType,
+      method: "pdf_recognition",
+      translator: null,
+    };
+  }
+  let byIdentifier = await tryMethod(attempts, "identifier", () =>
+    identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
+  );
+  if (byIdentifier) {
+    return resolveIdentification({ ...byIdentifier, method: "identifier" });
+  }
+  return null;
+}
+
+async function handleResolveUrl(data: RequestData) {
+  let url = requireHttpUrl(data.url);
+  let attempts: Attempt[] = [];
+  let source = await fetchSource(url);
+  let resolution: Resolution | null;
+  if (source.kind === "pdf") {
+    resolution = await resolvePdfSource(url, source.finalUrl, attempts);
+  } else {
+    let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
+    resolution = identification === null ? null : resolveIdentification(identification);
+  }
+  if (resolution === null) {
+    throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
+  }
+
+  return successResult(
+    "resolve_url",
+    {
+      url,
+      final_url: source.finalUrl,
+      translator:
+        resolution.translator === null
+          ? null
+          : {
+              translator_id: resolution.translator.translatorID,
+              label: resolution.translator.label,
+            },
+      attempts,
+    },
+    { method: resolution.method, item_type: resolution.itemType, csl: resolution.csl },
+  );
+}
+
 function handleGetSelectedCollection(): JsonPayload {
   let pane = Zotero.getActiveZoteroPane() as ActiveZoteroPane;
   let collection = pane.getSelectedCollection();
@@ -1283,10 +2381,7 @@ async function handleRestoreItem(data: RequestData) {
 }
 
 async function handleUpdateAttachmentTitle(data: RequestData) {
-  let attachmentKey = requireNonEmptyString(
-    data.attachment_key,
-    "attachment_key",
-  );
+  let attachmentKey = requireNonEmptyString(data.attachment_key, "attachment_key");
   let newTitle = requireNonEmptyString(data.new_title, "new_title");
   let attachment = await getUserItemOrThrow(attachmentKey);
   if (!attachment.isAttachment()) {
@@ -1397,9 +2492,109 @@ async function runWrite(data: RequestData) {
       return handleRestoreItem(data);
     case "update_attachment_title":
       return handleUpdateAttachmentTitle(data);
+    case "import_from_url":
+      return handleImportFromUrl(data);
+    case "resolve_url":
+      return handleResolveUrl(data);
     default:
       throw badRequest("Unsupported operation: " + operation);
   }
+}
+
+function jsonResult(status: number, payload: JsonPayload): EndpointResult {
+  return [status, "application/json", JSON.stringify(payload)];
+}
+
+async function handleAttachRequest(data: unknown): Promise<EndpointResult> {
+  try {
+    log("Received POST request to " + FULLTEXT_ATTACH_PATH + " [v" + PLUGIN_VERSION + "]");
+    return jsonResult(200, await handleFulltextAttach(requireRequestObject(data)));
+  } catch (error) {
+    let msg = (error as Error).message;
+    let status = isApiError(error) ? error.status : 500;
+    log("Error in " + FULLTEXT_ATTACH_PATH + " [v" + PLUGIN_VERSION + "]: " + msg);
+    return jsonResult(
+      status,
+      errorResult("attach_file_to_item", "attach_endpoint", msg, {
+        request: data,
+      }),
+    );
+  }
+}
+
+async function handleWriteRequest(data: unknown): Promise<EndpointResult> {
+  // operation may be absent on a malformed request; label it explicitly for
+  // diagnostics. This is the error-rendering boundary, not a runtime default.
+  // It is computed inside the try: reading data.operation on a null body
+  // throws, and doing that outside the try left the error unrendered, which
+  // hung the request forever instead of answering 400.
+  let operationLabel = "unknown_operation";
+  try {
+    let body = requireRequestObject(data);
+    if (typeof body.operation === "string") {
+      operationLabel = body.operation;
+    }
+    log("Received POST request to " + LOCAL_WRITE_PATH + " [operation=" + operationLabel + "]");
+    return jsonResult(200, await runWrite(body));
+  } catch (error) {
+    let msg = (error as Error).message;
+    let status = isApiError(error) ? error.status : 500;
+    log("Error in " + LOCAL_WRITE_PATH + " [operation=" + operationLabel + "]: " + msg);
+    if (error instanceof SourceNotIdentifiedError) {
+      return jsonResult(
+        status,
+        errorResult(operationLabel, "identify_source", msg, {
+          request: data,
+          attempts: error.attempts,
+        }),
+      );
+    }
+    return jsonResult(
+      status,
+      errorResult(operationLabel, "write_endpoint", msg, { request: data }),
+    );
+  }
+}
+
+// rootURI of the installed XPI, captured at startup; the bundled openapi.yaml
+// is read back from it.
+let pluginRootURI = "";
+
+async function openApiSpecText(): Promise<string> {
+  // Bundled into the XPI by build.py next to bootstrap.js. rootURI is a
+  // jar:file://…!/ URI for a packaged install, and Zotero.File.getContentsFromURLAsync
+  // cannot read those: it routes through Zotero.HTTP._parseURI, which reads
+  // nsIURI.username and throws NS_ERROR_FAILURE on a jar: URI. fetch() reads it
+  // directly in the add-on's privileged scope.
+  let response = await fetch(pluginRootURI + "openapi.yaml");
+  if (!response.ok) {
+    throw new Error("bundled openapi.yaml could not be read: HTTP " + String(response.status));
+  }
+  let text = await response.text();
+  let publicBaseUrl = Zotero.Prefs.get(PUBLIC_BASE_URL_PREF, true);
+  if (typeof publicBaseUrl === "string" && publicBaseUrl !== "") {
+    // The spec's single server entry is the loopback URL; a set pref rewrites
+    // it so a schema imported by URL points at the tunnel hostname. Fail loud
+    // if that exact server line is absent rather than silently serving a spec
+    // that still points at loopback — the whole point of the pref is to not do
+    // that.
+    // A presence check plus a first-match replace cannot tell the servers entry from
+    // any other line that happens to contain the same URL — it would rewrite the wrong
+    // one and serve a spec still pointing at loopback while claiming to be published.
+    // Requiring exactly one occurrence makes that ambiguity impossible to reach.
+    let loopbackServer = "url: http://127.0.0.1:23119";
+    let occurrences = text.split(loopbackServer).length - 1;
+    if (occurrences !== 1) {
+      throw new Error(
+        "openapi.yaml must contain exactly one '" +
+          loopbackServer +
+          "' entry to rewrite for publicBaseURL, found " +
+          String(occurrences),
+      );
+    }
+    return text.replace(loopbackServer, "url: " + publicBaseUrl.replace(/\/+$/, ""));
+  }
+  return text;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1419,46 +2614,35 @@ async function startup({
 }): Promise<void> {
   void id;
   void version;
-  void rootURI;
+  pluginRootURI = rootURI;
   log("Starting " + PLUGIN_VERSION);
+
+  // Make the auth state visible in the log, so an operator can confirm the
+  // write surface is gated before exposing it (or see that it is open).
+  let tokenPref = Zotero.Prefs.get(TOKEN_PREF, true);
+  let publicPref = Zotero.Prefs.get(PUBLIC_BASE_URL_PREF, true);
+  let authEnabled = typeof tokenPref === "string" && tokenPref !== "";
+  let published = typeof publicPref === "string" && publicPref !== "";
+  log(
+    authEnabled
+      ? "Bearer auth ENABLED for /write and /attach (token pref set)"
+      : published
+        ? "Bearer auth REQUIRED but no token pref set: /write and /attach are " +
+          "refused because publicBaseURL publishes them beyond loopback."
+        : "Bearer auth DISABLED: /write and /attach are unauthenticated " +
+          "(loopback-only default). Do not expose beyond loopback in this state.",
+  );
 
   AttachEndpoint = function () {};
   AttachEndpoint.prototype = {
     supportedMethods: ["POST"],
     supportedDataTypes: ["application/json"],
-    init: async function (data: RequestData, sendResponse: SendResponse) {
-      try {
-        log(
-          "Received POST request to " +
-            FULLTEXT_ATTACH_PATH +
-            " [v" +
-            PLUGIN_VERSION +
-            "]",
-        );
-        sendJSON(
-          sendResponse,
-          200,
-          await handleFulltextAttach(requireRequestObject(data)),
-        );
-      } catch (error) {
-        let msg = (error as Error).message;
-        let status = isApiError(error) ? error.status : 500;
-        log(
-          "Error in " +
-            FULLTEXT_ATTACH_PATH +
-            " [v" +
-            PLUGIN_VERSION +
-            "]: " +
-            msg,
-        );
-        sendJSON(
-          sendResponse,
-          status,
-          errorResult("attach_file_to_item", "attach_endpoint", msg, {
-            request: data,
-          }),
-        );
+    init: function (request: EndpointRequest) {
+      let denied = bearerAuthFailure(request);
+      if (denied !== null) {
+        return denied;
       }
+      return handleAttachRequest(request.data);
     },
   };
 
@@ -1466,43 +2650,12 @@ async function startup({
   WriteEndpoint.prototype = {
     supportedMethods: ["POST"],
     supportedDataTypes: ["application/json"],
-    init: async function (data: RequestData, sendResponse: SendResponse) {
-      // operation may be absent on a malformed request; label it explicitly for
-      // diagnostics. This is the error-rendering boundary, not a runtime default.
-      // It is computed inside the try: reading data.operation on a null body
-      // throws, and doing that outside the try left sendResponse uncalled, which
-      // hung the request forever instead of answering 400.
-      let operationLabel = "unknown_operation";
-      try {
-        let body = requireRequestObject(data);
-        if (typeof body.operation === "string") {
-          operationLabel = body.operation;
-        }
-        log(
-          "Received POST request to " +
-            LOCAL_WRITE_PATH +
-            " [operation=" +
-            operationLabel +
-            "]",
-        );
-        sendJSON(sendResponse, 200, await runWrite(body));
-      } catch (error) {
-        let msg = (error as Error).message;
-        let status = isApiError(error) ? error.status : 500;
-        log(
-          "Error in " +
-            LOCAL_WRITE_PATH +
-            " [operation=" +
-            operationLabel +
-            "]: " +
-            msg,
-        );
-        sendJSON(
-          sendResponse,
-          status,
-          errorResult(operationLabel, "write_endpoint", msg, { request: data }),
-        );
+    init: function (request: EndpointRequest) {
+      let denied = bearerAuthFailure(request);
+      if (denied !== null) {
+        return denied;
       }
+      return handleWriteRequest(request.data);
     },
   };
 
@@ -1510,23 +2663,32 @@ async function startup({
   VersionEndpoint.prototype = {
     supportedMethods: ["GET"],
     init: function (_data: unknown, sendResponse: SendResponse) {
-      log(
-        "Received GET request to " +
-          VERSION_PATH +
-          " [v" +
-          PLUGIN_VERSION +
-          "]",
-      );
+      log("Received GET request to " + VERSION_PATH + " [v" + PLUGIN_VERSION + "]");
       sendJSON(sendResponse, 200, pluginVersionPayload());
+    },
+  };
+
+  OpenApiEndpoint = function () {};
+  OpenApiEndpoint.prototype = {
+    supportedMethods: ["GET"],
+    // The schema is a public static document: the GPT builder imports it by
+    // URL and humans open it in a browser, so Zotero's browser-request block
+    // is opted out for this path only.
+    allowRequestsFromUnsafeWebContent: true,
+    init: async function (_request: EndpointRequest): Promise<EndpointResult> {
+      log("Received GET request to " + OPENAPI_PATH + " [v" + PLUGIN_VERSION + "]");
+      return [200, "text/yaml; charset=utf-8", await openApiSpecText()];
     },
   };
 
   Zotero.Server.Endpoints[FULLTEXT_ATTACH_PATH] = AttachEndpoint;
   Zotero.Server.Endpoints[LOCAL_WRITE_PATH] = WriteEndpoint;
   Zotero.Server.Endpoints[VERSION_PATH] = VersionEndpoint;
+  Zotero.Server.Endpoints[OPENAPI_PATH] = OpenApiEndpoint;
   log("Registered " + FULLTEXT_ATTACH_PATH + " endpoint");
   log("Registered " + LOCAL_WRITE_PATH + " endpoint");
   log("Registered " + VERSION_PATH + " endpoint");
+  log("Registered " + OPENAPI_PATH + " endpoint");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1547,19 +2709,24 @@ function shutdown(
   void id;
   void version;
   void rootURI;
-  if (reason === APP_SHUTDOWN) {return;}
+  if (reason === APP_SHUTDOWN) {
+    return;
+  }
   log("Shutting down " + PLUGIN_VERSION);
   // Reflect.deleteProperty is the non-syntactic form of `delete obj[key]`; the
   // endpoint registry is keyed by request path, so the key is always computed.
   Reflect.deleteProperty(Zotero.Server.Endpoints, FULLTEXT_ATTACH_PATH);
   Reflect.deleteProperty(Zotero.Server.Endpoints, LOCAL_WRITE_PATH);
   Reflect.deleteProperty(Zotero.Server.Endpoints, VERSION_PATH);
+  Reflect.deleteProperty(Zotero.Server.Endpoints, OPENAPI_PATH);
   AttachEndpoint = undefined;
   WriteEndpoint = undefined;
   VersionEndpoint = undefined;
+  OpenApiEndpoint = undefined;
   log("Unregistered " + FULLTEXT_ATTACH_PATH + " endpoint");
   log("Unregistered " + LOCAL_WRITE_PATH + " endpoint");
   log("Unregistered " + VERSION_PATH + " endpoint");
+  log("Unregistered " + OPENAPI_PATH + " endpoint");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

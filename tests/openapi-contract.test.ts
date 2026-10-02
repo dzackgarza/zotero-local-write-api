@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import * as ts from "typescript";
 import * as fs from "fs";
 import * as path from "path";
+import * as ts from "typescript";
 
 // Parse openapi.yaml with a minimal YAML parser (js-yaml is already
 // available as a transitive dependency of redocly).
@@ -74,7 +74,9 @@ function findRunWriteSwitch(source: ts.SourceFile): ts.SwitchStatement | null {
           return;
         }
         ts.forEachChild(n, findSwitch);
-        if (result) {return;}
+        if (result) {
+          return;
+        }
       }
       findSwitch(node);
     }
@@ -87,13 +89,13 @@ function findRunWriteSwitch(source: ts.SourceFile): ts.SwitchStatement | null {
 }
 
 // Extract switch case strings and the handler call for each
-function extractSwitchCases(
-  switchStmt: ts.SwitchStatement,
-): { op: string; handlerName: string }[] {
+function extractSwitchCases(switchStmt: ts.SwitchStatement): { op: string; handlerName: string }[] {
   const cases: { op: string; handlerName: string }[] = [];
 
   for (const clause of switchStmt.caseBlock.clauses) {
-    if (ts.isDefaultClause(clause)) {continue;}
+    if (ts.isDefaultClause(clause)) {
+      continue;
+    }
 
     const caseExpr = clause.expression;
     if (!ts.isStringLiteral(caseExpr)) {
@@ -120,9 +122,7 @@ function extractSwitchCases(
     if (ts.isIdentifier(callExpr.expression)) {
       handlerName = callExpr.expression.text;
     } else {
-      throw new Error(
-        `Case "${op}" handler call expression is not a simple identifier`,
-      );
+      throw new Error(`Case "${op}" handler call expression is not a simple identifier`);
     }
 
     cases.push({ op, handlerName });
@@ -139,10 +139,7 @@ function extractSwitchCases(
 }
 
 // Find the handler function and extract data.<field> reads
-function extractHandlerFields(
-  source: ts.SourceFile,
-  handlerName: string,
-): string[] {
+function extractHandlerFields(source: ts.SourceFile, handlerName: string): string[] {
   const fields = new Set<string>();
 
   function visit(node: ts.Node) {
@@ -174,10 +171,7 @@ function extractHandlerFields(
 }
 
 // Find the first string argument to successResult() in a handler
-function extractSuccessOperation(
-  source: ts.SourceFile,
-  handlerName: string,
-): string | null {
+function extractSuccessOperation(source: ts.SourceFile, handlerName: string): string | null {
   let result: string | null = null;
 
   function visit(node: ts.Node) {
@@ -220,8 +214,8 @@ describe("OpenAPI contract conformance", () => {
   const runtimeCases = extractSwitchCases(switchStmt);
   const runtimeOps = runtimeCases.map((c) => c.op);
 
-  it("runtime has exactly 32 operations", () => {
-    expect(runtimeOps.length).toBe(32);
+  it("runtime dispatches each operation once", () => {
+    expect(new Set(runtimeOps).size).toBe(runtimeOps.length);
   });
 
   it("switch cases match WriteRequest discriminator mapping keys", () => {
@@ -233,7 +227,7 @@ describe("OpenAPI contract conformance", () => {
   it("switch cases match WriteRequest oneOf refs", () => {
     const writeReq = spec.components.schemas.WriteRequest;
     const oneOfRefs = writeReq.oneOf.map((s) => s.$ref.split("/").pop()!);
-    expect(oneOfRefs.length).toBe(32);
+    expect(oneOfRefs.length).toBe(runtimeOps.length);
     // Each ref should point to a schema whose operation const matches a runtime op
     for (const ref of oneOfRefs) {
       const schema = spec.components.schemas[ref];
@@ -252,7 +246,7 @@ describe("OpenAPI contract conformance", () => {
   it("switch cases match WriteSuccessResponse oneOf refs", () => {
     const writeSuccess = spec.components.schemas.WriteSuccessResponse;
     const oneOfRefs = writeSuccess.oneOf.map((s) => s.$ref.split("/").pop()!);
-    expect(oneOfRefs.length).toBe(32);
+    expect(oneOfRefs.length).toBe(runtimeOps.length);
     for (const ref of oneOfRefs) {
       const schema = spec.components.schemas[ref];
       expect(schema).toBeDefined();
@@ -283,9 +277,7 @@ describe("OpenAPI contract conformance", () => {
       const schema = spec.components.schemas[schemaName];
       expect(schema).toBeDefined();
       // The operation const is nested in the allOf composition
-      const composition = schema.allOf.find(
-        (s) => s.properties?.operation?.const !== undefined,
-      );
+      const composition = schema.allOf.find((s) => s.properties?.operation?.const !== undefined);
       expect(composition).toBeDefined();
       return composition!.properties.operation.const;
     });
@@ -360,15 +352,9 @@ describe("OpenAPI contract conformance", () => {
     expect(versionResp.properties.endpoints.required).toContain("attach");
     expect(versionResp.properties.endpoints.required).toContain("write");
     expect(versionResp.properties.endpoints.required).toContain("version");
-    expect(versionResp.properties.compatibility.required).toContain(
-      "strict_min_version",
-    );
-    expect(versionResp.properties.compatibility.required).toContain(
-      "strict_max_version",
-    );
-    expect(versionResp.properties.compatibility.required).toContain(
-      "tested_zotero_version",
-    );
+    expect(versionResp.properties.compatibility.required).toContain("strict_min_version");
+    expect(versionResp.properties.compatibility.required).toContain("strict_max_version");
+    expect(versionResp.properties.compatibility.required).toContain("tested_zotero_version");
   });
 
   it("attach success response has required top-level fields", () => {
