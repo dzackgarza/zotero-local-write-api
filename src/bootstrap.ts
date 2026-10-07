@@ -1827,8 +1827,8 @@ function translatedWork(
 
 let XHTML_NS = "http://www.w3.org/1999/xhtml";
 
-// The page's elements named NAME. The add-on's DOM types give the result of
-// querySelectorAll and of getElementsByTagName as any; the namespaced lookup is typed.
+// The page's elements named NAME. In the add-on's DOM types, querySelectorAll and
+// getElementsByTagName are untyped; the namespaced lookup is typed.
 function htmlElements(page: Document, name: string): Element[] {
   return [...page.getElementsByTagNameNS(XHTML_NS, name)];
 }
