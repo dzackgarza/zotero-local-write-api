@@ -1,4 +1,4 @@
-import { fileExistingItem } from "./duplicates";
+import { type DuplicateKeys, fileExistingItem } from "./duplicates";
 import { badRequest } from "./errors";
 import { userLibraryID } from "./library";
 import { findExistingOutsideRecognition, storePdf } from "./pdf-recognition";
@@ -70,6 +70,11 @@ function fallbackOutcome(item: Zotero.Item, existing: boolean): ImportOutcome {
   return { item, existing, method: "caller_metadata", translator: null, attachmentFailures: [] };
 }
 
+// The duplicate keys of the item saveFallbackItem makes: it has no DOI and no ISBN.
+function fallbackDuplicateKeys(url: string, fallback: FallbackMetadata): DuplicateKeys {
+  return { itemType: "document", title: fallback.title, DOI: "", ISBN: "", url };
+}
+
 // The source as the caller describes it. A source already saved this way
 // (equal URL and title) is returned as it is.
 export async function saveFallback(
@@ -78,13 +83,7 @@ export async function saveFallback(
   fallback: FallbackMetadata,
   collectionIDs: number[],
 ): Promise<ImportOutcome> {
-  let existing = await findExistingOutsideRecognition({
-    itemType: "document",
-    title: fallback.title,
-    DOI: "",
-    ISBN: "",
-    url,
-  });
+  let existing = await findExistingOutsideRecognition(fallbackDuplicateKeys(url, fallback));
   if (existing) {
     await fileExistingItem(existing, collectionIDs);
     return fallbackOutcome(existing, true);
