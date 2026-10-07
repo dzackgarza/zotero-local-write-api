@@ -69,9 +69,10 @@ async function translateBibTeX(bibtex: string, collectionIDs: number[]): Promise
 
 export async function handleImportBibTeX(data: RequestData) {
   let bibtex = requireNonEmptyString(data.bibtex, "bibtex");
-  let collectionKeys = Boolean(data.collection_keys)
-    ? normalizeStringList(data.collection_keys, "collection_keys")
-    : [];
+  let collectionKeys =
+    data.collection_keys === undefined
+      ? []
+      : normalizeStringList(data.collection_keys, "collection_keys");
   let items = await translateBibTeX(bibtex, await userCollectionIDs(collectionKeys));
 
   return successResult(
@@ -125,9 +126,10 @@ async function translateIdentifiers(
 
 export async function handleImportByIdentifier(data: RequestData) {
   let raw = requireNonEmptyString(data.identifier, "identifier");
-  let collectionKeys = Boolean(data.collection_keys)
-    ? normalizeStringList(data.collection_keys, "collection_keys")
-    : [];
+  let collectionKeys =
+    data.collection_keys === undefined
+      ? []
+      : normalizeStringList(data.collection_keys, "collection_keys");
   let collections = await userCollectionIDs(collectionKeys);
 
   let items = await translateIdentifiers(extractIdentifiers(raw), collections);

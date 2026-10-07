@@ -179,9 +179,10 @@ export async function handleImportFromUrl(data: RequestData) {
   let url = requireHttpUrl(data.url);
   let fallback =
     data.fallback_metadata === undefined ? null : requireFallbackMetadata(data.fallback_metadata);
-  let collectionKeys = Boolean(data.collection_keys)
-    ? normalizeStringList(data.collection_keys, "collection_keys")
-    : [];
+  let collectionKeys =
+    data.collection_keys === undefined
+      ? []
+      : normalizeStringList(data.collection_keys, "collection_keys");
   let collectionIDs = await userCollectionIDs(collectionKeys);
 
   let attempts: Attempt[] = [];

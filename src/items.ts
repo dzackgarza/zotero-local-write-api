@@ -196,11 +196,12 @@ function newItemDetails(newItem: NewItem): JsonPayload {
 export async function handleCreateItem(data: RequestData) {
   let newItem: NewItem = {
     itemType: requireItemType(requireNonEmptyString(data.item_type, "item_type")),
-    fields: Boolean(data.fields) ? requireObject(data.fields, "fields") : {},
-    tags: Boolean(data.tags) ? normalizeStringList(data.tags, "tags") : [],
-    collectionKeys: Boolean(data.collection_keys)
-      ? normalizeStringList(data.collection_keys, "collection_keys")
-      : [],
+    fields: data.fields === undefined ? {} : requireObject(data.fields, "fields"),
+    tags: data.tags === undefined ? [] : normalizeStringList(data.tags, "tags"),
+    collectionKeys:
+      data.collection_keys === undefined
+        ? []
+        : normalizeStringList(data.collection_keys, "collection_keys"),
   };
   let item = await saveNewItem(newItem);
   return successResult("create_item", newItemDetails(newItem), {
