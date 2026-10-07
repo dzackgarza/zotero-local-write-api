@@ -592,9 +592,30 @@ async function materializeUploadBytes(fileName: string, fileBytesBase64: string)
   return tempDir.path;
 }
 
-// Where a stored file lands: under a parent item, or standalone in the given
-// collections, where no collection means the library root.
-type AttachTarget = { parentItemID: number } | { collections: number[] };
+// Where a stored file lands: under the parent item with this key, or standalone in the
+// given collections, where no collection means the library root.
+type AttachTarget = { parentItemKey: string } | { collections: number[] };
+
+// Loads the parent from the database instead of trusting the object cache. Models zotero/zotero
+// chrome/content/zotero/xpcom/db.js executeTransaction: a caller that times out waiting for
+// the active transaction runs that transaction's rollback callbacks, and DataObject._initSave
+// registers Zotero.Items.unload(id) as one for each new item. The transaction still commits,
+// so a just-imported parent can exist in the database while its cache entries are gone, and
+// Zotero.Attachments.importFromFile then reads libraryID undefined for it.
+async function loadParentItem(itemKey: string): Promise<Zotero.Item> {
+  let itemID = await Zotero.DB.valueQueryAsync<number>(
+    "SELECT itemID FROM items WHERE libraryID=? AND key=?",
+    [userLibraryID(), itemKey],
+  );
+  if (typeof itemID !== "number") {
+    throw notFound("Item not found: " + itemKey);
+  }
+  let item = await Zotero.Items.getAsync(itemID);
+  if (item === false) {
+    throw notFound("Item not found: " + itemKey);
+  }
+  return item;
+}
 
 async function importStoredAttachment(
   target: AttachTarget,
@@ -614,11 +635,15 @@ async function importStoredAttachment(
   tempFile.append(tempName);
   let attachment: Zotero.Item;
   try {
+    let placement =
+      "parentItemKey" in target
+        ? { parentItemID: (await loadParentItem(target.parentItemKey)).id }
+        : target;
     let result = await Zotero.Attachments.importFromFile({
       file: tempFile.path,
       libraryID: userLibraryID(),
       title: title,
-      ...target,
+      ...placement,
     });
     await result.saveTx();
     attachment = result;
@@ -628,6 +653,73 @@ async function importStoredAttachment(
     }
   }
   return attachment;
+}
+
+// The file an /attach request stores: a path on this machine, which may come with the same
+// file's bytes for when the path is unusable, or the bytes alone.
+type AttachSource =
+  | { kind: "bytes"; fileName: string; bytes: string }
+  | { kind: "path"; filePath: string; fileName: string | null; bytes: string | null };
+
+async function importUploadedBytes(
+  target: AttachTarget,
+  title: string,
+  fileName: string,
+  bytes: string,
+): Promise<Zotero.Item> {
+  let tempPath = await materializeUploadBytes(fileName, bytes);
+  try {
+    return await importStoredAttachment(target, tempPath, title);
+  } finally {
+    try {
+      Zotero.File.pathToFile(tempPath).remove(false);
+    } catch (error) {
+      Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+}
+
+async function storeAttachmentFile(
+  target: AttachTarget,
+  title: string,
+  source: AttachSource,
+): Promise<{ attachment: Zotero.Item; sourceMode: string }> {
+  if (source.kind === "bytes") {
+    return {
+      attachment: await importUploadedBytes(target, title, source.fileName, source.bytes),
+      sourceMode: "bytes",
+    };
+  }
+  let { filePath, fileName, bytes } = source;
+  if (!FULLTEXT_ALLOWED_DIRS.some((dir) => filePath.startsWith(dir))) {
+    throw badRequest(
+      "File path must be within allowed directories: " + FULLTEXT_ALLOWED_DIRS.join(", "),
+    );
+  }
+  try {
+    return { attachment: await importStoredAttachment(target, filePath, title), sourceMode: "path" };
+  } catch (error) {
+    if (bytes === null || !isUnusableFilePathError(error)) {
+      throw error;
+    }
+    let fallbackName = fileName !== null ? fileName : Zotero.File.pathToFile(filePath).leafName;
+    return {
+      attachment: await importUploadedBytes(target, title, fallbackName, bytes),
+      sourceMode: "bytes_fallback",
+    };
+  }
+}
+
+// A standalone attachment lands in the collection selected in Zotero, or in the library root.
+async function attachTarget(
+  itemKey: string | null,
+): Promise<{ target: AttachTarget; collection: Zotero.Collection | undefined }> {
+  if (itemKey !== null) {
+    await getUserItemOrThrow(itemKey);
+    return { target: { parentItemKey: itemKey }, collection: undefined };
+  }
+  let collection = selectedCollection();
+  return { target: { collections: collection === undefined ? [] : [collection.id] }, collection };
 }
 
 async function handleFulltextAttach(data: RequestData) {
@@ -643,54 +735,16 @@ async function handleFulltextAttach(data: RequestData) {
     throw badRequest("Either file_path or file_bytes_base64 must be provided");
   }
 
-  let target: AttachTarget;
-  let collection: Zotero.Collection | undefined;
-  if (itemKey === null) {
-    collection = selectedCollection();
-    target = { collections: collection === undefined ? [] : [collection.id] };
-  } else {
-    target = { parentItemID: (await getUserItemOrThrow(itemKey)).id };
-  }
-  let attachment: Zotero.Item;
-  let sourceMode = "path";
-  let tempPath: string | null = null;
-
-  try {
-    if (filePath !== null) {
-      if (!FULLTEXT_ALLOWED_DIRS.some((dir) => filePath.startsWith(dir))) {
-        throw badRequest(
-          "File path must be within allowed directories: " + FULLTEXT_ALLOWED_DIRS.join(", "),
-        );
-      }
-      try {
-        attachment = await importStoredAttachment(target, filePath, title);
-      } catch (error) {
-        if (fileBytesBase64 === null || !isUnusableFilePathError(error)) {
-          throw error;
+  let { target, collection } = await attachTarget(itemKey);
+  let source: AttachSource =
+    filePath === null
+      ? {
+          kind: "bytes",
+          fileName: requireNonEmptyString(data.file_name, "file_name"),
+          bytes: requireNonEmptyString(data.file_bytes_base64, "file_bytes_base64"),
         }
-        let fallbackName = fileName !== null ? fileName : Zotero.File.pathToFile(filePath).leafName;
-        tempPath = await materializeUploadBytes(fallbackName, fileBytesBase64);
-        attachment = await importStoredAttachment(target, tempPath, title);
-        sourceMode = "bytes_fallback";
-      }
-    } else {
-      let requiredFileName = requireNonEmptyString(data.file_name, "file_name");
-      tempPath = await materializeUploadBytes(
-        requiredFileName,
-        requireNonEmptyString(data.file_bytes_base64, "file_bytes_base64"),
-      );
-      attachment = await importStoredAttachment(target, tempPath, title);
-      sourceMode = "bytes";
-    }
-  } finally {
-    if (tempPath !== null) {
-      try {
-        Zotero.File.pathToFile(tempPath).remove(false);
-      } catch (error) {
-        Zotero.logError(error instanceof Error ? error : new Error(String(error)));
-      }
-    }
-  }
+      : { kind: "path", filePath, fileName, bytes: fileBytesBase64 };
+  let { attachment, sourceMode } = await storeAttachmentFile(target, title, source);
 
   return successResult(
     "attach_file_to_item",
