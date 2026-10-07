@@ -1071,8 +1071,10 @@ export interface components {
         attempts: components["schemas"]["ImportFromUrlAttempt"][];
         /** @description Attachments the translator named that Zotero could not store. The item is saved without them. */
         attachment_failures: {
-          title: string;
-          url: string;
+          /** @description Null when the translator named no title. */
+          title: string | null;
+          /** @description Null when the translator named no URL. */
+          url: string | null;
           error: string;
         }[];
       };

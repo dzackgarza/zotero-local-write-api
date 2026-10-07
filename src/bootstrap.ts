@@ -1487,7 +1487,8 @@ type Identification = {
   message: string;
 };
 // An attachment the translator named that Zotero could not store.
-type AttachmentFailure = { title: string; url: string; error: string };
+// title and url are null when the translator named none.
+type AttachmentFailure = { title: string | null; url: string | null; error: string };
 type ImportOutcome = {
   item: Zotero.Item;
   existing: boolean;
@@ -1518,12 +1519,13 @@ type ItemFieldsApi = { getID(field: string): number | false };
 type RecognizeDocumentApi = {
   recognizeItems(items: Zotero.Item[]): Promise<void>;
 };
+// The fields Zotero's duplicate finder compares; undefined is a field the item lacks.
 type DuplicateKeys = {
   itemType: string;
-  title: string;
-  DOI: string;
-  ISBN: string;
-  url: string;
+  title?: string;
+  DOI?: string;
+  ISBN?: string;
+  url?: string;
 };
 type ItemValueRow = { itemID: number; value: string };
 
@@ -1568,17 +1570,15 @@ async function fetchSource(url: string): Promise<FetchedSource> {
     throw new ApiError(502, "Source could not be fetched: " + (error as Error).message);
   }
   let finalUrl = xhr.responseURL || url;
-  let contentType = xhr.getResponseHeader("Content-Type") ?? "";
+  let contentType = xhr.getResponseHeader("Content-Type");
   let page = xhr.responseXML;
-  if (
-    /application\/pdf/i.test(contentType) ||
-    (page === null && new URL(finalUrl).pathname.toLowerCase().endsWith(".pdf"))
-  ) {
+  let declaredPdf = contentType !== null && /application\/pdf/i.test(contentType);
+  if (declaredPdf || (page === null && new URL(finalUrl).pathname.toLowerCase().endsWith(".pdf"))) {
     return { kind: "pdf", finalUrl };
   }
   if (page === null) {
     throw new SourceNotIdentifiedError(
-      "Source is neither an HTML page nor a PDF (Content-Type: " + contentType + ")",
+      "Source is neither an HTML page nor a PDF (Content-Type: " + String(contentType) + ")",
       [],
     );
   }
@@ -1639,7 +1639,7 @@ function requireWork(json: TranslatorItemJSON, source: string): TranslatorItemJS
   return json;
 }
 
-const XHTML_NS = "http://www.w3.org/1999/xhtml";
+let XHTML_NS = "http://www.w3.org/1999/xhtml";
 
 // The page's elements named NAME. The add-on's DOM types give the result of
 // querySelectorAll and of getElementsByTagName as any; the namespaced lookup is typed.
@@ -1730,8 +1730,9 @@ async function identifyByPublishedBibTeX(
   let links = new Set<string>();
   // An alternate <link> of BibTeX type, or an <a> whose href ends in .bib.
   for (let link of htmlElements(page, "link")) {
-    let rel = link.getAttribute("rel")?.split(/\s+/) ?? [];
-    if (rel.includes("alternate") && link.getAttribute("type") === "application/x-bibtex") {
+    let rel = link.getAttribute("rel");
+    let alternate = rel !== null && rel.split(/\s+/).includes("alternate");
+    if (alternate && link.getAttribute("type") === "application/x-bibtex") {
       let href = link.getAttribute("href");
       if (href !== null) {
         links.add(new URL(href, finalUrl).href);
@@ -1781,7 +1782,9 @@ function yearOf(date: string | undefined): string | null {
   if (date === undefined || date === "") {
     return null;
   }
-  return Zotero.Date.strToDate(date).year ?? null;
+  // strToDate leaves year undefined when the date names no year.
+  let year = Zotero.Date.strToDate(date).year;
+  return year === undefined ? null : year;
 }
 
 // What the external services search by: the title, first author's surname and
@@ -1821,16 +1824,84 @@ function responseTextOf(xhr: XMLHttpRequest, url: string): string {
   return xhr.responseText;
 }
 
-async function requestJSON<T>(url: string, successCodes: number[] = [200]): Promise<T | null> {
-  let xhr = await Zotero.HTTP.request("GET", url, {
+function requestJSONResponse(url: string, successCodes: number[]): Promise<XMLHttpRequest> {
+  return Zotero.HTTP.request("GET", url, {
     responseType: "text",
     successCodes,
     headers: { Accept: "application/json" },
   });
-  if (xhr.status !== 200) {
+}
+
+function parseJSONResponse<T>(xhr: XMLHttpRequest, url: string): T {
+  return JSON.parse(responseTextOf(xhr, url)) as T;
+}
+
+async function requestJSON<T>(url: string): Promise<T> {
+  return parseJSONResponse<T>(await requestJSONResponse(url, [200]), url);
+}
+
+// Records without a title or an author name cannot match a seed, so they are no
+// candidates.
+function serviceCandidates<R>(
+  records: R[],
+  toCandidate: (record: R) => ServiceCandidate | null,
+): ServiceCandidate[] {
+  return records
+    .map(toCandidate)
+    .filter((candidate): candidate is ServiceCandidate => candidate !== null);
+}
+
+function crossrefAuthorNames(authors: { family?: string; name?: string }[]): string[] {
+  return authors.flatMap((author) => {
+    if (author.family !== undefined) {
+      return [author.family];
+    }
+    return author.name === undefined ? [] : [author.name];
+  });
+}
+
+function atomText(element: Element, name: string): string | null {
+  let text = element.getElementsByTagNameNS(ATOM_NS, name)[0]?.textContent;
+  return text === undefined || text === null ? null : text.trim();
+}
+
+function arxivCandidate(entry: Element): ServiceCandidate | null {
+  let title = atomText(entry, "title");
+  let id = atomText(entry, "id");
+  let authors = [...entry.getElementsByTagNameNS(ATOM_NS, "author")].flatMap((author) => {
+    let name = atomText(author, "name");
+    return name === null ? [] : [name];
+  });
+  if (title === null || id === null || authors.length === 0) {
     return null;
   }
-  return JSON.parse(responseTextOf(xhr, url)) as T;
+  let arXiv = id.match(/abs\/(.+?)(?:v\d+)?$/)?.[1];
+  let published = atomText(entry, "published");
+  return {
+    title: title.replace(/\s+/g, " "),
+    authors,
+    year: published === null ? null : published.slice(0, 4),
+    identifier: arXiv === undefined ? null : { arXiv },
+  };
+}
+
+function openLibraryCandidate(work: OpenLibrarySearch["docs"][number]): ServiceCandidate | null {
+  if (work.title === undefined || work.author_name === undefined) {
+    return null;
+  }
+  // The first ISBN of the edition Open Library ranks first; the other ISBNs of
+  // that edition are its other formats.
+  let isbns = work.editions?.docs?.[0]?.isbn;
+  let isbn =
+    isbns === undefined
+      ? undefined
+      : isbns.map((value) => Zotero.Utilities.cleanISBN(value)).find((value) => value !== false);
+  return {
+    title: work.title,
+    authors: work.author_name,
+    year: work.first_publish_year === undefined ? null : String(work.first_publish_year),
+    identifier: isbn === undefined ? null : { ISBN: Zotero.Utilities.toISBN13(isbn) },
+  };
 }
 
 // https://api.crossref.org/swagger-ui/index.html, /works
@@ -1846,7 +1917,7 @@ type CrossrefWorks = {
 };
 // https://api.zbmath.org/docs, /document/_search
 type ZbmathSearch = {
-  result?: {
+  result: {
     title?: { title?: string };
     year?: string;
     contributors?: { authors?: { name: string }[] };
@@ -1876,11 +1947,15 @@ let EXTERNAL_SERVICES: ExternalService[] = [
         "&query.author=" +
         encodeURIComponent(seed.surname);
       let works = await requestJSON<CrossrefWorks>(url);
-      return (works?.message.items ?? []).map((work) => {
+      return serviceCandidates(works.message.items, (work) => {
+        let title = work.title?.[0];
+        if (title === undefined || work.author === undefined) {
+          return null;
+        }
         let year = work.issued?.["date-parts"]?.[0]?.[0];
         return {
-          title: work.title?.[0] ?? "",
-          authors: (work.author ?? []).map((author) => author.family ?? author.name ?? ""),
+          title,
+          authors: crossrefAuthorNames(work.author),
           year: typeof year === "number" ? String(year) : null,
           identifier: { DOI: work.DOI },
         };
@@ -1896,13 +1971,22 @@ let EXTERNAL_SERVICES: ExternalService[] = [
         "&search_string=" +
         encodeURIComponent(query);
       // zbMATH answers a search with no results with 404.
-      let found = await requestJSON<ZbmathSearch>(url, [200, 404]);
-      return (found?.result ?? []).map((document) => {
+      let xhr = await requestJSONResponse(url, [200, 404]);
+      if (xhr.status === 404) {
+        return [];
+      }
+      let found = parseJSONResponse<ZbmathSearch>(xhr, url);
+      return serviceCandidates(found.result, (document) => {
+        let title = document.title?.title;
+        let authors = document.contributors?.authors;
+        if (title === undefined || authors === undefined) {
+          return null;
+        }
         let doi = document.links?.find((link) => link.type === "doi")?.identifier;
         return {
-          title: document.title?.title ?? "",
-          authors: (document.contributors?.authors ?? []).map((author) => author.name),
-          year: document.year ?? null,
+          title,
+          authors: authors.map((author) => author.name),
+          year: document.year === undefined ? null : document.year,
           identifier: doi === undefined ? null : { DOI: doi },
         };
       });
@@ -1920,19 +2004,10 @@ let EXTERNAL_SERVICES: ExternalService[] = [
       if (feed === null) {
         throw new Error("arXiv returned no Atom feed");
       }
-      return [...feed.getElementsByTagNameNS(ATOM_NS, "entry")].map((entry) => {
-        let text = (name: string) =>
-          entry.getElementsByTagNameNS(ATOM_NS, name)[0]?.textContent?.trim() ?? "";
-        let arXiv = text("id").match(/abs\/(.+?)(?:v\d+)?$/)?.[1];
-        return {
-          title: text("title").replace(/\s+/g, " "),
-          authors: [...entry.getElementsByTagNameNS(ATOM_NS, "author")].map(
-            (author) => author.getElementsByTagNameNS(ATOM_NS, "name")[0]?.textContent ?? "",
-          ),
-          year: text("published").slice(0, 4) || null,
-          identifier: arXiv === undefined ? null : { arXiv },
-        };
-      });
+      return serviceCandidates(
+        [...feed.getElementsByTagNameNS(ATOM_NS, "entry")],
+        arxivCandidate,
+      );
     },
   },
   {
@@ -1946,19 +2021,7 @@ let EXTERNAL_SERVICES: ExternalService[] = [
         "&author=" +
         encodeURIComponent(seed.surname);
       let found = await requestJSON<OpenLibrarySearch>(url);
-      return (found?.docs ?? []).map((work) => {
-        // The first ISBN of the edition Open Library ranks first; the other
-        // ISBNs of that edition are its other formats.
-        let isbn = (work.editions?.docs?.[0]?.isbn ?? [])
-          .map((value) => Zotero.Utilities.cleanISBN(value))
-          .find((value) => value !== false);
-        return {
-          title: work.title ?? "",
-          authors: work.author_name ?? [],
-          year: work.first_publish_year === undefined ? null : String(work.first_publish_year),
-          identifier: isbn === undefined ? null : { ISBN: Zotero.Utilities.toISBN13(isbn) },
-        };
-      });
+      return serviceCandidates(found.docs, openLibraryCandidate);
     },
   },
 ];
@@ -2080,22 +2143,22 @@ async function identifyPage(
 }
 
 function duplicateKeysFromJSON(json: TranslatorItemJSON): DuplicateKeys {
-  return {
-    itemType: json.itemType,
-    title: json.title ?? "",
-    DOI: json.DOI ?? "",
-    ISBN: json.ISBN ?? "",
-    url: json.url ?? "",
-  };
+  return { itemType: json.itemType, title: json.title, DOI: json.DOI, ISBN: json.ISBN, url: json.url };
+}
+
+// Zotero stores a field an item lacks as "".
+function storedField(item: Zotero.Item, field: "title" | "DOI" | "ISBN" | "url"): string | undefined {
+  let value = item.getField(field);
+  return value === "" ? undefined : value;
 }
 
 function duplicateKeysFromItem(item: Zotero.Item): DuplicateKeys {
   return {
     itemType: item.itemType,
-    title: item.getField("title"),
-    DOI: item.getField("DOI"),
-    ISBN: item.getField("ISBN"),
-    url: item.getField("url"),
+    title: storedField(item, "title"),
+    DOI: storedField(item, "DOI"),
+    ISBN: storedField(item, "ISBN"),
+    url: storedField(item, "url"),
   };
 }
 
@@ -2118,8 +2181,63 @@ async function fieldRows(field: string, itemType: string | null): Promise<ItemVa
     sql += " AND itemTypeID=?";
     params.push(itemTypeID);
   }
+  // queryAsync answers a SELECT with its rows; undefined is only for other statements.
   let rows = await Zotero.DB.queryAsync(sql, params);
-  return (rows ?? []) as ItemValueRow[];
+  if (rows === undefined) {
+    throw new Error("Zotero answered a SELECT with no rows array");
+  }
+  return rows as ItemValueRow[];
+}
+
+async function doiMatches(keys: DuplicateKeys): Promise<number[]> {
+  let doi = keys.DOI === undefined ? null : Zotero.Utilities.cleanDOI(keys.DOI);
+  if (doi === null || doi === "") {
+    return [];
+  }
+  let wanted = doi.toUpperCase();
+  let rows = await fieldRows("DOI", null);
+  return rows.filter((row) => row.value.trim().toUpperCase() === wanted).map((row) => row.itemID);
+}
+
+async function isbnMatches(keys: DuplicateKeys): Promise<number[]> {
+  if (keys.itemType !== "book" || keys.ISBN === undefined) {
+    return [];
+  }
+  let isbn = Zotero.Utilities.cleanISBN(keys.ISBN);
+  if (isbn === false) {
+    return [];
+  }
+  let wanted = Zotero.Utilities.toISBN13(isbn);
+  let rows = await fieldRows("ISBN", "book");
+  return rows
+    .filter((row) =>
+      String(row.value)
+        .split(/\s+/)
+        .map((value) => Zotero.Utilities.cleanISBN(value))
+        .some((value) => value !== false && Zotero.Utilities.toISBN13(value) === wanted),
+    )
+    .map((row) => row.itemID);
+}
+
+async function urlAndTitleMatches(keys: DuplicateKeys): Promise<number[]> {
+  if (keys.url === undefined || keys.title === undefined) {
+    return [];
+  }
+  let title = normalizeText(keys.title);
+  if (title === "") {
+    return [];
+  }
+  let matches: number[] = [];
+  for (let row of await fieldRows("url", null)) {
+    if (row.value !== keys.url) {
+      continue;
+    }
+    let candidate = await Zotero.Items.getAsync(row.itemID);
+    if (candidate !== false && normalizeText(candidate.getField("title")) === title) {
+      matches.push(row.itemID);
+    }
+  }
+  return matches;
 }
 
 // The item already in the library that is this work, by the rules of Zotero's
@@ -2130,39 +2248,11 @@ async function findExistingItem(
   keys: DuplicateKeys,
   excludeID: number | null,
 ): Promise<Zotero.Item | null> {
-  let matchIDs: number[] = [];
-  let doi = Zotero.Utilities.cleanDOI(keys.DOI);
-  if (doi !== null && doi !== "") {
-    for (let row of await fieldRows("DOI", null)) {
-      if (row.value.trim().toUpperCase() === doi.toUpperCase()) {
-        matchIDs.push(row.itemID);
-      }
-    }
-  }
-  let isbn = keys.itemType === "book" ? Zotero.Utilities.cleanISBN(keys.ISBN) : false;
-  if (isbn !== false) {
-    let wanted = Zotero.Utilities.toISBN13(isbn);
-    for (let row of await fieldRows("ISBN", "book")) {
-      let values = String(row.value)
-        .split(/\s+/)
-        .map((value) => Zotero.Utilities.cleanISBN(value));
-      if (values.some((value) => value !== false && Zotero.Utilities.toISBN13(value) === wanted)) {
-        matchIDs.push(row.itemID);
-      }
-    }
-  }
-  let title = normalizeText(keys.title);
-  if (keys.url && title) {
-    for (let row of await fieldRows("url", null)) {
-      if (row.value !== keys.url) {
-        continue;
-      }
-      let candidate = await Zotero.Items.getAsync(row.itemID);
-      if (candidate !== false && normalizeText(candidate.getField("title")) === title) {
-        matchIDs.push(row.itemID);
-      }
-    }
-  }
+  let matchIDs = [
+    ...(await doiMatches(keys)),
+    ...(await isbnMatches(keys)),
+    ...(await urlAndTitleMatches(keys)),
+  ];
   for (let itemID of [...new Set(matchIDs)].sort((a, b) => a - b)) {
     if (itemID === excludeID) {
       continue;
@@ -2215,8 +2305,8 @@ async function saveIdentification(
   let items = await saver.saveItems([identification.json], (attachment, progress, error) => {
     if (progress === false) {
       attachmentFailures.push({
-        title: attachment.title ?? "",
-        url: attachment.url ?? "",
+        title: attachment.title === undefined ? null : attachment.title,
+        url: attachment.url === undefined ? null : attachment.url,
         error: String(error),
       });
     }
@@ -2341,9 +2431,11 @@ async function importPdfSource(
 
 type FallbackMetadata = {
   title: string;
-  creators: { firstName: string; lastName: string }[];
+  creators: FallbackCreator[];
   year: string;
 };
+// Zotero's creator JSON: an absent firstName is a creator known by surname only.
+type FallbackCreator = { firstName?: string; lastName: string };
 
 function requireFallbackMetadata(value: unknown): FallbackMetadata {
   let fallback = requireObject(value, "fallback_metadata");
@@ -2357,17 +2449,19 @@ function requireFallbackMetadata(value: unknown): FallbackMetadata {
   }
   let creators = fallback.creators.map((creator: unknown, index: number) => {
     let entry = requireObject(creator, "fallback_metadata.creators[" + index + "]");
-    let firstName = entry.first_name;
-    if (firstName !== undefined && typeof firstName !== "string") {
-      throw badRequest("fallback_metadata.creators[" + index + "].first_name must be a string");
-    }
-    return {
-      firstName: firstName ?? "",
+    let parsed: FallbackCreator = {
       lastName: requireNonEmptyString(
         entry.last_name,
         "fallback_metadata.creators[" + index + "].last_name",
       ),
     };
+    if (entry.first_name !== undefined) {
+      parsed.firstName = requireString(
+        entry.first_name,
+        "fallback_metadata.creators[" + index + "].first_name",
+      );
+    }
+    return parsed;
   });
   return { title, creators, year };
 }

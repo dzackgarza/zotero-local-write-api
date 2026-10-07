@@ -114,11 +114,17 @@ install-live:
 
     # 5. Restart Zotero with cache purge. Stop by exact process name (-x), never
     #    pkill -f, whose pattern would match this recipe's own shell (AGENTS.md).
-    #    pkill exits 1 when no process matched, the state this step wants: the
-    #    zotero launcher exits by itself once zotero-bin is gone.
-    pkill -x zotero-bin || [[ $? -eq 1 ]]
-    pkill -x zotero || [[ $? -eq 1 ]]
-    sleep 3
+    #    Only zotero-bin is stopped: the zotero launcher exits by itself once
+    #    zotero-bin is gone, so a second pkill races that exit.
+    if pgrep -x zotero-bin > /dev/null; then pkill -x zotero-bin; fi
+    for _ in $(seq 1 30); do
+        if ! pgrep -x 'zotero(-bin)?' > /dev/null; then break; fi
+        sleep 1
+    done
+    if pgrep -x 'zotero(-bin)?' > /dev/null; then
+        echo "Zotero did not exit within 30 s" >&2
+        exit 1
+    fi
     profile_args=()
     if [[ -n "${ZOTERO_PROFILE_NAME:-}" ]]; then
         profile_args+=(-P "${ZOTERO_PROFILE_NAME}")

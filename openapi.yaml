@@ -1767,9 +1767,15 @@ components:
                       - error
                     properties:
                       title:
-                        type: string
+                        type:
+                          - string
+                          - 'null'
+                        description: Null when the translator named no title.
                       url:
-                        type: string
+                        type:
+                          - string
+                          - 'null'
+                        description: Null when the translator named no URL.
                       error:
                         type: string
                     additionalProperties: false
