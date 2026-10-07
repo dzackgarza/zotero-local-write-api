@@ -1076,6 +1076,43 @@ async function handleCopyItem(data: RequestData) {
   );
 }
 
+// Adds the source's tags that the target lacks; answers how many were added.
+function mergeTags(sourceItem: Zotero.Item, targetItem: Zotero.Item): number {
+  let targetTags = targetItem.getTags() as TagEntry[];
+  let targetTagNames = new Set(targetTags.map((tag) => tag.tag));
+  let added = (sourceItem.getTags() as TagEntry[]).filter((tag) => !targetTagNames.has(tag.tag));
+  targetItem.setTags([...targetTags, ...added]);
+  return added.length;
+}
+
+// Adds the source's relation values that the target lacks; answers how many were added.
+function mergeRelations(sourceItem: Zotero.Item, targetItem: Zotero.Item): number {
+  let added = 0;
+  let targetRelations = targetItem.getRelations();
+  for (let [predicate, sourceValues] of Object.entries(sourceItem.getRelations())) {
+    let key = predicate as _ZoteroTypes.RelationsPredicate;
+    // getRelations() omits predicates the item has no values for, but zotero-types
+    // models the result as a total Record; read the real runtime type before copying.
+    let existingValues: string[] | undefined = targetRelations[key];
+    let targetValues = existingValues === undefined ? [] : existingValues;
+    let newValues = [...new Set(sourceValues)].filter((value) => !targetValues.includes(value));
+    added += newValues.length;
+    targetRelations = { ...targetRelations, [key]: [...targetValues, ...newValues] };
+  }
+  targetItem.setRelations(targetRelations);
+  return added;
+}
+
+// Moves the child items to the new parent; answers how many were moved.
+async function reparent(childIDs: number[], parent: Zotero.Item): Promise<number> {
+  let children = Zotero.Items.get(childIDs);
+  for (let child of children) {
+    child.parentID = parent.id;
+    await child.saveTx();
+  }
+  return children.length;
+}
+
 async function handleMergeItems(data: RequestData) {
   let sourceKey = requireNonEmptyString(data.source_key, "source_key");
   let targetKey = requireNonEmptyString(data.target_key, "target_key");
@@ -1088,56 +1125,13 @@ async function handleMergeItems(data: RequestData) {
   if (!sourceItem.isRegularItem() || !targetItem.isRegularItem()) {
     throw conflict("merge_items requires two regular Zotero items");
   }
-  let transferred = {
-    attachments: 0,
-    notes: 0,
-    tags: 0,
-    relations: 0,
-  };
-
-  let sourceTags = sourceItem.getTags() as TagEntry[];
-  let targetTags = targetItem.getTags() as TagEntry[];
-  let targetTagNames = new Set(targetTags.map((tag) => tag.tag));
-  for (let tag of sourceTags) {
-    if (!targetTagNames.has(tag.tag)) {
-      targetTags.push(tag);
-      targetTagNames.add(tag.tag);
-      transferred.tags++;
-    }
-  }
-  targetItem.setTags(targetTags);
-
-  let sourceRelations = sourceItem.getRelations();
-  let targetRelations = targetItem.getRelations();
-  for (let [predicate, sourceValues] of Object.entries(sourceRelations)) {
-    let key = predicate as _ZoteroTypes.RelationsPredicate;
-    // getRelations() omits predicates the item has no values for, but zotero-types
-    // models the result as a total Record; read the real runtime type before copying.
-    let existingValues: string[] | undefined = targetRelations[key];
-    let targetValues = existingValues === undefined ? [] : [...existingValues];
-    let targetValueSet = new Set(targetValues);
-    for (let value of sourceValues) {
-      if (!targetValueSet.has(value)) {
-        targetValues.push(value);
-        targetValueSet.add(value);
-        transferred.relations++;
-      }
-    }
-    targetItem.setRelations({ ...targetRelations, [key]: targetValues });
-    targetRelations = targetItem.getRelations();
-  }
+  let tags = mergeTags(sourceItem, targetItem);
+  let relations = mergeRelations(sourceItem, targetItem);
   await targetItem.saveTx();
 
-  for (let note of Zotero.Items.get(sourceItem.getNotes(true))) {
-    note.parentID = targetItem.id;
-    await note.saveTx();
-    transferred.notes++;
-  }
-  for (let attachment of Zotero.Items.get(sourceItem.getAttachments(true))) {
-    attachment.parentID = targetItem.id;
-    await attachment.saveTx();
-    transferred.attachments++;
-  }
+  let notes = await reparent(sourceItem.getNotes(true), targetItem);
+  let attachments = await reparent(sourceItem.getAttachments(true), targetItem);
+  let transferred = { attachments, notes, tags, relations };
 
   sourceItem.deleted = true;
   await sourceItem.saveTx();
@@ -1149,15 +1143,19 @@ async function handleMergeItems(data: RequestData) {
   });
 }
 
-async function handleCreateItem(data: RequestData) {
-  let itemType = requireNonEmptyString(data.item_type, "item_type");
-  // A syntactically fine string is not necessarily a Zotero item type. Without
-  // this, an unknown type reaches Zotero and surfaces as an unclassified 500
-  // ("Invalid item type id 'false'") rather than a 400 naming the bad input.
+// A syntactically fine string is not necessarily a Zotero item type. Without
+// this, an unknown type reaches Zotero and surfaces as an unclassified 500
+// ("Invalid item type id 'false'") rather than a 400 naming the bad input.
+function requireItemType(itemType: string): string {
   let itemTypeID = Zotero.ItemTypes.getID(itemType);
   if (itemTypeID === false || itemTypeID === 0) {
     throw badRequest("Invalid item_type: " + itemType);
   }
+  return itemType;
+}
+
+async function handleCreateItem(data: RequestData) {
+  let itemType = requireItemType(requireNonEmptyString(data.item_type, "item_type"));
   let fields = Boolean(data.fields) ? requireObject(data.fields, "fields") : {};
   let tags = Boolean(data.tags) ? normalizeStringList(data.tags, "tags") : [];
   let collectionKeys = Boolean(data.collection_keys)
@@ -1591,6 +1589,11 @@ async function fetchSource(url: string): Promise<FetchedSource> {
     }
     throw new ApiError(502, "Source could not be fetched: " + error.message);
   }
+  return fetchedSource(xhr, url);
+}
+
+// Classifies a fetched response as a PDF or an HTML page.
+function fetchedSource(xhr: XMLHttpRequest, url: string): FetchedSource {
   let finalUrl = xhr.responseURL || url;
   let contentType = xhr.getResponseHeader("Content-Type");
   let page = xhr.responseXML;
@@ -1644,10 +1647,15 @@ async function translatePage(
   if (offeredChoice) {
     throw new MethodMiss("ambiguous", translator.label + " lists several items");
   }
+  return singleItem(items, translator.label + " returned");
+}
+
+// A method that yields no item misses; one that yields several cannot say which is meant.
+function singleItem(items: TranslatorItemJSON[], source: string): TranslatorItemJSON {
   if (items.length !== 1) {
     throw new MethodMiss(
       items.length === 0 ? "no_match" : "ambiguous",
-      translator.label + " returned " + items.length + " items",
+      source + " " + items.length + " items",
     );
   }
   return items[0];
@@ -1745,12 +1753,10 @@ async function identifyByIdentifier(text: string): Promise<Identification> {
   return { json, translator: null, message: key };
 }
 
-async function identifyByPublishedBibTeX(
-  page: Document,
-  finalUrl: string,
-): Promise<Identification> {
+// The BibTeX files a page links: an alternate <link> of BibTeX type, or an <a> whose href
+// ends in .bib.
+function publishedBibTeXLinks(page: Document, finalUrl: string): Set<string> {
   let links = new Set<string>();
-  // An alternate <link> of BibTeX type, or an <a> whose href ends in .bib.
   for (let link of htmlElements(page, "link")) {
     let rel = link.getAttribute("rel");
     let alternate = rel !== null && rel.split(/\s+/).includes("alternate");
@@ -1767,6 +1773,14 @@ async function identifyByPublishedBibTeX(
       links.add(new URL(href, finalUrl).href);
     }
   }
+  return links;
+}
+
+async function identifyByPublishedBibTeX(
+  page: Document,
+  finalUrl: string,
+): Promise<Identification> {
+  let links = publishedBibTeXLinks(page, finalUrl);
   if (links.size === 0) {
     throw new MethodMiss("no_match", "the page links no BibTeX");
   }
@@ -1782,13 +1796,7 @@ async function identifyByPublishedBibTeX(
   translator.setTranslator(BIBTEX_TRANSLATOR_ID);
   translator.setString(responseTextOf(xhr, bibUrl));
   let items = await translator.translate({ libraryID: false, saveAttachments: false });
-  if (items.length !== 1) {
-    throw new MethodMiss(
-      items.length === 0 ? "no_match" : "ambiguous",
-      bibUrl + " holds " + items.length + " entries",
-    );
-  }
-  return { json: items[0], translator: null, message: bibUrl };
+  return { json: singleItem(items, bibUrl + " holds"), translator: null, message: bibUrl };
 }
 
 // Title normalization from zotero/zotero chrome/content/zotero/xpcom/duplicates.js
@@ -2072,13 +2080,13 @@ async function identifyByService(
   return { json, translator: null, message: service.name + ": " + key };
 }
 
-async function identifyPage(
-  requestedUrl: string,
-  finalUrl: string,
+type PageIdentification = Identification & { method: SourceMethod };
+
+async function identifyBySiteTranslator(
   page: Document,
+  detected: WebTranslatorInfo[],
   attempts: Attempt[],
-): Promise<(Identification & { method: SourceMethod }) | null> {
-  let detected = await createTranslateWeb(page).getTranslators();
+): Promise<PageIdentification | null> {
   let siteTranslators = detected.filter(
     (translator) => translator.translatorID !== EMBEDDED_METADATA_TRANSLATOR_ID,
   );
@@ -2099,10 +2107,16 @@ async function identifyPage(
       return { ...found, method: "web_translator" };
     }
   }
+  return null;
+}
 
-  // `as` keeps the declared union: the closure below assigns the seed, and
-  // TypeScript would otherwise narrow it to `null` for the rest of the function.
-  let seed = null as BibliographicSeed | null;
+// The page's embedded citation metadata identifies the work, or names the title and
+// author that the external services search for.
+async function identifyByPageMetadata(
+  page: Document,
+  detected: WebTranslatorInfo[],
+  attempts: Attempt[],
+): Promise<{ found: PageIdentification | null; seed: BibliographicSeed | null }> {
   let embedded = detected.find(
     (translator) => translator.translatorID === EMBEDDED_METADATA_TRANSLATOR_ID,
   );
@@ -2112,19 +2126,61 @@ async function identifyPage(
       outcome: "no_match",
       message: "the page carries no embedded citation metadata",
     });
-  } else {
-    let found = await tryMethod(attempts, "page_metadata", async () => {
-      let json = await translatePage(page, embedded);
-      seed = seedFromJSON(json);
-      return {
-        json: requireWork(json, embedded.label),
-        translator: embedded,
-        message: embedded.label,
-      };
+    return { found: null, seed: null };
+  }
+  // `as` keeps the declared union: the closure below assigns the seed, and
+  // TypeScript would otherwise narrow it to `null` for the rest of the function.
+  let seed = null as BibliographicSeed | null;
+  let found = await tryMethod(attempts, "page_metadata", async () => {
+    let json = await translatePage(page, embedded);
+    seed = seedFromJSON(json);
+    return {
+      json: requireWork(json, embedded.label),
+      translator: embedded,
+      message: embedded.label,
+    };
+  });
+  return { found: found === null ? null : { ...found, method: "page_metadata" }, seed };
+}
+
+async function identifyByServices(
+  seed: BibliographicSeed | null,
+  attempts: Attempt[],
+): Promise<PageIdentification | null> {
+  if (seed === null) {
+    attempts.push({
+      method: "external_service",
+      outcome: "no_match",
+      message: "the page names no title and author to search for",
     });
+    return null;
+  }
+  for (let service of EXTERNAL_SERVICES) {
+    let found = await tryMethod(attempts, "external_service", () =>
+      identifyByService(service, seed),
+    );
     if (found) {
-      return { ...found, method: "page_metadata" };
+      return { ...found, method: "external_service" };
     }
+  }
+  return null;
+}
+
+async function identifyPage(
+  requestedUrl: string,
+  finalUrl: string,
+  page: Document,
+  attempts: Attempt[],
+): Promise<PageIdentification | null> {
+  let detected = await createTranslateWeb(page).getTranslators();
+  let bySiteTranslator = await identifyBySiteTranslator(page, detected, attempts);
+  if (bySiteTranslator) {
+    return bySiteTranslator;
+  }
+
+  let byPageMetadata = await identifyByPageMetadata(page, detected, attempts);
+  if (byPageMetadata.found) {
+    return byPageMetadata.found;
   }
 
   let byIdentifier = await tryMethod(attempts, "identifier", () =>
@@ -2141,24 +2197,7 @@ async function identifyPage(
     return { ...byBibTeX, method: "published_bibtex" };
   }
 
-  if (seed === null) {
-    attempts.push({
-      method: "external_service",
-      outcome: "no_match",
-      message: "the page names no title and author to search for",
-    });
-    return null;
-  }
-  let knownSeed = seed;
-  for (let service of EXTERNAL_SERVICES) {
-    let found = await tryMethod(attempts, "external_service", () =>
-      identifyByService(service, knownSeed),
-    );
-    if (found) {
-      return { ...found, method: "external_service" };
-    }
-  }
-  return null;
+  return identifyByServices(byPageMetadata.seed, attempts);
 }
 
 function duplicateKeysFromJSON(json: TranslatorItemJSON): DuplicateKeys {
@@ -2555,20 +2594,29 @@ async function identifySource(
   return identification === null ? null : saveIdentification(identification, collectionIDs);
 }
 
-async function handleImportFromUrl(data: RequestData) {
-  let url = requireHttpUrl(data.url);
-  let fallback =
-    data.fallback_metadata === undefined ? null : requireFallbackMetadata(data.fallback_metadata);
-  let collectionKeys = Boolean(data.collection_keys)
-    ? normalizeStringList(data.collection_keys, "collection_keys")
-    : [];
+async function userCollectionIDs(collectionKeys: string[]): Promise<number[]> {
   let collectionIDs: number[] = [];
   for (let collectionKey of collectionKeys) {
     let collection = await getUserCollectionOrThrow(collectionKey);
     collectionIDs.push(collection.id);
   }
+  return collectionIDs;
+}
 
-  let attempts: Attempt[] = [];
+function translatorDetails(translator: WebTranslatorInfo | null) {
+  return translator === null
+    ? null
+    : { translator_id: translator.translatorID, label: translator.label };
+}
+
+// Saves the item the source identifies; a source that no method identifies is saved from
+// the fallback metadata when the request gives it.
+async function importSource(
+  url: string,
+  fallback: FallbackMetadata | null,
+  collectionIDs: number[],
+  attempts: Attempt[],
+): Promise<{ source: FetchedSource | null; outcome: ImportOutcome }> {
   let source: FetchedSource | null = null;
   let outcome: ImportOutcome | null = null;
   try {
@@ -2581,12 +2629,26 @@ async function handleImportFromUrl(data: RequestData) {
       throw error;
     }
   }
-  if (outcome === null) {
-    if (fallback === null) {
-      throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
-    }
-    outcome = await saveFallback(url, source, fallback, collectionIDs);
+  if (outcome !== null) {
+    return { source, outcome };
   }
+  if (fallback === null) {
+    throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
+  }
+  return { source, outcome: await saveFallback(url, source, fallback, collectionIDs) };
+}
+
+async function handleImportFromUrl(data: RequestData) {
+  let url = requireHttpUrl(data.url);
+  let fallback =
+    data.fallback_metadata === undefined ? null : requireFallbackMetadata(data.fallback_metadata);
+  let collectionKeys = Boolean(data.collection_keys)
+    ? normalizeStringList(data.collection_keys, "collection_keys")
+    : [];
+  let collectionIDs = await userCollectionIDs(collectionKeys);
+
+  let attempts: Attempt[] = [];
+  let { source, outcome } = await importSource(url, fallback, collectionIDs, attempts);
 
   return successResult(
     "import_from_url",
@@ -2594,10 +2656,7 @@ async function handleImportFromUrl(data: RequestData) {
       url,
       final_url: source === null ? url : source.finalUrl,
       collection_keys: collectionKeys,
-      translator:
-        outcome.translator === null
-          ? null
-          : { translator_id: outcome.translator.translatorID, label: outcome.translator.label },
+      translator: translatorDetails(outcome.translator),
       attempts,
       attachment_failures: outcome.attachmentFailures,
     },
@@ -2708,13 +2767,7 @@ async function handleResolveUrl(data: RequestData) {
     {
       url,
       final_url: source.finalUrl,
-      translator:
-        resolution.translator === null
-          ? null
-          : {
-              translator_id: resolution.translator.translatorID,
-              label: resolution.translator.label,
-            },
+      translator: translatorDetails(resolution.translator),
       attempts,
     },
     { method: resolution.method, item_type: resolution.itemType, csl: resolution.csl },
