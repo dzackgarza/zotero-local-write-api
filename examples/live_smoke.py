@@ -1,7 +1,10 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = []
+# dependencies = [
+#     "httpx>=0.28,<1",
+#     "pydantic>=2.7,<3",
+# ]
 # ///
 """
 Live smoke proof for the local-write-api add-on.
@@ -27,11 +30,13 @@ import json
 import secrets
 import sys
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
-from typing import Any
+from typing import Generic, Literal, NotRequired, TypeVar
 from uuid import uuid4
+
+import httpx
+from pydantic import JsonValue, TypeAdapter, ValidationError
+from typing_extensions import TypedDict
 
 TOKEN_PREF = "extensions.zotero.localWriteAPI.token"
 
@@ -43,69 +48,184 @@ PDF_BYTES = (
     b"trailer\n<<>>\n%%EOF\n"
 )
 
+JsonObject = dict[str, JsonValue]
+ResultT = TypeVar("ResultT")
+
 
 class SmokeFailure(RuntimeError):
     """Raised when the live smoke proof fails."""
 
 
-def _request_json(
-    method: str,
-    url: str,
-    payload: dict[str, Any] | None = None,
-    timeout: float = 30.0,
-    auth_headers: dict[str, str] | None = None,
-) -> Any:
-    headers = {"Accept": "application/json", **(auth_headers or {})}
-    body = None
-    if payload is not None:
-        body = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, data=body, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        raise SmokeFailure(f"{method} {url} returned HTTP {exc.code}: {raw}") from exc
-    except urllib.error.URLError as exc:
-        raise SmokeFailure(f"{method} {url} failed: {exc.reason}") from exc
-    except ConnectionError as exc:
-        raise SmokeFailure(f"{method} {url} failed: {exc}") from exc
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise SmokeFailure(f"{method} {url} did not return JSON: {raw}") from exc
+# Response shapes from openapi.yaml, limited to the fields this proof reads.
+# Validation rejects a response whose read fields are missing or mistyped, and
+# `success: true` is part of every shape.
 
 
-def _request_status(
-    method: str,
-    url: str,
-    *,
-    headers: dict[str, str] | None = None,
-    payload: dict[str, Any] | None = None,
-    timeout: float = 30.0,
-) -> tuple[int, str]:
-    """Return (status_code, body_text). Does not raise on 4xx/5xx."""
-    request_headers = dict(headers or {})
-    body = None
-    if payload is not None:
-        body = json.dumps(payload).encode("utf-8")
-        request_headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", errors="replace")
-    except urllib.error.URLError as exc:
-        raise SmokeFailure(f"{method} {url} failed: {exc.reason}") from exc
+class Endpoints(TypedDict):
+    attach: str
+    write: str
 
 
-def _prove_openapi_endpoint(base_url: str, write_path: str) -> None:
+class VersionResponse(TypedDict):
+    success: Literal[True]
+    version: str
+    endpoints: Endpoints
+    capabilities: list[str]
+    translators_ready: bool
+
+
+class Ack(TypedDict):
+    success: Literal[True]
+
+
+class ItemKeySuccess(Ack):
+    item_key: str
+
+
+class NoteSuccess(Ack):
+    note_key: str
+
+
+class CopySuccess(Ack):
+    new_item_key: str
+
+
+class CollectionDetails(TypedDict):
+    collection_key: str
+
+
+class CollectionSuccess(Ack):
+    details: CollectionDetails
+
+
+class AttachDetails(TypedDict):
+    parent_item_key: str | None
+    collection_key: str | None
+    source_mode: Literal["path", "bytes", "bytes_fallback"]
+
+
+class AttachSuccess(Ack):
+    attachment_key: str
+    details: AttachDetails
+
+
+class JavascriptDetails(TypedDict, Generic[ResultT]):
+    result: ResultT
+
+
+class JavascriptSuccess(Ack, Generic[ResultT]):
+    details: JavascriptDetails[ResultT]
+
+
+# Item JSON from Zotero's local API (Zotero.Item.toJSON), limited to the fields
+# this proof reads.
+
+
+class Tag(TypedDict):
+    tag: str
+
+
+class ChildItemData(TypedDict):
+    itemType: str
+    title: str
+    tags: list[Tag]
+    # Zotero writes `deleted` only for a trashed item.
+    deleted: NotRequired[bool]
+    # Zotero writes `parentItem` only for a child item.
+    parentItem: NotRequired[str]
+    # Zotero writes `contentType` only for an attachment.
+    contentType: NotRequired[str]
+
+
+class ItemData(ChildItemData):
+    """A top-level item: Zotero writes `collections` only for these."""
+
+    collections: list[str]
+
+
+class ChildItem(TypedDict):
+    key: str
+    data: ChildItemData
+
+
+class Item(TypedDict):
+    key: str
+    data: ItemData
+
+
+class SmokeReport(TypedDict):
+    success: Literal[True]
+    version: str
+    item_key: str
+    bibtex_item_key: str
+    attachment_key: str
+    deleted_tag: str
+    kept_tag: str
+    standalone_attachment_keys: list[str]
+
+
+class SmokeArgs(argparse.Namespace):
+    """Typed view of the parsed command line; parse_args() fills every attribute."""
+
+    base_url: str
+    library_id: str
+    expected_version: str
+    token: str
+
+
+ACK = TypeAdapter(Ack)
+ITEM_KEY = TypeAdapter(ItemKeySuccess)
+NOTE = TypeAdapter(NoteSuccess)
+COPY = TypeAdapter(CopySuccess)
+COLLECTION = TypeAdapter(CollectionSuccess)
+ATTACH = TypeAdapter(AttachSuccess)
+VERSION = TypeAdapter(VersionResponse)
+ITEM = TypeAdapter(Item)
+CHILDREN = TypeAdapter(list[ChildItem])
+JS_TEXT = TypeAdapter(JavascriptSuccess[str])
+JS_INT = TypeAdapter(JavascriptSuccess[int])
+JS_TRUE = TypeAdapter(JavascriptSuccess[Literal[True]])
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise SmokeFailure(message)
+
+
+def _require_ok(response: httpx.Response) -> None:
+    request = response.request
+    _require(
+        response.is_success,
+        f"{request.method} {request.url} returned HTTP {response.status_code}: {response.text}",
+    )
+
+
+def _get(http: httpx.Client, path: str, schema: TypeAdapter[ResultT]) -> ResultT:
+    response = http.get(path)
+    _require_ok(response)
+    return schema.validate_json(response.content)
+
+
+def _post(
+    http: httpx.Client,
+    path: str,
+    payload: JsonObject,
+    headers: dict[str, str],
+    schema: TypeAdapter[ResultT],
+) -> ResultT:
+    response = http.post(path, json=payload, headers=headers)
+    _require_ok(response)
+    return schema.validate_json(response.content)
+
+
+def _prove_openapi_endpoint(http: httpx.Client, write_path: str) -> None:
     """GET /openapi.yaml serves the bundled schema as a public document."""
-    status, body = _request_status("GET", f"{base_url}/openapi.yaml")
-    _require(status == 200, f"/openapi.yaml returned HTTP {status}, expected 200: {body[:200]!r}")
+    response = http.get("/openapi.yaml")
+    body = response.text
+    _require(
+        response.status_code == 200,
+        f"/openapi.yaml returned HTTP {response.status_code}, expected 200: {body[:200]!r}",
+    )
     _require(body.startswith("openapi:"), f"/openapi.yaml body is not an OpenAPI doc: {body[:80]!r}")
     _require(
         f"{write_path}:" in body,
@@ -113,57 +233,49 @@ def _prove_openapi_endpoint(base_url: str, write_path: str) -> None:
     )
 
 
-def _prove_bearer_auth(base_url: str, write_path: str, token: str) -> None:
+def _require_write_status(
+    http: httpx.Client, write_path: str, headers: dict[str, str], expected: int, case: str
+) -> None:
+    """POST an empty body to /write and require `expected` as the HTTP status."""
+    response = http.post(write_path, json={}, headers=headers)
+    _require(
+        response.status_code == expected,
+        f"/write {case} returned HTTP {response.status_code}, expected {expected}: {response.text[:200]!r}",
+    )
+
+
+def _prove_bearer_auth(http: httpx.Client, write_path: str, token: str) -> None:
     """With the token pref set, /write demands a matching bearer token.
 
     Auth is checked before the request body, so an empty body isolates the gate:
     no token -> 401; correct token -> the body-validation 400, never 401. This
     proves the gate without creating or trashing any library item.
     """
-    no_token_status, no_token_body = _request_status("POST", f"{base_url}{write_path}", payload={})
-    _require(
-        no_token_status == 401,
-        f"/write without a token returned HTTP {no_token_status}, expected 401: {no_token_body[:200]!r}",
+    _require_write_status(http, write_path, {}, 401, "without a token")
+    _require_write_status(
+        http,
+        write_path,
+        {"Authorization": f"Bearer {token}"},
+        400,
+        "with the token (body validation)",
     )
-    good_status, good_body = _request_status(
-        "POST",
-        f"{base_url}{write_path}",
-        headers={"Authorization": f"Bearer {token}"},
-        payload={},
-    )
-    _require(
-        good_status == 400,
-        f"/write with the token returned HTTP {good_status}, expected 400 (body validation): {good_body[:200]!r}",
-    )
-    wrong_status, wrong_body = _request_status(
-        "POST",
-        f"{base_url}{write_path}",
-        headers={"Authorization": "Bearer not-the-token"},
-        payload={},
-    )
-    _require(
-        wrong_status == 401,
-        f"/write with a wrong token returned HTTP {wrong_status}, expected 401: {wrong_body[:200]!r}",
+    _require_write_status(
+        http, write_path, {"Authorization": "Bearer not-the-token"}, 401, "with a wrong token"
     )
 
 
 def _run_javascript(
-    base_url: str, write_path: str, code: str, auth_headers: dict[str, str] | None = None
-) -> Any:
-    result = _request_json(
-        "POST",
-        f"{base_url}{write_path}",
-        payload={"operation": "run_javascript", "code": code},
-        auth_headers=auth_headers,
-    )
-    _require(
-        isinstance(result, dict) and result.get("success") is True,
-        f"run_javascript failed: {result!r}",
-    )
-    return result["details"]["result"]
+    http: httpx.Client,
+    write_path: str,
+    code: str,
+    headers: dict[str, str],
+    schema: TypeAdapter[JavascriptSuccess[ResultT]],
+) -> ResultT:
+    payload: JsonObject = {"operation": "run_javascript", "code": code}
+    return _post(http, write_path, payload, headers, schema)["details"]["result"]
 
 
-def _prove_bearer_gate(base_url: str, write_path: str, token: str) -> None:
+def _prove_bearer_gate(http: httpx.Client, write_path: str, token: str) -> None:
     """Always exercise the bearer gate, self-provisioning when no token is given.
 
     With an externally-set token (--token), prove against it directly. Otherwise
@@ -171,9 +283,9 @@ def _prove_bearer_gate(base_url: str, write_path: str, token: str) -> None:
     gate, then clear it so the caller's default loopback-open state is restored.
     """
     if token:
-        _prove_bearer_auth(base_url, write_path, token)
+        _prove_bearer_auth(http, write_path, token)
         return
-    open_status, _ = _request_status("POST", f"{base_url}{write_path}", payload={})
+    open_status = http.post(write_path, json={}).status_code
     _require(
         open_status != 401,
         "instance already requires a token but none was given; pass --token to prove the gate",
@@ -188,17 +300,22 @@ def _prove_bearer_gate(base_url: str, write_path: str, token: str) -> None:
     # run_javascript serializes the code's return value, so each snippet must
     # return something JSON-encodable (a bare Prefs.set/clear returns undefined).
     _run_javascript(
-        base_url, write_path, f"Zotero.Prefs.set({TOKEN_PREF!r}, {probe_token!r}, true); return true;"
+        http,
+        write_path,
+        f"Zotero.Prefs.set({TOKEN_PREF!r}, {probe_token!r}, true); return true;",
+        {},
+        JS_TRUE,
     )
     auth = {"Authorization": f"Bearer {probe_token}"}
     try:
-        _prove_bearer_auth(base_url, write_path, probe_token)
+        _prove_bearer_auth(http, write_path, probe_token)
     finally:
         _run_javascript(
-            base_url,
+            http,
             write_path,
             f"Zotero.Prefs.clear({TOKEN_PREF!r}, true); return true;",
-            auth_headers=auth,
+            auth,
+            JS_TRUE,
         )
 
     # The published-without-token deny branch (publicBaseURL set, token unset) is NOT
@@ -208,12 +325,7 @@ def _prove_bearer_gate(base_url: str, write_path: str, token: str) -> None:
     # a disposable profile, not the operator's own.
 
 
-def _require(condition: bool, message: str) -> None:
-    if not condition:
-        raise SmokeFailure(message)
-
-
-def _tag_names(item: dict[str, Any]) -> list[str]:
+def _tag_names(item: Item) -> list[str]:
     return [
         tag["tag"].strip()
         for tag in item["data"]["tags"]
@@ -221,16 +333,14 @@ def _tag_names(item: dict[str, Any]) -> list[str]:
     ]
 
 
-def _get_item(base_url: str, library_id: str, item_key: str) -> dict[str, Any]:
+def _get_item(http: httpx.Client, library_id: str, item_key: str) -> Item:
     quoted_key = urllib.parse.quote(item_key)
-    return _request_json("GET", f"{base_url}/api/users/{library_id}/items/{quoted_key}")
+    return _get(http, f"/api/users/{library_id}/items/{quoted_key}", ITEM)
 
 
-def _get_children(base_url: str, library_id: str, item_key: str) -> list[dict[str, Any]]:
+def _get_children(http: httpx.Client, library_id: str, item_key: str) -> list[ChildItem]:
     quoted_key = urllib.parse.quote(item_key)
-    children = _request_json("GET", f"{base_url}/api/users/{library_id}/items/{quoted_key}/children")
-    _require(isinstance(children, list), f"Expected children list for item {item_key}, got: {children!r}")
-    return children
+    return _get(http, f"/api/users/{library_id}/items/{quoted_key}/children", CHILDREN)
 
 
 # Bearer header applied to every /write and /attach call, populated by run()
@@ -239,62 +349,51 @@ def _get_children(base_url: str, library_id: str, item_key: str) -> list[dict[st
 _WRITE_AUTH: dict[str, str] = {}
 
 
-def _post_write(base_url: str, write_path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    result = _request_json("POST", f"{base_url}{write_path}", payload=payload, auth_headers=_WRITE_AUTH)
-    _require(isinstance(result, dict), f"Expected object response from {write_path}, got: {result!r}")
-    return result
+def _post_write(
+    http: httpx.Client, write_path: str, payload: JsonObject, schema: TypeAdapter[ResultT]
+) -> ResultT:
+    return _post(http, write_path, payload, _WRITE_AUTH, schema)
 
 
-def _post_attach(base_url: str, attach_path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    result = _request_json(
-        "POST", f"{base_url}{attach_path}", payload=payload, timeout=60.0, auth_headers=_WRITE_AUTH
-    )
-    _require(isinstance(result, dict), f"Expected object response from {attach_path}, got: {result!r}")
-    return result
-
-
-def _wait_for_deleted(base_url: str, library_id: str, item_key: str, *, timeout: float = 5.0, interval: float = 0.25) -> dict[str, Any]:
+def _wait_for_deleted(http: httpx.Client, library_id: str, item_key: str, *, timeout: float = 5.0, interval: float = 0.25) -> Item:
     deadline = time.monotonic() + timeout
     while True:
-        item = _get_item(base_url, library_id, item_key)
-        if bool(item["data"].get("deleted")):
+        item = _get_item(http, library_id, item_key)
+        if item["data"].get("deleted") is True:
             return item
         if time.monotonic() >= deadline:
             return item
         time.sleep(interval)
 
 
-def _cleanup_item(base_url: str, write_path: str, item_key: str | None) -> None:
+def _cleanup_item(http: httpx.Client, write_path: str, item_key: str | None) -> None:
     if not item_key:
         return
-    _post_write(
-        base_url,
-        write_path,
-        {"operation": "trash_item", "item_key": item_key},
-    )
+    _post_write(http, write_path, {"operation": "trash_item", "item_key": item_key}, ACK)
 
 
-def _select_pane_row(base_url: str, write_path: str, row_id: str) -> None:
+def _select_pane_row(http: httpx.Client, write_path: str, row_id: str) -> None:
     """Select a row of Zotero's collection pane by its tree-row id ("L1", "C42", ...)."""
     _run_javascript(
-        base_url,
+        http,
         write_path,
         f"await Zotero.getActiveZoteroPane().collectionsView.selectByID({row_id!r}); return true;",
-        auth_headers=_WRITE_AUTH,
+        _WRITE_AUTH,
+        JS_TRUE,
     )
 
 
-def _store_standalone_pdf(base_url: str, attach_path: str, title: str) -> dict[str, Any]:
-    result = _post_attach(
-        base_url,
+def _store_standalone_pdf(http: httpx.Client, attach_path: str, title: str) -> AttachSuccess:
+    result = _post_write(
+        http,
         attach_path,
         {
             "title": title,
             "file_name": "live-smoke-standalone.pdf",
             "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
         },
+        ATTACH,
     )
-    _require(result.get("success") is True, f"standalone /attach failed: {result!r}")
     _require(
         result["details"]["parent_item_key"] is None,
         f"standalone /attach reported a parent: {result!r}",
@@ -303,7 +402,7 @@ def _store_standalone_pdf(base_url: str, attach_path: str, title: str) -> dict[s
 
 
 def _prove_standalone_attach(
-    base_url: str,
+    http: httpx.Client,
     write_path: str,
     attach_path: str,
     library_id: str,
@@ -317,35 +416,37 @@ def _prove_standalone_attach(
     `created` as soon as it exists, so the caller trashes it on any failure.
     """
     original_row = _run_javascript(
-        base_url,
+        http,
         write_path,
         "return Zotero.getActiveZoteroPane().getCollectionTreeRow().id;",
-        auth_headers=_WRITE_AUTH,
+        _WRITE_AUTH,
+        JS_TEXT,
     )
     collection_result = _post_write(
-        base_url,
+        http,
         write_path,
         {"operation": "create_collection", "name": f"live-smoke-standalone-{suffix}"},
+        COLLECTION,
     )
-    _require(collection_result.get("success") is True, f"create_collection failed: {collection_result!r}")
     collection_key = collection_result["details"]["collection_key"]
     try:
         collection_id = _run_javascript(
-            base_url,
+            http,
             write_path,
             f"return Zotero.Collections.getByLibraryAndKey(Zotero.Libraries.userLibraryID, {collection_key!r}).id;",
-            auth_headers=_WRITE_AUTH,
+            _WRITE_AUTH,
+            JS_INT,
         )
         user_library_id = _run_javascript(
-            base_url, write_path, "return Zotero.Libraries.userLibraryID;", auth_headers=_WRITE_AUTH
+            http, write_path, "return Zotero.Libraries.userLibraryID;", _WRITE_AUTH, JS_INT
         )
         for row_id, expected_collections in (
             (f"C{collection_id}", [collection_key]),
             (f"L{user_library_id}", []),
         ):
-            _select_pane_row(base_url, write_path, row_id)
+            _select_pane_row(http, write_path, row_id)
             title = f"Live Smoke Standalone {row_id} {suffix}"
-            result = _store_standalone_pdf(base_url, attach_path, title)
+            result = _store_standalone_pdf(http, attach_path, title)
             attachment_key = result["attachment_key"]
             created.append(attachment_key)
             expected_key = expected_collections[0] if expected_collections else None
@@ -353,65 +454,58 @@ def _prove_standalone_attach(
                 result["details"]["collection_key"] == expected_key,
                 f"standalone /attach reported collection {result['details']['collection_key']!r}, expected {expected_key!r}",
             )
-            stored = _get_item(base_url, library_id, attachment_key)["data"]
+            stored = _get_item(http, library_id, attachment_key)["data"]
             _require(stored["itemType"] == "attachment", f"standalone item is not an attachment: {stored!r}")
             _require("parentItem" not in stored, f"standalone attachment has a parent: {stored!r}")
-            _require(stored["contentType"] == "application/pdf", f"standalone contentType mismatch: {stored!r}")
+            _require(stored.get("contentType") == "application/pdf", f"standalone contentType mismatch: {stored!r}")
             _require(stored["title"] == title, f"standalone title mismatch: {stored!r}")
             _require(
                 stored["collections"] == expected_collections,
                 f"standalone attachment collections {stored['collections']!r}, expected {expected_collections!r}",
             )
     finally:
-        _select_pane_row(base_url, write_path, original_row)
-        _post_write(base_url, write_path, {"operation": "trash_collection", "collection_key": collection_key})
+        _select_pane_row(http, write_path, original_row)
+        _post_write(
+            http, write_path, {"operation": "trash_collection", "collection_key": collection_key}, ACK
+        )
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
+def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
     if args.token:
         _WRITE_AUTH["Authorization"] = f"Bearer {args.token}"
-    base_url = args.base_url.rstrip("/")
-    library_id = str(args.library_id)
+    library_id = args.library_id
     suffix = uuid4().hex[:10]
     doomed_tag = f"live-smoke-delete-{suffix}"
     keep_tag = f"live-smoke-keep-{suffix}"
     item_key: str | None = None
     bibtex_item_key: str | None = None
     standalone_keys: list[str] = []
-    write_path = ""
 
-    version_payload = _request_json("GET", f"{base_url}/version")
-    _require(isinstance(version_payload, dict), f"Expected version payload object, got: {version_payload!r}")
-    _require(version_payload.get("success") is True, f"Version probe failed: {version_payload!r}")
+    version_payload = _get(http, "/version", VERSION)
     if args.expected_version:
         _require(
-            version_payload.get("version") == args.expected_version,
-            f"Expected add-on version {args.expected_version}, got {version_payload.get('version')!r}",
+            version_payload["version"] == args.expected_version,
+            f"Expected add-on version {args.expected_version}, got {version_payload['version']!r}",
         )
 
-    _require("endpoints" in version_payload, f"Version probe did not include endpoints: {version_payload!r}")
-    endpoints = version_payload["endpoints"]
-    _require(isinstance(endpoints, dict), f"Version probe endpoints is not an object: {version_payload!r}")
-    attach_path = endpoints.get("attach")
-    write_path = endpoints.get("write")
-    _require(isinstance(attach_path, str) and attach_path.startswith("/"), f"Invalid attach endpoint: {attach_path!r}")
-    _require(isinstance(write_path, str) and write_path.startswith("/"), f"Invalid write endpoint: {write_path!r}")
+    attach_path = version_payload["endpoints"]["attach"]
+    write_path = version_payload["endpoints"]["write"]
+    _require(attach_path.startswith("/"), f"Invalid attach endpoint: {attach_path!r}")
+    _require(write_path.startswith("/"), f"Invalid write endpoint: {write_path!r}")
 
-    _require("capabilities" in version_payload, f"Version probe did not include capabilities: {version_payload!r}")
     capabilities = version_payload["capabilities"]
-    _require(isinstance(capabilities, list), f"Version probe capabilities is not a list: {version_payload!r}")
     for capability in ("attach", "attach_bytes", "attach_standalone", "write", "version_probe", "import_bibtex"):
         _require(capability in capabilities, f"Missing required capability {capability!r}: {capabilities!r}")
-    _require(version_payload.get("translators_ready") is True, f"Zotero has not loaded its translators: {version_payload!r}")
+    _require(version_payload["translators_ready"] is True, f"Zotero has not loaded its translators: {version_payload!r}")
 
-    _prove_openapi_endpoint(base_url, write_path)
+    _prove_openapi_endpoint(http, write_path)
     # Always prove the bearer gate: with --token against a pre-authed instance,
     # otherwise self-provisioning a throwaway token and clearing it after.
-    _prove_bearer_gate(base_url, write_path, args.token)
+    _prove_bearer_gate(http, write_path, args.token)
 
     try:
         create_result = _post_write(
-            base_url,
+            http,
             write_path,
             {
                 "operation": "create_item",
@@ -430,19 +524,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 },
                 "tags": [doomed_tag, keep_tag],
             },
+            ITEM_KEY,
         )
-        _require(create_result.get("success") is True, f"create_item failed: {create_result!r}")
-        item_key = create_result.get("item_key")
-        _require(isinstance(item_key, str) and item_key, f"create_item did not return item_key: {create_result!r}")
+        item_key = create_result["item_key"]
+        _require(bool(item_key), f"create_item did not return item_key: {create_result!r}")
 
-        created_item = _get_item(base_url, library_id, item_key)
+        created_item = _get_item(http, library_id, item_key)
         _require(created_item["data"]["title"] == f"live-smoke-item-{suffix}", f"Unexpected item title: {created_item!r}")
         created_tags = set(_tag_names(created_item))
         _require(created_tags == {doomed_tag, keep_tag}, f"Unexpected initial tags: {created_tags!r}")
 
         bibtex_title = f"live-smoke-bibtex-{suffix}"
         bibtex_result = _post_write(
-            base_url,
+            http,
             write_path,
             {
                 "operation": "import_bibtex",
@@ -455,18 +549,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "}\n"
                 ),
             },
+            ITEM_KEY,
         )
-        _require(bibtex_result.get("success") is True, f"import_bibtex failed: {bibtex_result!r}")
-        bibtex_item_key = bibtex_result.get("item_key")
-        _require(isinstance(bibtex_item_key, str) and bibtex_item_key, f"import_bibtex did not return item_key: {bibtex_result!r}")
-        bibtex_item = _get_item(base_url, library_id, bibtex_item_key)
+        bibtex_item_key = bibtex_result["item_key"]
+        _require(bool(bibtex_item_key), f"import_bibtex did not return item_key: {bibtex_result!r}")
+        bibtex_item = _get_item(http, library_id, bibtex_item_key)
         _require(
             bibtex_item["data"]["title"] == bibtex_title,
             f"import_bibtex read-back title mismatch: {bibtex_item!r}",
         )
 
-        attach_result = _post_attach(
-            base_url,
+        attach_result = _post_write(
+            http,
             attach_path,
             {
                 "item_key": item_key,
@@ -474,19 +568,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "file_name": "live-smoke.pdf",
                 "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
             },
+            ATTACH,
         )
-        _require(attach_result.get("success") is True, f"/attach failed: {attach_result!r}")
-        attachment_key = attach_result.get("attachment_key")
-        _require(isinstance(attachment_key, str) and attachment_key, f"Missing attachment_key: {attach_result!r}")
-        _require("details" in attach_result, f"/attach response missing details: {attach_result!r}")
-        attach_details = attach_result["details"]
-        _require(attach_details["source_mode"] == "bytes", f"Expected bytes source_mode, got: {attach_result!r}")
-
-        children = _get_children(base_url, library_id, item_key)
-        matching_attachment = next((child for child in children if child.get("key") == attachment_key), None)
-        _require(matching_attachment is not None, f"Attached PDF {attachment_key} not found in children: {children!r}")
+        attachment_key = attach_result["attachment_key"]
+        _require(bool(attachment_key), f"Missing attachment_key: {attach_result!r}")
         _require(
-            matching_attachment["data"]["contentType"] == "application/pdf",
+            attach_result["details"]["source_mode"] == "bytes",
+            f"Expected bytes source_mode, got: {attach_result!r}",
+        )
+
+        children = _get_children(http, library_id, item_key)
+        matches = [child for child in children if child["key"] == attachment_key]
+        _require(len(matches) == 1, f"Attached PDF {attachment_key} not found once in children: {children!r}")
+        matching_attachment = matches[0]
+        _require(
+            matching_attachment["data"].get("contentType") == "application/pdf",
             f"Attachment contentType mismatch: {matching_attachment!r}",
         )
         _require(
@@ -494,14 +590,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             f"Attachment title mismatch: {matching_attachment!r}",
         )
 
-        delete_tag_result = _post_write(
-            base_url,
-            write_path,
-            {"operation": "delete_tag", "tag_name": doomed_tag},
-        )
-        _require(delete_tag_result.get("success") is True, f"delete_tag failed: {delete_tag_result!r}")
+        _post_write(http, write_path, {"operation": "delete_tag", "tag_name": doomed_tag}, ACK)
 
-        updated_item = _get_item(base_url, library_id, item_key)
+        updated_item = _get_item(http, library_id, item_key)
         updated_tags = set(_tag_names(updated_item))
         _require(doomed_tag not in updated_tags, f"delete_tag left doomed tag behind: {updated_tags!r}")
         _require(keep_tag in updated_tags, f"delete_tag removed the keep tag: {updated_tags!r}")
@@ -511,46 +602,40 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         # dereferenced directly; nothing exercised that path at the real boundary.
         collection_name = f"live-smoke-collection-{suffix}"
         create_collection_result = _post_write(
-            base_url,
+            http,
             write_path,
             {"operation": "create_collection", "name": collection_name},
-        )
-        _require(
-            create_collection_result.get("success") is True,
-            f"create_collection failed: {create_collection_result!r}",
+            COLLECTION,
         )
         collection_key = create_collection_result["details"]["collection_key"]
 
-        add_result = _post_write(
-            base_url,
+        _post_write(
+            http,
             write_path,
             {
                 "operation": "add_item_to_collection",
                 "item_key": item_key,
                 "collection_key": collection_key,
             },
+            ACK,
         )
-        _require(add_result.get("success") is True, f"add_item_to_collection failed: {add_result!r}")
         _require(
-            collection_key in _get_item(base_url, library_id, item_key)["data"]["collections"],
+            collection_key in _get_item(http, library_id, item_key)["data"]["collections"],
             "add_item_to_collection did not attach the collection",
         )
 
-        remove_result = _post_write(
-            base_url,
+        _post_write(
+            http,
             write_path,
             {
                 "operation": "remove_item_from_collection",
                 "item_key": item_key,
                 "collection_key": collection_key,
             },
+            ACK,
         )
         _require(
-            remove_result.get("success") is True,
-            f"remove_item_from_collection failed: {remove_result!r}",
-        )
-        _require(
-            collection_key not in _get_item(base_url, library_id, item_key)["data"]["collections"],
+            collection_key not in _get_item(http, library_id, item_key)["data"]["collections"],
             "remove_item_from_collection left the collection attached",
         )
 
@@ -559,136 +644,117 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         tag_b = f"live-smoke-b-{suffix}"
         tag_c = f"live-smoke-c-{suffix}"
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "add_item_tags", "item_key": item_key, "tags": [tag_a]}).get("success") is True,
-            "add_item_tags failed",
-        )
-        _require(tag_a in _tag_names(_get_item(base_url, library_id, item_key)), "add_item_tags did not add the tag")
+        _post_write(http, write_path, {"operation": "add_item_tags", "item_key": item_key, "tags": [tag_a]}, ACK)
+        _require(tag_a in _tag_names(_get_item(http, library_id, item_key)), "add_item_tags did not add the tag")
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "set_item_tags", "item_key": item_key, "tags": [keep_tag, tag_a, tag_b]}).get("success") is True,
-            "set_item_tags failed",
-        )
-        _require(set(_tag_names(_get_item(base_url, library_id, item_key))) == {keep_tag, tag_a, tag_b}, "set_item_tags did not replace the tag set")
+        _post_write(http, write_path, {"operation": "set_item_tags", "item_key": item_key, "tags": [keep_tag, tag_a, tag_b]}, ACK)
+        _require(set(_tag_names(_get_item(http, library_id, item_key))) == {keep_tag, tag_a, tag_b}, "set_item_tags did not replace the tag set")
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "remove_item_tags", "item_key": item_key, "tags": [tag_b]}).get("success") is True,
-            "remove_item_tags failed",
-        )
-        _require(tag_b not in _tag_names(_get_item(base_url, library_id, item_key)), "remove_item_tags left the tag attached")
+        _post_write(http, write_path, {"operation": "remove_item_tags", "item_key": item_key, "tags": [tag_b]}, ACK)
+        _require(tag_b not in _tag_names(_get_item(http, library_id, item_key)), "remove_item_tags left the tag attached")
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "rename_tag", "old_name": tag_a, "new_name": tag_c}).get("success") is True,
-            "rename_tag failed",
-        )
-        _require(tag_c in _tag_names(_get_item(base_url, library_id, item_key)), "rename_tag did not apply the new name")
+        _post_write(http, write_path, {"operation": "rename_tag", "old_name": tag_a, "new_name": tag_c}, ACK)
+        _require(tag_c in _tag_names(_get_item(http, library_id, item_key)), "rename_tag did not apply the new name")
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "merge_tags", "source_tags": [tag_c], "target_tag": keep_tag}).get("success") is True,
-            "merge_tags failed",
-        )
-        merged_tags = _tag_names(_get_item(base_url, library_id, item_key))
+        _post_write(http, write_path, {"operation": "merge_tags", "source_tags": [tag_c], "target_tag": keep_tag}, ACK)
+        merged_tags = _tag_names(_get_item(http, library_id, item_key))
         _require(tag_c not in merged_tags and keep_tag in merged_tags, "merge_tags did not fold the source into the target")
 
         # Item field and child-item operations.
         new_title = f"Live Smoke Retitled {suffix}"
-        _require(
-            _post_write(base_url, write_path, {"operation": "update_item_fields", "item_key": item_key, "fields": {"title": new_title}}).get("success") is True,
-            "update_item_fields failed",
-        )
-        _require(_get_item(base_url, library_id, item_key)["data"]["title"] == new_title, "update_item_fields did not persist the title")
+        _post_write(http, write_path, {"operation": "update_item_fields", "item_key": item_key, "fields": {"title": new_title}}, ACK)
+        _require(_get_item(http, library_id, item_key)["data"]["title"] == new_title, "update_item_fields did not persist the title")
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "update_attachment_title", "attachment_key": attachment_key, "new_title": "Live Smoke PDF Retitled"}).get("success") is True,
-            "update_attachment_title failed",
+        _post_write(
+            http,
+            write_path,
+            {"operation": "update_attachment_title", "attachment_key": attachment_key, "new_title": "Live Smoke PDF Retitled"},
+            ACK,
         )
 
-        note_result = _post_write(base_url, write_path, {"operation": "attach_note", "parent_item_key": item_key, "note_text": "live smoke note"})
-        _require(note_result.get("success") is True, f"attach_note failed: {note_result!r}")
+        note_result = _post_write(
+            http, write_path, {"operation": "attach_note", "parent_item_key": item_key, "note_text": "live smoke note"}, NOTE
+        )
         note_key = note_result["note_key"]
-        _require(
-            _post_write(base_url, write_path, {"operation": "update_note", "note_key": note_key, "new_content": "live smoke note updated"}).get("success") is True,
-            "update_note failed",
-        )
+        _post_write(http, write_path, {"operation": "update_note", "note_key": note_key, "new_content": "live smoke note updated"}, ACK)
 
-        url_result = _post_write(base_url, write_path, {"operation": "attach_url", "parent_item_key": item_key, "url": "https://example.com/live-smoke"})
-        _require(url_result.get("success") is True, f"attach_url failed: {url_result!r}")
+        _post_write(
+            http,
+            write_path,
+            {"operation": "attach_url", "parent_item_key": item_key, "url": "https://example.com/live-smoke"},
+            ACK,
+        )
 
         # Copy, then use the copy as the disposable side of merge/trash/restore.
-        copy_result = _post_write(base_url, write_path, {"operation": "copy_item", "item_key": item_key})
-        _require(copy_result.get("success") is True, f"copy_item failed: {copy_result!r}")
-        copy_key = copy_result["new_item_key"]
+        copy_key = _post_write(http, write_path, {"operation": "copy_item", "item_key": item_key}, COPY)["new_item_key"]
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "trash_item", "item_key": copy_key}).get("success") is True,
-            "trash_item on the copy failed",
-        )
-        _require(
-            _post_write(base_url, write_path, {"operation": "restore_item", "item_key": copy_key}).get("success") is True,
-            "restore_item failed",
-        )
-        _require(_get_item(base_url, library_id, copy_key)["data"].get("deleted") is not True, "restore_item left the item trashed")
+        _post_write(http, write_path, {"operation": "trash_item", "item_key": copy_key}, ACK)
+        _post_write(http, write_path, {"operation": "restore_item", "item_key": copy_key}, ACK)
+        _require(_get_item(http, library_id, copy_key)["data"].get("deleted") is not True, "restore_item left the item trashed")
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "replace_item_json", "item_key": copy_key, "item_json": {"itemType": "journalArticle", "title": f"Live Smoke Replaced {suffix}"}}).get("success") is True,
-            "replace_item_json failed",
+        _post_write(
+            http,
+            write_path,
+            {"operation": "replace_item_json", "item_key": copy_key, "item_json": {"itemType": "journalArticle", "title": f"Live Smoke Replaced {suffix}"}},
+            ACK,
         )
         _require(
-            _get_item(base_url, library_id, copy_key)["data"]["title"] == f"Live Smoke Replaced {suffix}",
+            _get_item(http, library_id, copy_key)["data"]["title"] == f"Live Smoke Replaced {suffix}",
             "replace_item_json did not persist the replacement",
         )
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "merge_items", "source_key": copy_key, "target_key": item_key}).get("success") is True,
-            "merge_items failed",
-        )
+        _post_write(http, write_path, {"operation": "merge_items", "source_key": copy_key, "target_key": item_key}, ACK)
 
         # Collection hierarchy operations, all on this run's own collections.
-        parent_result = _post_write(base_url, write_path, {"operation": "create_collection", "name": f"live-smoke-parent-{suffix}"})
-        _require(parent_result.get("success") is True, f"create_collection (parent) failed: {parent_result!r}")
+        parent_result = _post_write(
+            http, write_path, {"operation": "create_collection", "name": f"live-smoke-parent-{suffix}"}, COLLECTION
+        )
         parent_key = parent_result["details"]["collection_key"]
 
-        _require(
-            _post_write(base_url, write_path, {"operation": "rename_collection", "collection_key": collection_key, "new_name": f"live-smoke-renamed-{suffix}"}).get("success") is True,
-            "rename_collection failed",
+        _post_write(
+            http,
+            write_path,
+            {"operation": "rename_collection", "collection_key": collection_key, "new_name": f"live-smoke-renamed-{suffix}"},
+            ACK,
+        )
+        _post_write(
+            http,
+            write_path,
+            {"operation": "move_collection", "collection_key": collection_key, "new_parent_key": parent_key},
+            ACK,
+        )
+        _post_write(
+            http,
+            write_path,
+            {"operation": "set_item_collections", "item_key": item_key, "collection_keys": [parent_key]},
+            ACK,
         )
         _require(
-            _post_write(base_url, write_path, {"operation": "move_collection", "collection_key": collection_key, "new_parent_key": parent_key}).get("success") is True,
-            "move_collection failed",
-        )
-        _require(
-            _post_write(base_url, write_path, {"operation": "set_item_collections", "item_key": item_key, "collection_keys": [parent_key]}).get("success") is True,
-            "set_item_collections failed",
-        )
-        _require(
-            _get_item(base_url, library_id, item_key)["data"]["collections"] == [parent_key],
+            _get_item(http, library_id, item_key)["data"]["collections"] == [parent_key],
             "set_item_collections did not replace the collection set",
         )
-        _require(
-            _post_write(base_url, write_path, {"operation": "merge_collections", "source_keys": [collection_key], "target_key": parent_key}).get("success") is True,
-            "merge_collections failed",
-        )
-
-        _post_write(base_url, write_path, {"operation": "trash_collection", "collection_key": parent_key})
-
-        _prove_standalone_attach(base_url, write_path, attach_path, library_id, suffix, standalone_keys)
-
-        trash_result = _post_write(
-            base_url,
+        _post_write(
+            http,
             write_path,
-            {"operation": "trash_item", "item_key": item_key},
+            {"operation": "merge_collections", "source_keys": [collection_key], "target_key": parent_key},
+            ACK,
         )
-        _require(trash_result.get("success") is True, f"trash_item failed: {trash_result!r}")
 
-        trashed_item = _wait_for_deleted(base_url, library_id, item_key)
+        _post_write(http, write_path, {"operation": "trash_collection", "collection_key": parent_key}, ACK)
+
+        _prove_standalone_attach(http, write_path, attach_path, library_id, suffix, standalone_keys)
+
+        _post_write(http, write_path, {"operation": "trash_item", "item_key": item_key}, ACK)
+
+        trashed_item = _wait_for_deleted(http, library_id, item_key)
         _require(
-            bool(trashed_item["data"].get("deleted")) is True,
+            trashed_item["data"].get("deleted") is True,
             f"trash_item did not mark the item deleted: {trashed_item!r}",
         )
 
         return {
             "success": True,
-            "version": version_payload.get("version"),
+            "version": version_payload["version"],
             "item_key": item_key,
             "bibtex_item_key": bibtex_item_key,
             "attachment_key": attachment_key,
@@ -697,13 +763,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "standalone_attachment_keys": standalone_keys,
         }
     finally:
-        _cleanup_item(base_url, write_path, bibtex_item_key)
-        _cleanup_item(base_url, write_path, item_key)
+        _cleanup_item(http, write_path, bibtex_item_key)
+        _cleanup_item(http, write_path, item_key)
         for standalone_key in standalone_keys:
-            _cleanup_item(base_url, write_path, standalone_key)
+            _cleanup_item(http, write_path, standalone_key)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> SmokeArgs:
     parser = argparse.ArgumentParser(description="Run a live smoke proof against the local-write-api add-on.")
     parser.add_argument("--base-url", default="http://127.0.0.1:23119", help="Base URL for the local Zotero server")
     parser.add_argument("--library-id", default="0", help="Local Zotero library id for read-back checks")
@@ -714,14 +780,21 @@ def parse_args() -> argparse.Namespace:
         help="Bearer token matching the running instance's localWriteAPI.token pref; "
         "when set, proves /write returns 401 without it and 400 with it",
     )
-    return parser.parse_args()
+    return parser.parse_args(namespace=SmokeArgs())
 
 
 def main() -> int:
     args = parse_args()
+    # /attach uploads the PDF bytes inline, so the ceiling covers the slowest call.
+    http = httpx.Client(
+        base_url=args.base_url.rstrip("/"),
+        headers={"Accept": "application/json"},
+        timeout=60.0,
+    )
     try:
-        result = run(args)
-    except SmokeFailure as exc:
+        with http:
+            result = run(http, args)
+    except (SmokeFailure, ValidationError, httpx.TransportError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2, sort_keys=True))
