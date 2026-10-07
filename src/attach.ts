@@ -116,29 +116,35 @@ function copyToZoteroTemp(filePath: string): nsIFile {
   return tempFile;
 }
 
+async function importIntoTarget(
+  target: AttachTarget,
+  filePath: string,
+  title: string,
+): Promise<Zotero.Item> {
+  let placement = await importPlacement(target);
+  let attachment = await Zotero.Attachments.importFromFile({
+    file: filePath,
+    libraryID: userLibraryID(),
+    title: title,
+    ...placement,
+  });
+  await attachment.saveTx();
+  return attachment;
+}
+
 async function importStoredAttachment(
   target: AttachTarget,
   filePath: string,
   title: string,
 ): Promise<Zotero.Item> {
   let tempFile = copyToZoteroTemp(resolveAttachFilePath(filePath));
-  let attachment: Zotero.Item;
   try {
-    let placement = await importPlacement(target);
-    let result = await Zotero.Attachments.importFromFile({
-      file: tempFile.path,
-      libraryID: userLibraryID(),
-      title: title,
-      ...placement,
-    });
-    await result.saveTx();
-    attachment = result;
+    return await importIntoTarget(target, tempFile.path, title);
   } finally {
     if (tempFile.exists()) {
       tempFile.remove(false);
     }
   }
-  return attachment;
 }
 
 // The file an /attach request stores: the request's bytes, or a path on this machine.
