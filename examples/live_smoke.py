@@ -33,6 +33,7 @@ import sys
 import time
 import urllib.parse
 from collections.abc import Generator
+from pathlib import Path
 from typing import Final, Generic, Literal, NamedTuple, NotRequired, TypeVar
 from uuid import uuid4
 
@@ -52,6 +53,9 @@ PDF_BYTES = (
     b"1 0 obj\n<<>>\nendobj\n"
     b"trailer\n<<>>\n%%EOF\n"
 )
+
+# A BibTeX record whose __UID__ placeholder takes the run's suffix.
+BIBTEX_RECORD: Final = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "uid-record.bib"
 
 JsonObject = dict[str, JsonValue]
 ResultT = TypeVar("ResultT")
@@ -614,21 +618,10 @@ def _prove_create_item(smoke: SmokeRun, tags: list[str]) -> str:
 
 def _prove_import_bibtex(smoke: SmokeRun) -> str:
     """import_bibtex stores the entry with its title. Returns the imported item's key."""
-    bibtex_title = f"live-smoke-bibtex-{smoke.suffix}"
-    bibtex_result = smoke.write(
-        {
-            "operation": "import_bibtex",
-            "bibtex": (
-                f"@book{{localwritesmoke{smoke.suffix},\n"
-                f"  title = {{{bibtex_title}}},\n"
-                "  author = {BibTeX Smoke},\n"
-                "  year = {2026},\n"
-                "  publisher = {Local Write API Smoke}\n"
-                "}\n"
-            ),
-        },
-        ITEM_KEY,
-    )
+    # The suffix goes into the record's key and title: import deduplicates on title.
+    bibtex = BIBTEX_RECORD.read_text(encoding="utf-8").replace("__UID__", smoke.suffix)
+    bibtex_title = f"bibtex-fixture-{smoke.suffix}"
+    bibtex_result = smoke.write({"operation": "import_bibtex", "bibtex": bibtex}, ITEM_KEY)
     bibtex_item_key = bibtex_result["item_key"]
     smoke.created.append(bibtex_item_key)
     _require(bool(bibtex_item_key), f"import_bibtex did not return item_key: {bibtex_result!r}")

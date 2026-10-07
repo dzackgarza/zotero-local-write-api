@@ -272,11 +272,9 @@ test("a page with no metadata is identified by the arXiv ID in its URL", async (
 });
 
 test("a page that publishes its BibTeX is imported from that BibTeX", async () => {
-  const title = `lw-bibtex-${uid}`;
-  fixtures.set(`/cite-${uid}.bib`, {
-    body: `@article{fixture${uid},\n  title = {${title}},\n  author = {Fixture, Ada},\n  journal = {Journal of Fixtures},\n  year = {2020}\n}\n`,
-    type: "application/x-bibtex",
-  });
+  // The uid goes into the record's key and title: import deduplicates on URL and title.
+  const record = await Bun.file(new URL("../fixtures/uid-record.bib", import.meta.url)).text();
+  fixtures.set(`/cite-${uid}.bib`, { body: record.replaceAll("__UID__", uid), type: "application/x-bibtex" });
   const url = servePage(
     `/bibtex-${uid}`,
     `<title>Landing</title><link rel="alternate" type="application/x-bibtex" href="/cite-${uid}.bib">`,
@@ -285,7 +283,7 @@ test("a page that publishes its BibTeX is imported from that BibTeX", async () =
   expect(data.method).toBe("published_bibtex");
   const item = await readItem(data.item_key);
   expect(item.itemType).toBe("journalArticle");
-  expect(item.title).toBe(title);
+  expect(item.title).toBe(`bibtex-fixture-${uid}`);
 });
 
 test("a page with only a title, an author and a year is identified by an external service", async () => {
