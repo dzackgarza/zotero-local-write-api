@@ -50,7 +50,9 @@ afterAll(async () => {
     });
     // A cleanup failure means Zotero is genuinely broken; surface it rather
     // than leaving the operator to discover the residue later.
-    if (error !== undefined) {throw new Error(`cleanup of ${itemKey} failed: ${error.error}`);}
+    if (error !== undefined) {
+      throw new Error(`cleanup of ${itemKey} failed: ${error.error}`);
+    }
   }
 });
 
@@ -67,7 +69,9 @@ test.skipIf(!LIVE)("wrapper POSTs /write and returns the typed success branch", 
   });
 
   expect(error).toBeUndefined();
-  if (data === undefined) {throw new Error("success branch returned no data");}
+  if (data === undefined) {
+    throw new Error("success branch returned no data");
+  }
   expect(data.success).toBe(true);
 
   // Narrowing on the discriminator is the typed split: `item_key` does not
@@ -87,22 +91,27 @@ test.skipIf(!LIVE)("wrapper POSTs /write and returns the typed success branch", 
   expect(readBack.data.itemType).toBe("book");
 });
 
-test.skipIf(!LIVE)("wrapper returns the typed error branch and sends the body unchanged", async () => {
-  // A structurally valid body naming an item that cannot exist: the add-on
-  // rejects it and echoes the body it parsed back in details.request, which is
-  // what proves the wrapper serialized the body without mutating it.
-  const body = {
-    operation: "add_item_tags" as const,
-    item_key: `NOSUCH${uid.slice(0, 4).toUpperCase()}`,
-    tags: [`lw-echo-${uid}`, "ünïcodé tag"],
-  };
+test.skipIf(!LIVE)(
+  "wrapper returns the typed error branch and sends the body unchanged",
+  async () => {
+    // A structurally valid body naming an item that cannot exist: the add-on
+    // rejects it and echoes the body it parsed back in details.request, which is
+    // what proves the wrapper serialized the body without mutating it.
+    const body = {
+      operation: "add_item_tags" as const,
+      item_key: `NOSUCH${uid.slice(0, 4).toUpperCase()}`,
+      tags: [`lw-echo-${uid}`, "ünïcodé tag"],
+    };
 
-  const { data, error } = await client.POST("/write", { body });
+    const { data, error } = await client.POST("/write", { body });
 
-  expect(data).toBeUndefined();
-  if (error === undefined) {throw new Error("expected the error branch to be populated");}
-  expect(error.success).toBe(false);
-  expect(error.operation).toBe("add_item_tags");
-  expect(error.error).toContain("Item not found");
-  expect(error.details.request).toEqual(body);
-});
+    expect(data).toBeUndefined();
+    if (error === undefined) {
+      throw new Error("expected the error branch to be populated");
+    }
+    expect(error.success).toBe(false);
+    expect(error.operation).toBe("add_item_tags");
+    expect(error.error).toContain("Item not found");
+    expect(error.details.request).toEqual(body);
+  },
+);

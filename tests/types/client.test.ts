@@ -1,12 +1,11 @@
 // Compile-only type assertions for the generated OpenAPI client.
 // These are never executed; they exist so `tsc --noEmit` catches type drift.
 
-import type { paths, components } from "../../src/generated/openapi";
+import type { components, paths } from "../../src/generated/openapi";
 
 // ── Valid request bodies compile ──────────────────────────────
 
-type WriteRequestBody =
-  paths["/write"]["post"]["requestBody"]["content"]["application/json"];
+type WriteRequestBody = paths["/write"]["post"]["requestBody"]["content"]["application/json"];
 
 // create_item
 const createItem: WriteRequestBody = {
@@ -86,8 +85,7 @@ const attachNoteTop: Pick<AttachNoteSuccess, "note_key" | "note_id"> = {
 
 // ── /attach accepts path-only, bytes-only, and path+fallback ──
 
-type AttachRequestBody =
-  paths["/attach"]["post"]["requestBody"]["content"]["application/json"];
+type AttachRequestBody = paths["/attach"]["post"]["requestBody"]["content"]["application/json"];
 
 // path only
 const pathOnly: AttachRequestBody = {
@@ -115,20 +113,20 @@ const pathPlusBytes: AttachRequestBody = {
 
 // Export so tsc doesn't tree-shake these
 export {
-  createItem,
   attachNote,
-  mergeItems,
+  attachNoteTop,
+  bytesOnly,
+  createItem,
   createItemDetails,
   createItemTop,
-  attachNoteTop,
-  pathOnly,
-  bytesOnly,
-  pathPlusBytes,
+  mergeItems,
   // Negative cases: exported so they count as "used". Each is a deliberately
   // invalid body whose ts-expect-error fails the build if the type stops
   // rejecting it.
   missingItemType,
-  missingParentKey,
   missingMergeKeys,
+  missingParentKey,
+  pathOnly,
+  pathPlusBytes,
   unknownOp,
 };
