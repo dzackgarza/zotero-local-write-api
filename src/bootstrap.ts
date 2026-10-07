@@ -1645,7 +1645,7 @@ function recordAttempt<T extends { message: string }>(
 async function requestService(
   url: string,
   options: {
-    responseType: "text" | "document";
+    responseType: "text" | "document" | "json";
     successCodes?: number[];
     headers?: Record<string, string>;
   },
@@ -2021,28 +2021,24 @@ function requestJSONResponse(
   successCodes: number[],
 ): Promise<ServiceAnswer<XMLHttpRequest>> {
   return requestService(url, {
-    responseType: "text",
+    responseType: "json",
     successCodes,
     headers: { Accept: "application/json" },
   });
 }
 
 // A body that is not JSON, or does not match the service's documented shape, is
-// the service's failure.
+// the service's failure. With responseType "json", the XHR gives a null response
+// for a body that is not JSON.
 function parseJSONResponse<S extends v.GenericSchema>(
   xhr: XMLHttpRequest,
   url: string,
   schema: S,
 ): ServiceAnswer<v.InferOutput<S>> {
-  let parsed: v.SafeParseResult<S>;
-  try {
-    parsed = v.safeParse(schema, JSON.parse(responseTextOf(xhr, url)));
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) {
-      throw error;
-    }
-    return serviceFailure(url + " answered malformed JSON: " + error.message);
+  if (xhr.response === null) {
+    return serviceFailure(url + " answered a body that is not JSON");
   }
+  let parsed = v.safeParse(schema, xhr.response);
   if (!parsed.success) {
     return serviceFailure(url + " answered an unexpected body: " + v.summarize(parsed.issues));
   }
