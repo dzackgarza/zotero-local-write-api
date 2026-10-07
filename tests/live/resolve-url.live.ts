@@ -10,7 +10,7 @@ import { expect, test } from "bun:test";
 
 import { citationHead } from "./fixture-server";
 import { client, openImportSession } from "./import-session";
-import { libraryItemCount } from "./library";
+import { libraryItemCount, readItem } from "./library";
 
 const session = openImportSession();
 const { uid, server } = session;
@@ -50,6 +50,20 @@ test("resolve_url recognizes a direct PDF URL and leaves no item behind", async 
   expect(data.item_type).toBe("journalArticle");
   expect(String(data.csl.DOI).toLowerCase()).toBe("10.1371/journal.pone.0000308");
   expect(await libraryItemCount()).toBe(before);
+});
+
+// Both operations recognize the PDF through a parent item that Zotero saves.
+// resolve_url erases its parent afterwards, so import_from_url must not answer
+// with that parent as the library's existing item.
+test("resolve_url and import_from_url of one PDF at once: the import's item exists", async () => {
+  const url = "https://arxiv.org/pdf/1105.0001";
+  const before = await libraryItemCount();
+  const [resolved, imported] = await Promise.all([resolveUrl(url), session.importFromUrl(url)]);
+  expect(resolved.method).toBe("pdf_recognition");
+  expect(imported.method).toBe("pdf_recognition");
+  expect((await readItem(imported.item_key)).title).toBe(String(resolved.csl.title));
+  expect(imported.existing).toBe(false);
+  expect(await libraryItemCount()).toBe(before + 1);
 });
 
 test("resolve_url on a URL that no method identifies returns the typed error", async () => {
