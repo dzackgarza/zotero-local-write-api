@@ -572,7 +572,9 @@ async function materializeUploadBytes(fileName: string, fileBytesBase64: string)
 
 // Where a stored file lands: under the parent item with this key, or standalone in the
 // given collections, where no collection means the library root.
-type AttachTarget = { parentItemKey: string } | { collections: number[] };
+type AttachTarget =
+  | { kind: "child"; parentItemKey: string }
+  | { kind: "standalone"; collections: number[] };
 
 // Loads the parent from the database instead of trusting the object cache. Models zotero/zotero
 // chrome/content/zotero/xpcom/db.js executeTransaction: a caller that times out waiting for
@@ -595,6 +597,20 @@ async function loadParentItem(itemKey: string): Promise<Zotero.Item> {
   return item;
 }
 
+// The placement fields Zotero.Attachments.importFromFile takes for a target.
+async function importPlacement(
+  target: AttachTarget,
+): Promise<{ parentItemID: number } | { collections: number[] }> {
+  switch (target.kind) {
+    case "child":
+      return { parentItemID: (await loadParentItem(target.parentItemKey)).id };
+    case "standalone":
+      return { collections: target.collections };
+    default:
+      return assertNever(target);
+  }
+}
+
 async function importStoredAttachment(
   target: AttachTarget,
   filePath: string,
@@ -613,10 +629,7 @@ async function importStoredAttachment(
   tempFile.append(tempName);
   let attachment: Zotero.Item;
   try {
-    let placement =
-      "parentItemKey" in target
-        ? { parentItemID: (await loadParentItem(target.parentItemKey)).id }
-        : target;
+    let placement = await importPlacement(target);
     let result = await Zotero.Attachments.importFromFile({
       file: tempFile.path,
       libraryID: userLibraryID(),
@@ -664,16 +677,24 @@ function attachSource(
   bytes: string | null,
 ): AttachSource {
   if (bytes === null) {
-    if (filePath === null) {
-      throw badRequest("Either file_path or file_bytes_base64 must be provided");
-    }
-    return { kind: "path", filePath };
+    return {
+      kind: "path",
+      filePath: requirePresent(filePath, "Either file_path or file_bytes_base64 must be provided"),
+    };
   }
-  let name = fileName ?? (filePath === null ? null : Zotero.File.pathToFile(filePath).leafName);
-  if (name === null) {
-    throw badRequest("file_name must be a non-empty string");
-  }
+  let name =
+    fileName ??
+    Zotero.File.pathToFile(requirePresent(filePath, "file_name must be a non-empty string"))
+      .leafName;
   return { kind: "bytes", fileName: name, bytes };
+}
+
+// A request field that the request's other fields make required; its absence is a bad request.
+function requirePresent(value: string | null, message: string): string {
+  if (value === null) {
+    throw badRequest(message);
+  }
+  return value;
 }
 
 // The TypeScript handbook's exhaustiveness check (Narrowing, "Exhaustiveness checking"):
@@ -708,47 +729,71 @@ async function storeAttachmentFile(
   }
 }
 
-// A standalone attachment lands in the collection selected in Zotero, or in the library root.
-async function attachTarget(
-  itemKey: string | null,
-): Promise<{ target: AttachTarget; collection: Zotero.Collection | undefined }> {
-  if (itemKey !== null) {
-    await getUserItemOrThrow(itemKey);
-    return { target: { parentItemKey: itemKey }, collection: undefined };
+// Where an /attach request places its file: under the item it names, or standalone.
+type AttachPlacement = { kind: "child"; itemKey: string } | { kind: "standalone" };
+
+// An absent item_key asks for a standalone attachment; a present one must name an item.
+function attachPlacement(itemKey: unknown): AttachPlacement {
+  if (itemKey === undefined) {
+    return { kind: "standalone" };
   }
+  return { kind: "child", itemKey: requireNonEmptyString(itemKey, "item_key") };
+}
+
+// The target a placement stores into, and the response fields that report where it landed.
+type PlacedAttachment = {
+  target: AttachTarget;
+  details: { parent_item_key: string | null; collection_key: string | null };
+  message: string;
+};
+
+async function placeAttachment(placement: AttachPlacement): Promise<PlacedAttachment> {
+  switch (placement.kind) {
+    case "child":
+      await getUserItemOrThrow(placement.itemKey);
+      return {
+        target: { kind: "child", parentItemKey: placement.itemKey },
+        details: { parent_item_key: placement.itemKey, collection_key: null },
+        message: "File attached successfully to item " + placement.itemKey,
+      };
+    case "standalone":
+      return placeStandalone();
+    default:
+      return assertNever(placement);
+  }
+}
+
+// A standalone attachment lands in the collection selected in Zotero, or in the library root.
+function placeStandalone(): PlacedAttachment {
   let collection = selectedCollection();
-  return { target: { collections: collection === undefined ? [] : [collection.id] }, collection };
+  return {
+    target: { kind: "standalone", collections: collection === undefined ? [] : [collection.id] },
+    details: {
+      parent_item_key: null,
+      collection_key: collection === undefined ? null : collection.key,
+    },
+    message: "File stored as a standalone attachment",
+  };
 }
 
 async function handleFulltextAttach(data: RequestData) {
-  // An absent item_key asks for a standalone attachment; a present one must name an item.
-  let itemKey =
-    data.item_key === undefined ? null : requireNonEmptyString(data.item_key, "item_key");
+  let placement = attachPlacement(data.item_key);
   let title = requireNonEmptyString(data.title, "title");
   let filePath = optionalNonEmptyString(data.file_path);
   let fileName = optionalNonEmptyString(data.file_name);
   let fileBytesBase64 = optionalNonEmptyString(data.file_bytes_base64);
 
   let source = attachSource(filePath, fileName, fileBytesBase64);
-  let { target, collection } = await attachTarget(itemKey);
-  let { attachment, sourceMode } = await storeAttachmentFile(target, title, source);
+  let placed = await placeAttachment(placement);
+  let { attachment, sourceMode } = await storeAttachmentFile(placed.target, title, source);
 
   return successResult(
     "attach_file_to_item",
-    {
-      parent_item_key: itemKey,
-      collection_key: collection === undefined ? null : collection.key,
-      file_path: filePath,
-      source_mode: sourceMode,
-      title: title,
-    },
+    { ...placed.details, file_path: filePath, source_mode: sourceMode, title: title },
     {
       attachment_key: attachment.key,
       attachment_id: attachment.id,
-      message:
-        itemKey === null
-          ? "File stored as a standalone attachment"
-          : "File attached successfully to item " + itemKey,
+      message: placed.message,
       handler: "fulltext-attach",
     },
   );
