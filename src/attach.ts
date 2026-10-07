@@ -102,22 +102,26 @@ async function importPlacement(
   }
 }
 
-async function importStoredAttachment(
-  target: AttachTarget,
-  filePath: string,
-  title: string,
-): Promise<Zotero.Item> {
-  let resolvedFilePath = resolveAttachFilePath(filePath);
-  // Copy the file into Zotero's own temp directory before importing.
-  // Passing a /tmp path directly causes NS_ERROR_FILE_NOT_FOUND from
-  // nsIFile.copyToFollowingLinks when the path resolves through a symlink
-  // that Zotero's process cannot follow (observed on Linux tmpfs mounts).
-  let sourceFile = Zotero.File.pathToFile(resolvedFilePath);
+// A copy of the file in Zotero's own temp directory, which the import reads.
+// Passing a /tmp path directly causes NS_ERROR_FILE_NOT_FOUND from
+// nsIFile.copyToFollowingLinks when the path resolves through a symlink
+// that Zotero's process cannot follow (observed on Linux tmpfs mounts).
+function copyToZoteroTemp(filePath: string): nsIFile {
+  let sourceFile = Zotero.File.pathToFile(filePath);
   let tempDir = Zotero.getTempDirectory();
   let tempName = `local-write-api-${Date.now()}-${sourceFile.leafName}`;
   sourceFile.copyTo(tempDir, tempName);
   let tempFile = tempDir.clone();
   tempFile.append(tempName);
+  return tempFile;
+}
+
+async function importStoredAttachment(
+  target: AttachTarget,
+  filePath: string,
+  title: string,
+): Promise<Zotero.Item> {
+  let tempFile = copyToZoteroTemp(resolveAttachFilePath(filePath));
   let attachment: Zotero.Item;
   try {
     let placement = await importPlacement(target);
@@ -266,13 +270,18 @@ async function handleFulltextAttach(data: RequestData) {
   return successResult(
     "attach_file_to_item",
     { ...placed.details, file_path: filePath, source_mode: source.kind, title: title },
-    {
-      attachment_key: attachment.key,
-      attachment_id: attachment.id,
-      message: placed.message,
-      handler: "fulltext-attach",
-    },
+    attachedFileFields(attachment, placed),
   );
+}
+
+// The attach_file_to_item response fields that name the stored attachment.
+function attachedFileFields(attachment: Zotero.Item, placed: PlacedAttachment) {
+  return {
+    attachment_key: attachment.key,
+    attachment_id: attachment.id,
+    message: placed.message,
+    handler: "fulltext-attach",
+  };
 }
 
 export async function handleAttachRequest(data: unknown): Promise<EndpointResult> {
