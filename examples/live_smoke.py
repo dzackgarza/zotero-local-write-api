@@ -664,25 +664,45 @@ def _prove_tag_operations(smoke: SmokeRun, item_key: str, keep_tag: str) -> None
     tag_a = f"live-smoke-a-{smoke.suffix}"
     tag_b = f"live-smoke-b-{smoke.suffix}"
     tag_c = f"live-smoke-c-{smoke.suffix}"
+    _prove_add_item_tags(smoke, item_key, tag_a)
+    _prove_set_item_tags(smoke, item_key, [keep_tag, tag_a, tag_b])
+    _prove_remove_item_tags(smoke, item_key, tag_b)
+    _prove_rename_tag(smoke, item_key, tag_a, tag_c)
+    _prove_merge_tags(smoke, item_key, tag_c, keep_tag)
 
-    smoke.write({"operation": "add_item_tags", "item_key": item_key, "tags": [tag_a]}, ACK)
-    _require(tag_a in _tag_names(smoke.item(item_key)), "add_item_tags did not add the tag")
 
-    smoke.write({"operation": "set_item_tags", "item_key": item_key, "tags": [keep_tag, tag_a, tag_b]}, ACK)
-    _require(
-        set(_tag_names(smoke.item(item_key))) == {keep_tag, tag_a, tag_b},
-        "set_item_tags did not replace the tag set",
-    )
+def _prove_add_item_tags(smoke: SmokeRun, item_key: str, tag: str) -> None:
+    """add_item_tags adds the tag to the item."""
+    smoke.write({"operation": "add_item_tags", "item_key": item_key, "tags": [tag]}, ACK)
+    _require(tag in _tag_names(smoke.item(item_key)), "add_item_tags did not add the tag")
 
-    smoke.write({"operation": "remove_item_tags", "item_key": item_key, "tags": [tag_b]}, ACK)
-    _require(tag_b not in _tag_names(smoke.item(item_key)), "remove_item_tags left the tag attached")
 
-    smoke.write({"operation": "rename_tag", "old_name": tag_a, "new_name": tag_c}, ACK)
-    _require(tag_c in _tag_names(smoke.item(item_key)), "rename_tag did not apply the new name")
+def _prove_set_item_tags(smoke: SmokeRun, item_key: str, tags: list[str]) -> None:
+    """set_item_tags replaces the item's tags with exactly the given set."""
+    smoke.write({"operation": "set_item_tags", "item_key": item_key, "tags": list[JsonValue](tags)}, ACK)
+    _require(set(_tag_names(smoke.item(item_key))) == set(tags), "set_item_tags did not replace the tag set")
 
-    smoke.write({"operation": "merge_tags", "source_tags": [tag_c], "target_tag": keep_tag}, ACK)
+
+def _prove_remove_item_tags(smoke: SmokeRun, item_key: str, tag: str) -> None:
+    """remove_item_tags takes the tag off the item."""
+    smoke.write({"operation": "remove_item_tags", "item_key": item_key, "tags": [tag]}, ACK)
+    _require(tag not in _tag_names(smoke.item(item_key)), "remove_item_tags left the tag attached")
+
+
+def _prove_rename_tag(smoke: SmokeRun, item_key: str, old_name: str, new_name: str) -> None:
+    """rename_tag gives the item's tag its new name."""
+    smoke.write({"operation": "rename_tag", "old_name": old_name, "new_name": new_name}, ACK)
+    _require(new_name in _tag_names(smoke.item(item_key)), "rename_tag did not apply the new name")
+
+
+def _prove_merge_tags(smoke: SmokeRun, item_key: str, source_tag: str, target_tag: str) -> None:
+    """merge_tags folds the source tag into the target tag on the item."""
+    smoke.write({"operation": "merge_tags", "source_tags": [source_tag], "target_tag": target_tag}, ACK)
     merged_tags = _tag_names(smoke.item(item_key))
-    _require(tag_c not in merged_tags and keep_tag in merged_tags, "merge_tags did not fold the source into the target")
+    _require(
+        source_tag not in merged_tags and target_tag in merged_tags,
+        "merge_tags did not fold the source into the target",
+    )
 
 
 def _prove_item_and_child_edits(smoke: SmokeRun, item_key: str, attachment_key: str) -> None:
