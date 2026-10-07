@@ -1,7 +1,7 @@
-import { fileExistingItem, findExistingItem } from "./duplicates";
+import { fileExistingItem } from "./duplicates";
 import { badRequest } from "./errors";
 import { userLibraryID } from "./library";
-import { storePdf } from "./pdf-recognition";
+import { findExistingOutsideRecognition, storePdf } from "./pdf-recognition";
 import { requireNonEmptyString, requireObject, requireString } from "./request-fields";
 import { type FetchedSource, type ImportOutcome, UNRESOLVED_TAG } from "./source-results";
 
@@ -78,10 +78,13 @@ export async function saveFallback(
   fallback: FallbackMetadata,
   collectionIDs: number[],
 ): Promise<ImportOutcome> {
-  let existing = await findExistingItem(
-    { itemType: "document", title: fallback.title, DOI: "", ISBN: "", url },
-    null,
-  );
+  let existing = await findExistingOutsideRecognition({
+    itemType: "document",
+    title: fallback.title,
+    DOI: "",
+    ISBN: "",
+    url,
+  });
   if (existing) {
     await fileExistingItem(existing, collectionIDs);
     return fallbackOutcome(existing, true);

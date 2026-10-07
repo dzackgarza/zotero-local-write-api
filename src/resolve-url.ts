@@ -1,5 +1,5 @@
 import { identifyPage } from "./identify-page";
-import { recognizeParent } from "./pdf-recognition";
+import { withRecognizedParent } from "./pdf-recognition";
 import { type JsonPayload, type RequestData, successResult } from "./responses";
 import { fetchSource, requireHttpUrl } from "./source-fetch";
 import { identifierText, identifyByIdentifier } from "./source-methods";
@@ -51,21 +51,18 @@ function resolveIdentification(
 async function recognizeWithoutSaving(
   finalUrl: string,
 ): Promise<MethodResult<{ csl: CslItem; itemType: string; message: string }>> {
-  let recognized = await recognizeParent(finalUrl);
-  if (recognized.outcome !== "identified") {
-    return recognized;
-  }
-  let { parent, pdf } = recognized.found;
-  try {
-    let csl = itemToCsl(parent);
-    // The CSL id is the URI of the parent, which is erased below.
-    delete csl.id;
-    let message = parent.getField("title");
-    return { outcome: "identified", found: { csl, itemType: parent.itemType, message } };
-  } finally {
-    await pdf.eraseTx();
-    await parent.eraseTx();
-  }
+  return withRecognizedParent(finalUrl, async ({ parent, pdf }) => {
+    try {
+      let csl = itemToCsl(parent);
+      // The CSL id is the URI of the parent, which is erased below.
+      delete csl.id;
+      let message = parent.getField("title");
+      return { csl, itemType: parent.itemType, message };
+    } finally {
+      await pdf.eraseTx();
+      await parent.eraseTx();
+    }
+  });
 }
 
 async function resolveByRecognition(

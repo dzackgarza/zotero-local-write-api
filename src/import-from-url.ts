@@ -1,8 +1,13 @@
-import { duplicateKeysFromJSON, fileExistingItem, findExistingItem } from "./duplicates";
+import { duplicateKeysFromJSON, fileExistingItem } from "./duplicates";
 import { type FallbackMetadata, requireFallbackMetadata, saveFallback } from "./fallback-metadata";
 import { identifyPage } from "./identify-page";
 import { citationKey, userCollectionIDs, userLibraryID } from "./library";
-import { hasStoredPdf, recognizePdf, storePdf } from "./pdf-recognition";
+import {
+  findExistingOutsideRecognition,
+  hasStoredPdf,
+  recognizePdf,
+  storePdf,
+} from "./pdf-recognition";
 import { normalizeStringList } from "./request-fields";
 import { type RequestData, successResult } from "./responses";
 import { fetchSource, requireHttpUrl } from "./source-fetch";
@@ -68,7 +73,7 @@ async function saveIdentification(
   collectionIDs: number[],
 ): Promise<ImportOutcome> {
   let { method, translator } = identification;
-  let existing = await findExistingItem(duplicateKeysFromJSON(identification.json), null);
+  let existing = await findExistingOutsideRecognition(duplicateKeysFromJSON(identification.json));
   if (existing) {
     await fileExistingItem(existing, collectionIDs);
     return existingOutcome(existing, method, translator);

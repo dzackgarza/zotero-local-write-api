@@ -3,7 +3,7 @@ import { normalizeText } from "./metadata-services";
 import { type ItemFieldsApi, type TranslatorItemJSON } from "./zotero-api";
 
 // The fields Zotero's duplicate finder compares; undefined is a field the item lacks.
-type DuplicateKeys = {
+export type DuplicateKeys = {
   itemType: string;
   title?: string;
   DOI?: string;
