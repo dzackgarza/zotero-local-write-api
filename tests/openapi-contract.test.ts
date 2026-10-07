@@ -92,7 +92,9 @@ function extractWriteHandlers(
       !ts.isIdentifier(property.name) ||
       !ts.isIdentifier(property.initializer)
     ) {
-      throw new Error(`writeHandlers entry is not \`operation: handlerName\`: ${property.getText()}`);
+      throw new Error(
+        `writeHandlers entry is not \`operation: handlerName\`: ${property.getText()}`,
+      );
     }
     return { op: property.name.text, handlerName: property.initializer.text };
   });
