@@ -39,14 +39,12 @@ lint:
 build:
     uv run build.py --updates-out "$(mktemp -d)/updates.json"
 
-# Live runtime proof against a real Zotero with the current XPI installed
+# Live runtime proof against a real Zotero with the current XPI installed.
+# EXPECTED_VERSION names the installed add-on version under proof.
 smoke-live:
     #!/usr/bin/env bash
     set -euo pipefail
-    args=()
-    if [[ -n "${EXPECTED_VERSION:-}" ]]; then
-        args+=(--expected-version "${EXPECTED_VERSION}")
-    fi
+    args=(--expected-version "${EXPECTED_VERSION:?set EXPECTED_VERSION to the installed add-on version, the VERSION file for a working-tree build}")
     if [[ -n "${ZOTERO_LOCAL_BASE_URL:-}" ]]; then
         args+=(--base-url "${ZOTERO_LOCAL_BASE_URL}")
     fi
@@ -421,7 +419,7 @@ _bump bump_type:
 _release bump_type: (_bump bump_type)
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "Required before tagging: install the current working-tree XPI and run 'just smoke-live'" >&2
+    echo "Required before tagging: install the current working-tree XPI and run 'EXPECTED_VERSION=\$(cat VERSION) just smoke-live'" >&2
     bun run typecheck
     bun run lint
     uv run build.py

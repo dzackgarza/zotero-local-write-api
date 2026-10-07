@@ -8,7 +8,7 @@ Each script is a self-contained [PEP 723](https://peps.python.org/pep-0723/) `uv
 Run any example directly with `uv`:
 
 ```bash
-uv run live_smoke.py
+uv run find_item_by_bibtex.py
 ```
 
 No separate install step is needed.
@@ -38,11 +38,12 @@ Run it against a real Zotero with the current working-tree XPI installed before 
 
 **Usage:**
 ```bash
-uv run live_smoke.py
-uv run live_smoke.py --expected-version 3.2.3
-uv run live_smoke.py --token "$ZOTERO_WRITE_API_TOKEN"
+uv run live_smoke.py --expected-version "$(cat ../VERSION)"
+uv run live_smoke.py --expected-version "$(cat ../VERSION)" --token "$ZOTERO_WRITE_API_TOKEN"
 ```
 
+`--expected-version` is required: the run fails unless `/version` reports exactly that version.
+From the repo root, `EXPECTED_VERSION=$(cat VERSION) just smoke-live` runs the same proof.
 Pass `--token` when the instance's token pref is set.
 The script refuses to run while `publicBaseURL` is set: the open gate state accepts unauthenticated writes, and on a published instance the tunnel would expose them.
 

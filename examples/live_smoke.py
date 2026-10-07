@@ -540,291 +540,315 @@ def _prove_standalone_attach(
         )
 
 
-def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
-    library_id = args.library_id
-    suffix = uuid4().hex[:10]
-    doomed_tag = f"live-smoke-delete-{suffix}"
-    keep_tag = f"live-smoke-keep-{suffix}"
-    # Keys of top-level items this run created, appended as soon as each
-    # creation response validates, so the run trashes them even after a failure.
-    created: list[str] = []
+class SmokeRun(NamedTuple):
+    """What every proof step needs: the client, the add-on endpoints from /version,
+    the library for read-back, this run's unique suffix, and the keys of top-level
+    items this run created. Each step appends a key as soon as its creation response
+    validates, so the run trashes it even after a later failure."""
 
+    http: httpx.Client
+    write_path: str
+    attach_path: str
+    library_id: str
+    suffix: str
+    created: list[str]
+
+    def write(self, payload: JsonObject, schema: TypeAdapter[ResultT]) -> ResultT:
+        return _post_write(self.http, self.write_path, payload, schema)
+
+    def item(self, item_key: str) -> Item:
+        return _get_item(self.http, self.library_id, item_key)
+
+
+def _prove_version(http: httpx.Client, expected_version: str) -> VersionResponse:
+    """/version reports the add-on under proof, its endpoints, and every capability
+    this proof uses, after Zotero has loaded its translators."""
     version_payload = _get(http, "/version", VERSION)
-    if args.expected_version:
-        _require(
-            version_payload["version"] == args.expected_version,
-            f"Expected add-on version {args.expected_version}, got {version_payload['version']!r}",
-        )
-
-    attach_path = version_payload["endpoints"]["attach"]
-    write_path = version_payload["endpoints"]["write"]
-    _require(attach_path.startswith("/"), f"Invalid attach endpoint: {attach_path!r}")
-    _require(write_path.startswith("/"), f"Invalid write endpoint: {write_path!r}")
-
+    _require(
+        version_payload["version"] == expected_version,
+        f"Expected add-on version {expected_version}, got {version_payload['version']!r}",
+    )
+    endpoints = version_payload["endpoints"]
+    _require(endpoints["attach"].startswith("/"), f"Invalid attach endpoint: {endpoints['attach']!r}")
+    _require(endpoints["write"].startswith("/"), f"Invalid write endpoint: {endpoints['write']!r}")
     capabilities = version_payload["capabilities"]
     for capability in ("attach", "attach_bytes", "attach_standalone", "write", "version_probe", "import_bibtex"):
         _require(capability in capabilities, f"Missing required capability {capability!r}: {capabilities!r}")
     _require(version_payload["translators_ready"] is True, f"Zotero has not loaded its translators: {version_payload!r}")
+    return version_payload
 
+
+def _prove_create_item(smoke: SmokeRun, tags: list[str]) -> str:
+    """create_item stores a book with its title and tags. Returns its key."""
+    title = f"live-smoke-item-{smoke.suffix}"
+    create_result = smoke.write(
+        {
+            "operation": "create_item",
+            "item_type": "book",
+            "fields": {
+                "title": title,
+                "creators": [
+                    {
+                        "creatorType": "author",
+                        "firstName": "Local",
+                        "lastName": "Smoke",
+                    }
+                ],
+                "date": "2026",
+                "publisher": "Local Write API Smoke",
+            },
+            "tags": list[JsonValue](tags),
+        },
+        ITEM_KEY,
+    )
+    item_key = create_result["item_key"]
+    smoke.created.append(item_key)
+    _require(bool(item_key), f"create_item did not return item_key: {create_result!r}")
+
+    created_item = smoke.item(item_key)
+    _require(created_item["data"]["title"] == title, f"Unexpected item title: {created_item!r}")
+    created_tags = set(_tag_names(created_item))
+    _require(created_tags == set(tags), f"Unexpected initial tags: {created_tags!r}")
+    return item_key
+
+
+def _prove_import_bibtex(smoke: SmokeRun) -> str:
+    """import_bibtex stores the entry with its title. Returns the imported item's key."""
+    bibtex_title = f"live-smoke-bibtex-{smoke.suffix}"
+    bibtex_result = smoke.write(
+        {
+            "operation": "import_bibtex",
+            "bibtex": (
+                f"@book{{localwritesmoke{smoke.suffix},\n"
+                f"  title = {{{bibtex_title}}},\n"
+                "  author = {BibTeX Smoke},\n"
+                "  year = {2026},\n"
+                "  publisher = {Local Write API Smoke}\n"
+                "}\n"
+            ),
+        },
+        ITEM_KEY,
+    )
+    bibtex_item_key = bibtex_result["item_key"]
+    smoke.created.append(bibtex_item_key)
+    _require(bool(bibtex_item_key), f"import_bibtex did not return item_key: {bibtex_result!r}")
+    bibtex_item = smoke.item(bibtex_item_key)
+    _require(
+        bibtex_item["data"]["title"] == bibtex_title,
+        f"import_bibtex read-back title mismatch: {bibtex_item!r}",
+    )
+    return bibtex_item_key
+
+
+def _prove_child_attach(smoke: SmokeRun, item_key: str) -> str:
+    """/attach with item_key stores the uploaded bytes as a PDF child of that item.
+    Returns the attachment key."""
+    attach_result = _post_write(
+        smoke.http,
+        smoke.attach_path,
+        {
+            "item_key": item_key,
+            "title": "Live Smoke PDF",
+            "file_name": "live-smoke.pdf",
+            "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
+        },
+        CHILD_ATTACH,
+    )
+    attachment_key = attach_result["attachment_key"]
+    _require(bool(attachment_key), f"Missing attachment_key: {attach_result!r}")
+    _require(
+        attach_result["details"]["parent_item_key"] == item_key,
+        f"child /attach reported parent {attach_result['details']['parent_item_key']!r}, expected {item_key!r}",
+    )
+    _require(
+        attach_result["details"]["source_mode"] == "bytes",
+        f"Expected bytes source_mode, got: {attach_result!r}",
+    )
+
+    children = _get_children(smoke.http, smoke.library_id, item_key)
+    matches = [child for child in children if child["key"] == attachment_key]
+    _require(len(matches) == 1, f"Attached PDF {attachment_key} not found once in children: {children!r}")
+    matching_attachment = matches[0]
+    _require(
+        matching_attachment["data"].get("contentType") == "application/pdf",
+        f"Attachment contentType mismatch: {matching_attachment!r}",
+    )
+    _require(
+        matching_attachment["data"]["title"] == "Live Smoke PDF",
+        f"Attachment title mismatch: {matching_attachment!r}",
+    )
+    return attachment_key
+
+
+def _prove_delete_tag(smoke: SmokeRun, item_key: str, doomed_tag: str, keep_tag: str) -> None:
+    """delete_tag removes one tag from the item and keeps the other."""
+    smoke.write({"operation": "delete_tag", "tag_name": doomed_tag}, ACK)
+    updated_tags = set(_tag_names(smoke.item(item_key)))
+    _require(doomed_tag not in updated_tags, f"delete_tag left doomed tag behind: {updated_tags!r}")
+    _require(keep_tag in updated_tags, f"delete_tag removed the keep tag: {updated_tags!r}")
+
+
+def _prove_collection_membership(smoke: SmokeRun, item_key: str) -> str:
+    """add_item_to_collection and remove_item_from_collection change the item's
+    collections. Returns the key of the collection this step created.
+
+    Both handlers map an item's collection IDs back to keys through
+    Zotero.Collections.get, whose documented `false` sentinel was dereferenced
+    directly; nothing exercised that path at the real boundary.
+    """
+    collection_key = smoke.write(
+        {"operation": "create_collection", "name": f"live-smoke-collection-{smoke.suffix}"},
+        COLLECTION,
+    )["details"]["collection_key"]
+
+    smoke.write(
+        {"operation": "add_item_to_collection", "item_key": item_key, "collection_key": collection_key},
+        ACK,
+    )
+    _require(
+        collection_key in smoke.item(item_key)["data"]["collections"],
+        "add_item_to_collection did not attach the collection",
+    )
+    smoke.write(
+        {"operation": "remove_item_from_collection", "item_key": item_key, "collection_key": collection_key},
+        ACK,
+    )
+    _require(
+        collection_key not in smoke.item(item_key)["data"]["collections"],
+        "remove_item_from_collection left the collection attached",
+    )
+    return collection_key
+
+
+def _prove_tag_operations(smoke: SmokeRun, item_key: str, keep_tag: str) -> None:
+    """add, set, remove, rename and merge tags, all scoped to this run's own tags."""
+    tag_a = f"live-smoke-a-{smoke.suffix}"
+    tag_b = f"live-smoke-b-{smoke.suffix}"
+    tag_c = f"live-smoke-c-{smoke.suffix}"
+
+    smoke.write({"operation": "add_item_tags", "item_key": item_key, "tags": [tag_a]}, ACK)
+    _require(tag_a in _tag_names(smoke.item(item_key)), "add_item_tags did not add the tag")
+
+    smoke.write({"operation": "set_item_tags", "item_key": item_key, "tags": [keep_tag, tag_a, tag_b]}, ACK)
+    _require(
+        set(_tag_names(smoke.item(item_key))) == {keep_tag, tag_a, tag_b},
+        "set_item_tags did not replace the tag set",
+    )
+
+    smoke.write({"operation": "remove_item_tags", "item_key": item_key, "tags": [tag_b]}, ACK)
+    _require(tag_b not in _tag_names(smoke.item(item_key)), "remove_item_tags left the tag attached")
+
+    smoke.write({"operation": "rename_tag", "old_name": tag_a, "new_name": tag_c}, ACK)
+    _require(tag_c in _tag_names(smoke.item(item_key)), "rename_tag did not apply the new name")
+
+    smoke.write({"operation": "merge_tags", "source_tags": [tag_c], "target_tag": keep_tag}, ACK)
+    merged_tags = _tag_names(smoke.item(item_key))
+    _require(tag_c not in merged_tags and keep_tag in merged_tags, "merge_tags did not fold the source into the target")
+
+
+def _prove_item_and_child_edits(smoke: SmokeRun, item_key: str, attachment_key: str) -> None:
+    """update_item_fields persists the title; the attachment, note and URL child
+    operations succeed."""
+    new_title = f"Live Smoke Retitled {smoke.suffix}"
+    smoke.write({"operation": "update_item_fields", "item_key": item_key, "fields": {"title": new_title}}, ACK)
+    _require(smoke.item(item_key)["data"]["title"] == new_title, "update_item_fields did not persist the title")
+
+    smoke.write(
+        {"operation": "update_attachment_title", "attachment_key": attachment_key, "new_title": "Live Smoke PDF Retitled"},
+        ACK,
+    )
+    note_key = smoke.write(
+        {"operation": "attach_note", "parent_item_key": item_key, "note_text": "live smoke note"}, NOTE
+    )["note_key"]
+    smoke.write({"operation": "update_note", "note_key": note_key, "new_content": "live smoke note updated"}, ACK)
+    smoke.write(
+        {"operation": "attach_url", "parent_item_key": item_key, "url": "https://example.com/live-smoke"},
+        ACK,
+    )
+
+
+def _prove_copy_lifecycle(smoke: SmokeRun, item_key: str) -> None:
+    """copy_item, then use the copy as the disposable side of trash, restore,
+    replace and merge."""
+    copy_key = smoke.write({"operation": "copy_item", "item_key": item_key}, COPY)["new_item_key"]
+    smoke.created.append(copy_key)
+
+    smoke.write({"operation": "trash_item", "item_key": copy_key}, ACK)
+    smoke.write({"operation": "restore_item", "item_key": copy_key}, ACK)
+    _require(smoke.item(copy_key)["data"].get("deleted") is not True, "restore_item left the item trashed")
+
+    replaced_title = f"Live Smoke Replaced {smoke.suffix}"
+    smoke.write(
+        {"operation": "replace_item_json", "item_key": copy_key, "item_json": {"itemType": "journalArticle", "title": replaced_title}},
+        ACK,
+    )
+    _require(
+        smoke.item(copy_key)["data"]["title"] == replaced_title,
+        "replace_item_json did not persist the replacement",
+    )
+    smoke.write({"operation": "merge_items", "source_key": copy_key, "target_key": item_key}, ACK)
+
+
+def _prove_collection_hierarchy(smoke: SmokeRun, item_key: str, collection_key: str) -> None:
+    """rename, move, set_item_collections, merge and trash, all on this run's own collections."""
+    parent_key = smoke.write(
+        {"operation": "create_collection", "name": f"live-smoke-parent-{smoke.suffix}"}, COLLECTION
+    )["details"]["collection_key"]
+
+    smoke.write(
+        {"operation": "rename_collection", "collection_key": collection_key, "new_name": f"live-smoke-renamed-{smoke.suffix}"},
+        ACK,
+    )
+    smoke.write({"operation": "move_collection", "collection_key": collection_key, "new_parent_key": parent_key}, ACK)
+    smoke.write({"operation": "set_item_collections", "item_key": item_key, "collection_keys": [parent_key]}, ACK)
+    _require(
+        smoke.item(item_key)["data"]["collections"] == [parent_key],
+        "set_item_collections did not replace the collection set",
+    )
+    smoke.write({"operation": "merge_collections", "source_keys": [collection_key], "target_key": parent_key}, ACK)
+    smoke.write({"operation": "trash_collection", "collection_key": parent_key}, ACK)
+
+
+def _prove_trash_item(smoke: SmokeRun, item_key: str) -> None:
+    """trash_item marks the item deleted."""
+    smoke.write({"operation": "trash_item", "item_key": item_key}, ACK)
+    trashed_item = _wait_for_deleted(smoke.http, smoke.library_id, item_key)
+    _require(
+        trashed_item["data"].get("deleted") is True,
+        f"trash_item did not mark the item deleted: {trashed_item!r}",
+    )
+
+
+def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
+    version_payload = _prove_version(http, args.expected_version)
+    write_path = version_payload["endpoints"]["write"]
     _prove_openapi_endpoint(http, write_path)
     _prove_bearer_gate(http, write_path)
 
+    smoke = SmokeRun(
+        http=http,
+        write_path=write_path,
+        attach_path=version_payload["endpoints"]["attach"],
+        library_id=args.library_id,
+        suffix=uuid4().hex[:10],
+        created=[],
+    )
+    doomed_tag = f"live-smoke-delete-{smoke.suffix}"
+    keep_tag = f"live-smoke-keep-{smoke.suffix}"
     try:
-        create_result = _post_write(
-            http,
-            write_path,
-            {
-                "operation": "create_item",
-                "item_type": "book",
-                "fields": {
-                    "title": f"live-smoke-item-{suffix}",
-                    "creators": [
-                        {
-                            "creatorType": "author",
-                            "firstName": "Local",
-                            "lastName": "Smoke",
-                        }
-                    ],
-                    "date": "2026",
-                    "publisher": "Local Write API Smoke",
-                },
-                "tags": [doomed_tag, keep_tag],
-            },
-            ITEM_KEY,
+        item_key = _prove_create_item(smoke, [doomed_tag, keep_tag])
+        bibtex_item_key = _prove_import_bibtex(smoke)
+        attachment_key = _prove_child_attach(smoke, item_key)
+        _prove_delete_tag(smoke, item_key, doomed_tag, keep_tag)
+        collection_key = _prove_collection_membership(smoke, item_key)
+        _prove_tag_operations(smoke, item_key, keep_tag)
+        _prove_item_and_child_edits(smoke, item_key, attachment_key)
+        _prove_copy_lifecycle(smoke, item_key)
+        _prove_collection_hierarchy(smoke, item_key, collection_key)
+        standalone_keys = _prove_standalone_attach(
+            http, write_path, smoke.attach_path, smoke.library_id, smoke.suffix, smoke.created
         )
-        item_key = create_result["item_key"]
-        created.append(item_key)
-        _require(bool(item_key), f"create_item did not return item_key: {create_result!r}")
-
-        created_item = _get_item(http, library_id, item_key)
-        _require(created_item["data"]["title"] == f"live-smoke-item-{suffix}", f"Unexpected item title: {created_item!r}")
-        created_tags = set(_tag_names(created_item))
-        _require(created_tags == {doomed_tag, keep_tag}, f"Unexpected initial tags: {created_tags!r}")
-
-        bibtex_title = f"live-smoke-bibtex-{suffix}"
-        bibtex_result = _post_write(
-            http,
-            write_path,
-            {
-                "operation": "import_bibtex",
-                "bibtex": (
-                    f"@book{{localwritesmoke{suffix},\n"
-                    f"  title = {{{bibtex_title}}},\n"
-                    "  author = {BibTeX Smoke},\n"
-                    "  year = {2026},\n"
-                    "  publisher = {Local Write API Smoke}\n"
-                    "}\n"
-                ),
-            },
-            ITEM_KEY,
-        )
-        bibtex_item_key = bibtex_result["item_key"]
-        created.append(bibtex_item_key)
-        _require(bool(bibtex_item_key), f"import_bibtex did not return item_key: {bibtex_result!r}")
-        bibtex_item = _get_item(http, library_id, bibtex_item_key)
-        _require(
-            bibtex_item["data"]["title"] == bibtex_title,
-            f"import_bibtex read-back title mismatch: {bibtex_item!r}",
-        )
-
-        attach_result = _post_write(
-            http,
-            attach_path,
-            {
-                "item_key": item_key,
-                "title": "Live Smoke PDF",
-                "file_name": "live-smoke.pdf",
-                "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
-            },
-            CHILD_ATTACH,
-        )
-        attachment_key = attach_result["attachment_key"]
-        _require(bool(attachment_key), f"Missing attachment_key: {attach_result!r}")
-        _require(
-            attach_result["details"]["parent_item_key"] == item_key,
-            f"child /attach reported parent {attach_result['details']['parent_item_key']!r}, expected {item_key!r}",
-        )
-        _require(
-            attach_result["details"]["source_mode"] == "bytes",
-            f"Expected bytes source_mode, got: {attach_result!r}",
-        )
-
-        children = _get_children(http, library_id, item_key)
-        matches = [child for child in children if child["key"] == attachment_key]
-        _require(len(matches) == 1, f"Attached PDF {attachment_key} not found once in children: {children!r}")
-        matching_attachment = matches[0]
-        _require(
-            matching_attachment["data"].get("contentType") == "application/pdf",
-            f"Attachment contentType mismatch: {matching_attachment!r}",
-        )
-        _require(
-            matching_attachment["data"]["title"] == "Live Smoke PDF",
-            f"Attachment title mismatch: {matching_attachment!r}",
-        )
-
-        _post_write(http, write_path, {"operation": "delete_tag", "tag_name": doomed_tag}, ACK)
-
-        updated_item = _get_item(http, library_id, item_key)
-        updated_tags = set(_tag_names(updated_item))
-        _require(doomed_tag not in updated_tags, f"delete_tag left doomed tag behind: {updated_tags!r}")
-        _require(keep_tag in updated_tags, f"delete_tag removed the keep tag: {updated_tags!r}")
-
-        # Collection round-trip. Both handlers map an item's collection IDs back to
-        # keys through Zotero.Collections.get, whose documented `false` sentinel was
-        # dereferenced directly; nothing exercised that path at the real boundary.
-        collection_name = f"live-smoke-collection-{suffix}"
-        create_collection_result = _post_write(
-            http,
-            write_path,
-            {"operation": "create_collection", "name": collection_name},
-            COLLECTION,
-        )
-        collection_key = create_collection_result["details"]["collection_key"]
-
-        _post_write(
-            http,
-            write_path,
-            {
-                "operation": "add_item_to_collection",
-                "item_key": item_key,
-                "collection_key": collection_key,
-            },
-            ACK,
-        )
-        _require(
-            collection_key in _get_item(http, library_id, item_key)["data"]["collections"],
-            "add_item_to_collection did not attach the collection",
-        )
-
-        _post_write(
-            http,
-            write_path,
-            {
-                "operation": "remove_item_from_collection",
-                "item_key": item_key,
-                "collection_key": collection_key,
-            },
-            ACK,
-        )
-        _require(
-            collection_key not in _get_item(http, library_id, item_key)["data"]["collections"],
-            "remove_item_from_collection left the collection attached",
-        )
-
-        # Tag operations, all scoped to this run's own tags.
-        tag_a = f"live-smoke-a-{suffix}"
-        tag_b = f"live-smoke-b-{suffix}"
-        tag_c = f"live-smoke-c-{suffix}"
-
-        _post_write(http, write_path, {"operation": "add_item_tags", "item_key": item_key, "tags": [tag_a]}, ACK)
-        _require(tag_a in _tag_names(_get_item(http, library_id, item_key)), "add_item_tags did not add the tag")
-
-        _post_write(http, write_path, {"operation": "set_item_tags", "item_key": item_key, "tags": [keep_tag, tag_a, tag_b]}, ACK)
-        _require(set(_tag_names(_get_item(http, library_id, item_key))) == {keep_tag, tag_a, tag_b}, "set_item_tags did not replace the tag set")
-
-        _post_write(http, write_path, {"operation": "remove_item_tags", "item_key": item_key, "tags": [tag_b]}, ACK)
-        _require(tag_b not in _tag_names(_get_item(http, library_id, item_key)), "remove_item_tags left the tag attached")
-
-        _post_write(http, write_path, {"operation": "rename_tag", "old_name": tag_a, "new_name": tag_c}, ACK)
-        _require(tag_c in _tag_names(_get_item(http, library_id, item_key)), "rename_tag did not apply the new name")
-
-        _post_write(http, write_path, {"operation": "merge_tags", "source_tags": [tag_c], "target_tag": keep_tag}, ACK)
-        merged_tags = _tag_names(_get_item(http, library_id, item_key))
-        _require(tag_c not in merged_tags and keep_tag in merged_tags, "merge_tags did not fold the source into the target")
-
-        # Item field and child-item operations.
-        new_title = f"Live Smoke Retitled {suffix}"
-        _post_write(http, write_path, {"operation": "update_item_fields", "item_key": item_key, "fields": {"title": new_title}}, ACK)
-        _require(_get_item(http, library_id, item_key)["data"]["title"] == new_title, "update_item_fields did not persist the title")
-
-        _post_write(
-            http,
-            write_path,
-            {"operation": "update_attachment_title", "attachment_key": attachment_key, "new_title": "Live Smoke PDF Retitled"},
-            ACK,
-        )
-
-        note_result = _post_write(
-            http, write_path, {"operation": "attach_note", "parent_item_key": item_key, "note_text": "live smoke note"}, NOTE
-        )
-        note_key = note_result["note_key"]
-        _post_write(http, write_path, {"operation": "update_note", "note_key": note_key, "new_content": "live smoke note updated"}, ACK)
-
-        _post_write(
-            http,
-            write_path,
-            {"operation": "attach_url", "parent_item_key": item_key, "url": "https://example.com/live-smoke"},
-            ACK,
-        )
-
-        # Copy, then use the copy as the disposable side of merge/trash/restore.
-        copy_key = _post_write(http, write_path, {"operation": "copy_item", "item_key": item_key}, COPY)["new_item_key"]
-        created.append(copy_key)
-
-        _post_write(http, write_path, {"operation": "trash_item", "item_key": copy_key}, ACK)
-        _post_write(http, write_path, {"operation": "restore_item", "item_key": copy_key}, ACK)
-        _require(_get_item(http, library_id, copy_key)["data"].get("deleted") is not True, "restore_item left the item trashed")
-
-        _post_write(
-            http,
-            write_path,
-            {"operation": "replace_item_json", "item_key": copy_key, "item_json": {"itemType": "journalArticle", "title": f"Live Smoke Replaced {suffix}"}},
-            ACK,
-        )
-        _require(
-            _get_item(http, library_id, copy_key)["data"]["title"] == f"Live Smoke Replaced {suffix}",
-            "replace_item_json did not persist the replacement",
-        )
-
-        _post_write(http, write_path, {"operation": "merge_items", "source_key": copy_key, "target_key": item_key}, ACK)
-
-        # Collection hierarchy operations, all on this run's own collections.
-        parent_result = _post_write(
-            http, write_path, {"operation": "create_collection", "name": f"live-smoke-parent-{suffix}"}, COLLECTION
-        )
-        parent_key = parent_result["details"]["collection_key"]
-
-        _post_write(
-            http,
-            write_path,
-            {"operation": "rename_collection", "collection_key": collection_key, "new_name": f"live-smoke-renamed-{suffix}"},
-            ACK,
-        )
-        _post_write(
-            http,
-            write_path,
-            {"operation": "move_collection", "collection_key": collection_key, "new_parent_key": parent_key},
-            ACK,
-        )
-        _post_write(
-            http,
-            write_path,
-            {"operation": "set_item_collections", "item_key": item_key, "collection_keys": [parent_key]},
-            ACK,
-        )
-        _require(
-            _get_item(http, library_id, item_key)["data"]["collections"] == [parent_key],
-            "set_item_collections did not replace the collection set",
-        )
-        _post_write(
-            http,
-            write_path,
-            {"operation": "merge_collections", "source_keys": [collection_key], "target_key": parent_key},
-            ACK,
-        )
-
-        _post_write(http, write_path, {"operation": "trash_collection", "collection_key": parent_key}, ACK)
-
-        standalone_keys = _prove_standalone_attach(http, write_path, attach_path, library_id, suffix, created)
-
-        _post_write(http, write_path, {"operation": "trash_item", "item_key": item_key}, ACK)
-
-        trashed_item = _wait_for_deleted(http, library_id, item_key)
-        _require(
-            trashed_item["data"].get("deleted") is True,
-            f"trash_item did not mark the item deleted: {trashed_item!r}",
-        )
-
+        _prove_trash_item(smoke, item_key)
         return {
             "success": True,
             "version": version_payload["version"],
@@ -836,14 +860,18 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
             "standalone_attachment_keys": standalone_keys,
         }
     finally:
-        _trash_created(http, write_path, created)
+        _trash_created(http, write_path, smoke.created)
 
 
 def parse_args() -> SmokeArgs:
     parser = argparse.ArgumentParser(description="Run a live smoke proof against the local-write-api add-on.")
     parser.add_argument("--base-url", default="http://127.0.0.1:23119", help="Base URL for the local Zotero server")
     parser.add_argument("--library-id", default="0", help="Local Zotero library id for read-back checks")
-    parser.add_argument("--expected-version", default="", help="Fail unless /version reports this exact add-on version")
+    parser.add_argument(
+        "--expected-version",
+        required=True,
+        help="Add-on version under proof; the run fails unless /version reports exactly this version",
+    )
     parser.add_argument(
         "--token",
         type=BearerAuth,
