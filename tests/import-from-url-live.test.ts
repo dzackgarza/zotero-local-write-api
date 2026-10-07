@@ -9,10 +9,10 @@
  * method can be forced without depending on a third-party page layout.
  *
  * MUTATING: each case writes into the library, so the suite is opt-in via
- * ZOTERO_LIVE=1 and is never collected by ordinary `bun test` QC. Every item
- * the operation reports as newly created is trashed in `afterAll`, together
- * with the scratch collection. Items reported as already present are never
- * touched, because they are the library's own.
+ * ZOTERO_LIVE=1 (`just import-from-url-live`) and is never collected by ordinary
+ * `bun test` QC. Every item the operation reports as newly created is trashed in
+ * `afterAll`, together with the scratch collection. Items reported as already
+ * present are never touched, because they are the library's own.
  *
  * Opted in but unreachable is a hard failure, never a skip.
  */
@@ -21,13 +21,22 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createZoteroLocalWriteClient } from "../src/client";
 
 const LIVE = process.env.ZOTERO_LIVE === "1";
-const BASE_URL = process.env.ZOTERO_LOCAL_BASE_URL ?? "http://127.0.0.1:23119";
-const LIBRARY_ID = process.env.ZOTERO_LIBRARY_ID ?? "0";
-// Remote translators and metadata services answer in seconds, but the PDF
-// case downloads and recognizes a full article.
-const REMOTE_TIMEOUT_MS = 180_000;
-
 const client = createZoteroLocalWriteClient(process.env.ZOTERO_LOCAL_BASE_URL);
+
+/** A setting the `import-from-url-live` recipe names; the suite reads it only when live. */
+function liveSetting(name: "ZOTERO_LOCAL_BASE_URL" | "ZOTERO_LIBRARY_ID"): string {
+  const value = process.env[name];
+  if (value === undefined) {
+    throw new Error(`${name} is not set; run the suite through \`just import-from-url-live\``);
+  }
+  return value;
+}
+
+/** A URL under the library in Zotero's built-in read-only local API. */
+function libraryUrl(path: string): string {
+  const base = liveSetting("ZOTERO_LOCAL_BASE_URL");
+  return `${base}/api/users/${liveSetting("ZOTERO_LIBRARY_ID")}/${path}`;
+}
 
 const uid = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
 const createdItemKeys: string[] = [];
@@ -49,7 +58,7 @@ type ChildData = { itemType: string; contentType?: string; linkMode?: string };
 
 /** Read an item back through Zotero's built-in read-only local API. */
 async function readItem(itemKey: string): Promise<ItemData> {
-  const url = `${BASE_URL}/api/users/${LIBRARY_ID}/items/${encodeURIComponent(itemKey)}`;
+  const url = libraryUrl(`items/${encodeURIComponent(itemKey)}`);
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`read-back of ${itemKey} failed: HTTP ${response.status}`);
@@ -60,7 +69,7 @@ async function readItem(itemKey: string): Promise<ItemData> {
 
 /** The files Zotero stores under an item, from the read-only local API. */
 async function storedChildren(itemKey: string): Promise<ChildData[]> {
-  const url = `${BASE_URL}/api/users/${LIBRARY_ID}/items/${encodeURIComponent(itemKey)}/children`;
+  const url = libraryUrl(`items/${encodeURIComponent(itemKey)}/children`);
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`children of ${itemKey} failed: HTTP ${response.status}`);
@@ -173,7 +182,7 @@ beforeAll(async () => {
     throw new Error("scratch collection could not be created");
   }
   collectionKey = data.details.collection_key;
-}, REMOTE_TIMEOUT_MS);
+});
 
 afterAll(async () => {
   server.stop(true);
@@ -193,7 +202,7 @@ afterAll(async () => {
       throw new Error(`cleanup of ${collectionKey} failed: ${error.error}`);
     }
   }
-}, REMOTE_TIMEOUT_MS);
+});
 
 test.skipIf(!LIVE)(
   "an arXiv abstract page becomes the preprint through the arXiv translator",
@@ -209,7 +218,6 @@ test.skipIf(!LIVE)(
     expect(data.citation_key).not.toBe("");
     await expectStoredPdf(data.item_key);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -229,7 +237,6 @@ test.skipIf(!LIVE)(
     expect(second.item_key).toBe(first.item_key);
     expect((await readItem(first.item_key)).collections).toContain(collectionKey);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -245,7 +252,6 @@ test.skipIf(!LIVE)(
     expect(item.DOI?.toLowerCase()).toBe("10.1371/journal.pone.0000308");
     await expectStoredPdf(data.item_key);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -266,7 +272,6 @@ test.skipIf(!LIVE)(
     expect(again.existing).toBe(true);
     expect(again.item_key).toBe(data.item_key);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -280,7 +285,6 @@ test.skipIf(!LIVE)(
     expect(second.item_key).not.toBe(first.item_key);
     expect((await readItem(second.item_key)).title).toBe(`lw-shared-b-${uid}`);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -295,7 +299,6 @@ test.skipIf(!LIVE)(
     expect(item.itemType).toBe("preprint");
     expect(item.DOI).toBe("10.48550/arXiv.1512.03385");
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -316,7 +319,6 @@ test.skipIf(!LIVE)(
     expect(item.itemType).toBe("journalArticle");
     expect(item.title).toBe(title);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -338,7 +340,6 @@ test.skipIf(!LIVE)(
     expect(item.itemType).toBe("journalArticle");
     expect(item.DOI?.toLowerCase()).toBe("10.1007/bf01389745");
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -359,7 +360,6 @@ test.skipIf(!LIVE)(
     expect(remediation.fallback_field).toBe("fallback_metadata");
     expect(remediation.alternative_sources.map((source) => source.name)).toContain("arXiv");
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 type Remediation = {
@@ -406,7 +406,6 @@ test.skipIf(!LIVE)(
     expect(again.existing).toBe(true);
     expect(again.item_key).toBe(data.item_key);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -417,7 +416,6 @@ test.skipIf(!LIVE)(
     expect(data.method).toBe("caller_metadata");
     await expectStoredPdf(data.item_key);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -427,7 +425,7 @@ test.skipIf(!LIVE)(
     const url = servePage(`/plain-noyear-${uid}`, "<title>Nothing here</title>");
     const { title, creators } = FALLBACK_METADATA;
     // Sent as raw JSON: the typed client would refuse the missing year at compile time.
-    const response = await fetch(`${BASE_URL}/write`, {
+    const response = await fetch(`${liveSetting("ZOTERO_LOCAL_BASE_URL")}/write`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -439,7 +437,6 @@ test.skipIf(!LIVE)(
     expect(response.status).toBe(400);
     expect(await libraryItemCount()).toBe(before);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -457,7 +454,6 @@ test.skipIf(!LIVE)(
     );
     expect(data.citation_keys).toEqual(keys);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 async function resolveUrl(url: string) {
@@ -475,7 +471,7 @@ async function resolveUrl(url: string) {
 
 /** The number of top-level items the library holds, from the read-only local API. */
 async function libraryItemCount(): Promise<number> {
-  const url = `${BASE_URL}/api/users/${LIBRARY_ID}/items/top?limit=1`;
+  const url = libraryUrl("items/top?limit=1");
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`item count failed: HTTP ${response.status}`);
@@ -497,7 +493,6 @@ test.skipIf(!LIVE)(
     expect(data.csl.issued).toEqual({ "date-parts": [["2021", 3, 4]] });
     expect(await libraryItemCount()).toBe(before);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -512,7 +507,6 @@ test.skipIf(!LIVE)(
     expect(String(data.csl.DOI).toLowerCase()).toBe("10.1371/journal.pone.0000308");
     expect(await libraryItemCount()).toBe(before);
   },
-  REMOTE_TIMEOUT_MS,
 );
 
 test.skipIf(!LIVE)(
@@ -530,5 +524,4 @@ test.skipIf(!LIVE)(
     expect(error.operation).toBe("resolve_url");
     expect(error.stage).toBe("identify_source");
   },
-  REMOTE_TIMEOUT_MS,
 );

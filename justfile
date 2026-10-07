@@ -307,6 +307,19 @@ schemathesis-fuzz-live:
 client-live:
     ZOTERO_LIVE=1 bun test tests/client-live.test.ts
 
+# Live proof of import_from_url and resolve_url against a real Zotero and the
+# real publisher and metadata services. MUTATING, so it is opt-in via ZOTERO_LIVE;
+# every item it creates is trashed afterwards. Library 0 is the local API's name
+# for the user library. Remote translators and metadata services answer in
+# seconds, but the PDF case downloads and recognizes a full article, hence the
+# 180 s per-test timeout.
+[doc("Live proof of import_from_url and resolve_url (MUTATING, opt-in)")]
+import-from-url-live:
+    ZOTERO_LIVE=1 \
+    ZOTERO_LOCAL_BASE_URL="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}" \
+    ZOTERO_LIBRARY_ID="${ZOTERO_LIBRARY_ID:-0}" \
+    bun test --timeout 180000 tests/import-from-url-live.test.ts
+
 # Stateful create/note/collection/tag/merge/restore/trash proof with Zotero
 # read-back. Safe against a real library: unique-prefixed objects, cleanup in
 # teardown. Skips when no live add-on is reachable.
