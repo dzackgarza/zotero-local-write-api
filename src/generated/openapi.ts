@@ -154,6 +154,8 @@ export interface components {
         | "resolve_url"
         | "attach_standalone"
       )[];
+      /** @description Whether Zotero has loaded its translators. Imports, URL resolution and identifier lookups fail until it is true; a client that has just started Zotero waits for it. */
+      translators_ready: boolean;
     };
     AttachRequest: {
       /** @description Parent item for the attachment. Absent: the attachment is stored standalone (no parent item) in the collection selected in Zotero's pane, or in the library root when the selected row is not a collection. Present: it must name an existing item. */

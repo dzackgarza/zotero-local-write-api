@@ -402,6 +402,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     _require(isinstance(capabilities, list), f"Version probe capabilities is not a list: {version_payload!r}")
     for capability in ("attach", "attach_bytes", "attach_standalone", "write", "version_probe", "import_bibtex"):
         _require(capability in capabilities, f"Missing required capability {capability!r}: {capabilities!r}")
+    _require(version_payload.get("translators_ready") is True, f"Zotero has not loaded its translators: {version_payload!r}")
 
     _prove_openapi_endpoint(base_url, write_path)
     # Always prove the bearer gate: with --token against a pre-authed instance,

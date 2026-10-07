@@ -114,8 +114,10 @@ install-live:
 
     # 5. Restart Zotero with cache purge. Stop by exact process name (-x), never
     #    pkill -f, whose pattern would match this recipe's own shell (AGENTS.md).
-    if pgrep -x zotero-bin > /dev/null; then pkill -x zotero-bin; fi
-    if pgrep -x zotero > /dev/null; then pkill -x zotero; fi
+    #    pkill exits 1 when no process matched, the state this step wants: the
+    #    zotero launcher exits by itself once zotero-bin is gone.
+    pkill -x zotero-bin || [[ $? -eq 1 ]]
+    pkill -x zotero || [[ $? -eq 1 ]]
     sleep 3
     profile_args=()
     if [[ -n "${ZOTERO_PROFILE_NAME:-}" ]]; then
@@ -131,7 +133,9 @@ install-live:
 
     # 6. Wait for the add-on to answer with the just-built version AND the
     #    capabilities the proofs rely on. Version alone would pass against a
-    #    build that dropped an endpoint.
+    #    build that dropped an endpoint. Then wait for translators_ready: the
+    #    add-on answers before Zotero has loaded its translators, and imports
+    #    fail until it has.
     base="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}"
     probe="$(mktemp)"
     trap 'rm -f "$probe"' EXIT
@@ -147,6 +151,8 @@ install-live:
     missing = required - set(v.get("capabilities") or [])
     if missing:
         sys.exit(f"add-on is missing capabilities: {sorted(missing)}")
+    if v.get("translators_ready") is not True:
+        sys.exit(1)
     ' "$probe" "$version"; then
                 echo "Zotero up with version $version — run 'EXPECTED_VERSION=$version just smoke-live' to prove behavior"
                 exit 0

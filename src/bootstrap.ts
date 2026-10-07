@@ -104,6 +104,12 @@ function createTranslateSearch(): ZoteroTranslateSearchApi {
 type ZoteroSyncRunnerApi = {
   sync(options: { background: boolean }): Promise<unknown>;
 };
+// zotero-types declares Zotero.Translators as `any`; same reason as ZoteroTranslateApi.
+// Models zotero/zotero chrome/content/zotero/xpcom/translation/translators.js: init()
+// without options waits for the schema update, then answers the running or finished
+// initialization, as quickCopy.js uses it.
+type ZoteroTranslatorsApi = { init(): Promise<void> };
+
 // zotero-types declares Zotero.Sync as `any`; same reason as ZoteroTranslateApi.
 // Models zotero/zotero chrome/content/zotero/xpcom/sync/syncRunner.js.
 type ZoteroSyncApi = { Runner?: ZoteroSyncRunnerApi } | undefined;
@@ -403,6 +409,7 @@ function pluginVersionPayload(): JsonPayload {
       tested_zotero_version: TESTED_ZOTERO_VERSION,
     },
     capabilities: PLUGIN_CAPABILITIES.slice(),
+    translators_ready: translatorsReady,
   };
 }
 
@@ -2804,6 +2811,8 @@ async function handleWriteRequest(data: unknown): Promise<EndpointResult> {
 // rootURI of the installed XPI, captured at startup; the bundled openapi.yaml
 // is read back from it.
 let pluginRootURI = "";
+// Whether Zotero has loaded its translators; translator-backed operations fail before then.
+let translatorsReady = false;
 
 async function openApiSpecText(): Promise<string> {
   // Bundled into the XPI by build.py next to bootstrap.js. rootURI is a
@@ -2861,6 +2870,14 @@ async function startup({
   void version;
   pluginRootURI = rootURI;
   log("Starting " + PLUGIN_VERSION);
+  void (Zotero.Translators as ZoteroTranslatorsApi).init().then(
+    () => {
+      translatorsReady = true;
+    },
+    (error: unknown) => {
+      log("Translator initialization failed: " + String(error));
+    },
+  );
 
   // Make the auth state visible in the log, so an operator can confirm the
   // write surface is gated before exposing it (or see that it is open).
