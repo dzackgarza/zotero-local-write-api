@@ -274,52 +274,43 @@ test.skipIf(!LIVE)(
   },
 );
 
-test.skipIf(!LIVE)(
-  "two different papers served at the same URL become two items",
-  async () => {
-    const path = `/shared-landing-${uid}`;
-    const first = await importFromUrl(servePage(path, citationHead(`lw-shared-a-${uid}`)));
-    const second = await importFromUrl(servePage(path, citationHead(`lw-shared-b-${uid}`)));
-    expect(first.existing).toBe(false);
-    expect(second.existing).toBe(false);
-    expect(second.item_key).not.toBe(first.item_key);
-    expect((await readItem(second.item_key)).title).toBe(`lw-shared-b-${uid}`);
-  },
-);
+test.skipIf(!LIVE)("two different papers served at the same URL become two items", async () => {
+  const path = `/shared-landing-${uid}`;
+  const first = await importFromUrl(servePage(path, citationHead(`lw-shared-a-${uid}`)));
+  const second = await importFromUrl(servePage(path, citationHead(`lw-shared-b-${uid}`)));
+  expect(first.existing).toBe(false);
+  expect(second.existing).toBe(false);
+  expect(second.item_key).not.toBe(first.item_key);
+  expect((await readItem(second.item_key)).title).toBe(`lw-shared-b-${uid}`);
+});
 
-test.skipIf(!LIVE)(
-  "a page with no metadata is identified by the arXiv ID in its URL",
-  async () => {
-    // A DOI in the URL is claimed first by Zotero's DOI web translator; no
-    // web translator claims an arXiv ID outside arxiv.org.
-    const url = servePage(`/papers/1512.03385`, "<title>Article</title>");
-    const data = await importFromUrl(url);
-    expect(data.method).toBe("identifier");
-    const item = await readItem(data.item_key);
-    expect(item.itemType).toBe("preprint");
-    expect(item.DOI).toBe("10.48550/arXiv.1512.03385");
-  },
-);
+test.skipIf(!LIVE)("a page with no metadata is identified by the arXiv ID in its URL", async () => {
+  // A DOI in the URL is claimed first by Zotero's DOI web translator; no
+  // web translator claims an arXiv ID outside arxiv.org.
+  const url = servePage(`/papers/1512.03385`, "<title>Article</title>");
+  const data = await importFromUrl(url);
+  expect(data.method).toBe("identifier");
+  const item = await readItem(data.item_key);
+  expect(item.itemType).toBe("preprint");
+  expect(item.DOI).toBe("10.48550/arXiv.1512.03385");
+});
 
-test.skipIf(!LIVE)(
-  "a page that publishes its BibTeX is imported from that BibTeX",
-  async () => {
-    const title = `lw-bibtex-${uid}`;
-    fixtures.set(`/cite-${uid}.bib`, {
-      body: `@article{fixture${uid},\n  title = {${title}},\n  author = {Fixture, Ada},\n  journal = {Journal of Fixtures},\n  year = {2020}\n}\n`,
-      type: "application/x-bibtex",
-    });
-    const url = servePage(
-      `/bibtex-${uid}`,
-      `<title>Landing</title><link rel="alternate" type="application/x-bibtex" href="/cite-${uid}.bib">`,
-    );
-    const data = await importFromUrl(url);
-    expect(data.method).toBe("published_bibtex");
-    const item = await readItem(data.item_key);
-    expect(item.itemType).toBe("journalArticle");
-    expect(item.title).toBe(title);
-  },
-);
+test.skipIf(!LIVE)("a page that publishes its BibTeX is imported from that BibTeX", async () => {
+  const title = `lw-bibtex-${uid}`;
+  fixtures.set(`/cite-${uid}.bib`, {
+    body: `@article{fixture${uid},\n  title = {${title}},\n  author = {Fixture, Ada},\n  journal = {Journal of Fixtures},\n  year = {2020}\n}\n`,
+    type: "application/x-bibtex",
+  });
+  const url = servePage(
+    `/bibtex-${uid}`,
+    `<title>Landing</title><link rel="alternate" type="application/x-bibtex" href="/cite-${uid}.bib">`,
+  );
+  const data = await importFromUrl(url);
+  expect(data.method).toBe("published_bibtex");
+  const item = await readItem(data.item_key);
+  expect(item.itemType).toBe("journalArticle");
+  expect(item.title).toBe(title);
+});
 
 test.skipIf(!LIVE)(
   "a page with only a title, an author and a year is identified by an external service",
@@ -418,26 +409,23 @@ test.skipIf(!LIVE)(
   },
 );
 
-test.skipIf(!LIVE)(
-  "fallback_metadata without a year is rejected and creates nothing",
-  async () => {
-    const before = await libraryItemCount();
-    const url = servePage(`/plain-noyear-${uid}`, "<title>Nothing here</title>");
-    const { title, creators } = FALLBACK_METADATA;
-    // Sent as raw JSON: the typed client would refuse the missing year at compile time.
-    const response = await fetch(`${liveSetting("ZOTERO_LOCAL_BASE_URL")}/write`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        operation: "import_from_url",
-        url,
-        fallback_metadata: { title, creators },
-      }),
-    });
-    expect(response.status).toBe(400);
-    expect(await libraryItemCount()).toBe(before);
-  },
-);
+test.skipIf(!LIVE)("fallback_metadata without a year is rejected and creates nothing", async () => {
+  const before = await libraryItemCount();
+  const url = servePage(`/plain-noyear-${uid}`, "<title>Nothing here</title>");
+  const { title, creators } = FALLBACK_METADATA;
+  // Sent as raw JSON: the typed client would refuse the missing year at compile time.
+  const response = await fetch(`${liveSetting("ZOTERO_LOCAL_BASE_URL")}/write`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      operation: "import_from_url",
+      url,
+      fallback_metadata: { title, creators },
+    }),
+  });
+  expect(response.status).toBe(400);
+  expect(await libraryItemCount()).toBe(before);
+});
 
 test.skipIf(!LIVE)(
   "import_by_identifier answers the citation key of every item it creates",
