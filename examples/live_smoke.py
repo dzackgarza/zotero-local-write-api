@@ -836,46 +836,62 @@ def _prove_trash_item(smoke: SmokeRun, item_key: str) -> None:
     )
 
 
-def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
-    version_payload = _prove_version(http, args.expected_version)
+def _prove_add_on_surface(http: httpx.Client, expected_version: str) -> VersionResponse:
+    """/version, /openapi.yaml and every state of the /write bearer gate. Returns the
+    /version payload."""
+    version_payload = _prove_version(http, expected_version)
     write_path = version_payload["endpoints"]["write"]
     _prove_openapi_endpoint(http, write_path)
     _prove_bearer_gate(http, write_path)
+    return version_payload
 
+
+def _prove_item_edits(smoke: SmokeRun, item_key: str, attachment_key: str, doomed_tag: str, keep_tag: str) -> None:
+    """Every tag, collection, field, child and copy operation on the created item."""
+    _prove_delete_tag(smoke, item_key, doomed_tag, keep_tag)
+    collection_key = _prove_collection_membership(smoke, item_key)
+    _prove_tag_operations(smoke, item_key, keep_tag)
+    _prove_item_and_child_edits(smoke, item_key, attachment_key)
+    _prove_copy_lifecycle(smoke, item_key)
+    _prove_collection_hierarchy(smoke, item_key, collection_key)
+
+
+def _prove_library_writes(smoke: SmokeRun, version: str) -> SmokeReport:
+    """Every write this run makes in the library, in order, and the report of its keys."""
+    doomed_tag = f"live-smoke-delete-{smoke.suffix}"
+    keep_tag = f"live-smoke-keep-{smoke.suffix}"
+    item_key = _prove_create_item(smoke, [doomed_tag, keep_tag])
+    bibtex_item_key = _prove_import_bibtex(smoke)
+    attachment_key = _prove_child_attach(smoke, item_key)
+    _prove_item_edits(smoke, item_key, attachment_key, doomed_tag, keep_tag)
+    standalone_keys = _prove_standalone_attach(smoke)
+    _prove_trash_item(smoke, item_key)
+    return {
+        "success": True,
+        "version": version,
+        "item_key": item_key,
+        "bibtex_item_key": bibtex_item_key,
+        "attachment_key": attachment_key,
+        "deleted_tag": doomed_tag,
+        "kept_tag": keep_tag,
+        "standalone_attachment_keys": standalone_keys,
+    }
+
+
+def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
+    version_payload = _prove_add_on_surface(http, args.expected_version)
     smoke = SmokeRun(
         http=http,
-        write_path=write_path,
+        write_path=version_payload["endpoints"]["write"],
         attach_path=version_payload["endpoints"]["attach"],
         library_id=args.library_id,
         suffix=uuid4().hex[:10],
         created=[],
     )
-    doomed_tag = f"live-smoke-delete-{smoke.suffix}"
-    keep_tag = f"live-smoke-keep-{smoke.suffix}"
     try:
-        item_key = _prove_create_item(smoke, [doomed_tag, keep_tag])
-        bibtex_item_key = _prove_import_bibtex(smoke)
-        attachment_key = _prove_child_attach(smoke, item_key)
-        _prove_delete_tag(smoke, item_key, doomed_tag, keep_tag)
-        collection_key = _prove_collection_membership(smoke, item_key)
-        _prove_tag_operations(smoke, item_key, keep_tag)
-        _prove_item_and_child_edits(smoke, item_key, attachment_key)
-        _prove_copy_lifecycle(smoke, item_key)
-        _prove_collection_hierarchy(smoke, item_key, collection_key)
-        standalone_keys = _prove_standalone_attach(smoke)
-        _prove_trash_item(smoke, item_key)
-        return {
-            "success": True,
-            "version": version_payload["version"],
-            "item_key": item_key,
-            "bibtex_item_key": bibtex_item_key,
-            "attachment_key": attachment_key,
-            "deleted_tag": doomed_tag,
-            "kept_tag": keep_tag,
-            "standalone_attachment_keys": standalone_keys,
-        }
+        return _prove_library_writes(smoke, version_payload["version"])
     finally:
-        _trash_created(http, write_path, smoke.created)
+        _trash_created(http, smoke.write_path, smoke.created)
 
 
 def parse_args() -> SmokeArgs:
