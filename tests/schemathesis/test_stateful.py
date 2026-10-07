@@ -36,18 +36,12 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-import pytest
 import schemathesis
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from tests.schemathesis import contract, helpers
 
-
-pytestmark = pytest.mark.skipif(
-    not helpers.zotero_reachable(),
-    reason="No live Zotero add-on reachable at the configured base URL.",
-)
 
 _SCHEMA = schemathesis.openapi.from_path(
     str(contract._SPEC_PATH)  # single source of truth

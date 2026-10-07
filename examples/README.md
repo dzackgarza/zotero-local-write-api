@@ -8,7 +8,7 @@ Each script is a self-contained [PEP 723](https://peps.python.org/pep-0723/) `uv
 Run any example directly with `uv`:
 
 ```bash
-uv run live_smoke.py
+uv run find_item_by_bibtex.py
 ```
 
 No separate install step is needed.
@@ -20,10 +20,17 @@ Ensure your Zotero is running with the `zotero-local-write-api` extension instal
 
 Real runtime smoke proof for the add-on itself.
 It uses Zotero's built-in local API plus the add-on endpoints to:
+
 - verify `/version`
+
+- prove each state of the `/write` bearer gate (open, gated, published without a token) by holding the prefs that select it; Zotero restores the prior prefs after each hold
+
 - create a real item
+
 - attach a PDF via byte upload
+
 - delete one tag while preserving another
+
 - trash the temporary item
 
 This is the required pre-release proof for `/attach` and `/write` behavior.
@@ -31,9 +38,14 @@ Run it against a real Zotero with the current working-tree XPI installed before 
 
 **Usage:**
 ```bash
-uv run live_smoke.py
-uv run live_smoke.py --expected-version 3.2.3
+uv run live_smoke.py --expected-version "$(cat ../VERSION)"
+uv run live_smoke.py --expected-version "$(cat ../VERSION)" --token "$ZOTERO_WRITE_API_TOKEN"
 ```
+
+`--expected-version` is required: the run fails unless `/version` reports exactly that version.
+From the repo root, `EXPECTED_VERSION=$(cat VERSION) just smoke-live` runs the same proof.
+Pass `--token` when the instance's token pref is set.
+The script refuses to run while `publicBaseURL` is set: the open gate state accepts unauthenticated writes, and on a published instance the tunnel would expose them.
 
 ### 2. `find_item_by_bibtex.py`
 
@@ -49,10 +61,15 @@ uv run find_item_by_bibtex.py Ale22
 ### 3. `offline_pipeline.py`
 
 A complete offline document processing pipeline that:
+
 1. Discovers parent items in your library missing extracted fulltext notes.
+
 2. Identifies and reads local PDF paths directly using the native Zotero data storage (avoiding HTTP overhead for blobs).
+
 3. Uses **`PyMuPDF`** to extract text content rapidly.
+
 4. Generates dense vector embeddings representing the document using **`sentence-transformers`** (e.g. `all-MiniLM-L6-v2`).
+
 5. Transmits the rich extracted text and the generated tracking tags ("embedded") back to Zotero using the `/write` API endpoints provided by this add-on.
 
 **Usage:**

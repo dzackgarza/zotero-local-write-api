@@ -29,19 +29,6 @@ def library_id() -> str:
     return str(os.environ.get("ZOTERO_LIBRARY_ID", "0"))
 
 
-def zotero_reachable() -> bool:
-    """True when /version answers with a healthy add-on payload.
-
-    A connection error, timeout, HTTP error, or non-JSON body all mean the
-    add-on is not reachable/healthy for the suite's purposes.
-    """
-    try:
-        payload = request_json("GET", f"{base_url()}/version", timeout=3.0)
-    except (HttpError, urllib.error.URLError, OSError, json.JSONDecodeError):
-        return False
-    return isinstance(payload, dict) and payload.get("success") is True
-
-
 def request_json(
     method: str,
     url: str,

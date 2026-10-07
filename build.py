@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml"]
+# ///
 from __future__ import annotations
 
 """Build release artifacts for the Zotero Local Write API plugin."""
@@ -39,6 +43,7 @@ TESTED_ZOTERO_VERSION = cfg["zotero"]["tested_version"]
 ATTACH_PATH = cfg["endpoints"]["attach"]
 WRITE_PATH = cfg["endpoints"]["write"]
 VERSION_PATH = cfg["endpoints"]["version"]
+OPENAPI_PATH = cfg["endpoints"]["openapi"]
 FULLTEXT_ALLOWED_DIRS = cfg["fulltext_attach"]["allowed_dirs"]
 
 UPDATE_MANIFEST_URL = (
@@ -52,6 +57,7 @@ ESBUILD_DEFINES = {
     "FULLTEXT_ATTACH_PATH": ATTACH_PATH,
     "LOCAL_WRITE_PATH": WRITE_PATH,
     "VERSION_PATH": VERSION_PATH,
+    "OPENAPI_PATH": OPENAPI_PATH,
     "FULLTEXT_ALLOWED_DIRS": FULLTEXT_ALLOWED_DIRS,
     "ADDON_ID": ADDON_ID,
     "HOMEPAGE_URL": REPO_URL,
@@ -102,6 +108,9 @@ def build_xpi() -> Path:
     with zipfile.ZipFile(xpi_path, "w", zipfile.ZIP_DEFLATED) as xpi:
         xpi.writestr(_zip_entry("manifest.json"), manifest_path.read_bytes())
         xpi.writestr(_zip_entry("bootstrap.js"), BOOTSTRAP_PATH.read_bytes())
+        # Served back by the plugin at OPENAPI_PATH so a Custom GPT can import
+        # the schema from the running instance.
+        xpi.writestr(_zip_entry("openapi.yaml"), (ROOT / "openapi.yaml").read_bytes())
         if ICONS_DIR.is_dir():
             for icon in sorted(ICONS_DIR.iterdir()):
                 if icon.is_file():

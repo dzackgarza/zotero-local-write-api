@@ -6,5 +6,5 @@
     "skipLibCheck": true,
     "types": ["zotero-types/entries/sandbox", "bun"]
   },
-  "include": ["src/bootstrap.ts", "src/client.ts", "src/generated/openapi.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

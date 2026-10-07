@@ -1,0 +1,131 @@
+import { Mutex } from "async-mutex";
+import {
+  type DuplicateKeys,
+  duplicateKeysFromItem,
+  fileExistingItem,
+  findExistingItem,
+} from "./duplicates";
+import { userLibraryID } from "./library";
+import {
+  answered,
+  type ImportOutcome,
+  type MethodResult,
+  miss,
+  type ServiceAnswer,
+  serviceFailure,
+} from "./source-results";
+import { isHttpFailure, recognizeDocument } from "./zotero-api";
+
+type RecognizedParent = { parent: Zotero.Item; pdf: Zotero.Item };
+
+// The recognizer saves the parent item it creates, and resolve_url erases that
+// parent again. One recognition runs at a time, from the download until its
+// caller has kept or erased the parent, and a duplicate lookup outside a
+// recognition waits for the running one. So no lookup answers with a parent
+// that is about to be erased.
+const recognition = new Mutex();
+
+export function withRecognizedParent<T>(
+  finalUrl: string,
+  use: (recognized: RecognizedParent) => Promise<T>,
+): Promise<MethodResult<T>> {
+  return recognition.runExclusive(async () => {
+    let recognized = await recognizeParent(finalUrl);
+    if (recognized.outcome !== "identified") {
+      return recognized;
+    }
+    return { outcome: "identified", found: await use(recognized.found) };
+  });
+}
+
+export function findExistingOutsideRecognition(keys: DuplicateKeys): Promise<Zotero.Item | null> {
+  return recognition.runExclusive(() => findExistingItem(keys, null));
+}
+
+// Zotero's "Retrieve Metadata for PDF": the PDF is stored as a standalone
+// attachment, and the recognizer creates its parent item from the DOI or ISBN
+// in the text, or from Zotero's recognizer service, and moves the PDF under it.
+// The recognizer logs its own errors instead of throwing, so a missing parent
+// is the only failure signal; the parentless PDF is then erased.
+async function recognizeParent(finalUrl: string): Promise<MethodResult<RecognizedParent>> {
+  let pdf = await downloadSourcePdf(finalUrl);
+  if (pdf.outcome === "failed") {
+    return pdf;
+  }
+  await recognizeDocument().recognizeItems([pdf.value]);
+  let parentID = pdf.value.parentItemID;
+  if (parentID === undefined || parentID === false) {
+    await pdf.value.eraseTx();
+    return miss("no_match", "the recognizer produced no parent item (see the Zotero debug log)");
+  }
+  let parent = await Zotero.Items.getAsync(parentID);
+  if (parent === false) {
+    throw new Error("recognized parent item " + parentID + " is missing");
+  }
+  return { outcome: "identified", found: { parent, pdf: pdf.value } };
+}
+
+// The source's server answers the download with a failure, or with a file that is
+// not a PDF (attachments.js `downloadFile`, `_enforceFileType`); any other error propagates.
+async function downloadSourcePdf(finalUrl: string): Promise<ServiceAnswer<Zotero.Item>> {
+  try {
+    return answered(await storePdf(finalUrl, null));
+  } catch (error) {
+    if (!isHttpFailure(error) && !(error instanceof Zotero.Attachments.InvalidPDFException)) {
+      throw error;
+    }
+    return serviceFailure(error.message);
+  }
+}
+
+// Zotero downloads the URL and stores the file in the library, as the
+// Connector does for a PDF it saves.
+export async function storePdf(url: string, parentItemID: number | null): Promise<Zotero.Item> {
+  return Zotero.Attachments.importFromURL({
+    libraryID: userLibraryID(),
+    url,
+    contentType: "application/pdf",
+    ...(parentItemID === null ? {} : { parentItemID }),
+  });
+}
+
+export function hasStoredPdf(item: Zotero.Item): boolean {
+  return Zotero.Items.get(item.getAttachments(false)).some(
+    (attachment) => attachment.attachmentContentType === "application/pdf",
+  );
+}
+
+type RecognizedImport = Omit<ImportOutcome, "method"> & { message: string };
+
+export async function recognizePdf(
+  finalUrl: string,
+  collectionIDs: number[],
+): Promise<MethodResult<RecognizedImport>> {
+  return withRecognizedParent(finalUrl, (recognized) => fileRecognized(recognized, collectionIDs));
+}
+
+// An existing item is the library's own: the recognized copy and its PDF are
+// erased, and the existing item only gains the requested collections.
+async function fileRecognized(
+  { parent, pdf }: RecognizedParent,
+  collectionIDs: number[],
+): Promise<RecognizedImport> {
+  let existing = await findExistingItem(duplicateKeysFromItem(parent), parent.id);
+  if (existing) {
+    await pdf.eraseTx();
+    await parent.eraseTx();
+    await fileExistingItem(existing, collectionIDs);
+    return recognizedImport(existing, true);
+  }
+  if (collectionIDs.length) {
+    parent.setCollections(collectionIDs);
+    await parent.saveTx();
+  }
+  return recognizedImport(parent, false);
+}
+
+// The recognizer saves no attachment of its own, so it has no attachment failures.
+function recognizedImport(item: Zotero.Item, existing: boolean): RecognizedImport {
+  let message = item.getField("title");
+  return { item, existing, translator: null, attachmentFailures: [], message };
+}

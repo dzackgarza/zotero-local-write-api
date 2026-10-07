@@ -5,10 +5,22 @@
 [`openapi.yaml`](./openapi.yaml): single source of truth for all request/response shapes.
 README must not duplicate schemas; only link to `openapi.yaml`.
 
-Change in `src/bootstrap.ts` to `runWrite`'s `operation` switch, handler's required/optional fields, or response payload fields → matching `openapi.yaml` edit, same diff (new/changed operation schema, updated `mapping` + `oneOf` entries in `WriteRequest`, updated `VersionResponse`/`AttachSuccessResponse` as needed).
-No new/changed `case` in `runWrite`, or field read via `data.<field>`, without matching `openapi.yaml` update same diff.
+When you change a module under `src/`, update `openapi.yaml` in the same diff for each of these changes:
 
-The executable enforcement is `bun run openapi:contract` (`tests/openapi-contract.test.ts`), which parses `src/bootstrap.ts` with the TypeScript compiler API and asserts the switch cases, handler field reads, and `successResult` calls match `openapi.yaml` 1:1. The prose rule above is a reminder; the test is the authority.
+- You add or change an entry in the `writeHandlers` operation table.
+  Add or change the operation schema.
+  Add or change its `mapping` and `oneOf` entries in `WriteRequest`.
+- You add or change a request field that a handler reads as `data.<field>`.
+  Set the field as required or optional in the operation schema.
+- You add or change a response payload field.
+  Update `VersionResponse` or `AttachSuccessResponse`.
+
+`bun run openapi:contract` runs `tests/openapi-contract.test.ts`.
+The test parses each `src/*.ts` module with the TypeScript compiler API.
+It requires exactly one `writeHandlers` table and exactly one top-level declaration of each handler it names.
+It asserts that `openapi.yaml` matches the `writeHandlers` entries 1:1.
+It also asserts that `openapi.yaml` matches the handler field reads and the `successResult` calls 1:1.
+The rule above is a reminder; the test is the authority.
 
 Validate before commit:
 
@@ -17,11 +29,39 @@ bun run openapi:lint
 bun run openapi:contract
 ```
 
+## Source Layout
+
+`bun run build` bundles `src/bootstrap.ts` and the modules it imports into `src/bootstrap.js`.
+Zotero loads `bootstrap.js` as a classic script and calls `install`, `startup`, `shutdown` and `uninstall` as top-level functions.
+A classic script that contains an `import` or `export` statement does not compile.
+Thus `src/bootstrap.ts` declares the four lifecycle functions and exports nothing, and the bundle contains no `import` or `export` statement.
+An XPI (Cross-Platform Install) file is a Zotero add-on package with the `.xpi` extension.
+`tests/build-artifacts.test.ts` builds the XPI and compiles its `bootstrap.js` as a classic script with `node:vm`.
+The test then runs the script and asserts that the four lifecycle functions are on its global scope.
+Build-time constants and Zotero's `APP_SHUTDOWN` are ambient declarations in `src/globals.d.ts`.
+
+| Module | Contents |
+| --- | --- |
+| `bootstrap.ts` | Lifecycle, endpoint registration, `/version` payload, served `openapi.yaml` |
+| `auth.ts` | Bearer-token gate for `/write` and `/attach` |
+| `responses.ts` | Endpoint types, success and error envelopes, logging |
+| `errors.ts` | `ApiError` and its HTTP status classes |
+| `request-fields.ts` | Request field validation |
+| `zotero-api.ts` | Named shapes for Zotero APIs that `zotero-types` under-models |
+| `library.ts` | User-library lookups, citation keys, attachment file copies |
+| `attach.ts` | `/attach` |
+| `write.ts` | `/write` dispatch: `writeHandlers`, `sync`, `run_javascript` |
+| `items.ts`, `item-copy-merge.ts`, `tags.ts`, `collections.ts` | Item, tag and collection operations |
+| `identifier-import.ts` | `import_bibtex`, `import_by_identifier` |
+| `import-from-url.ts`, `fallback-metadata.ts` | `import_from_url` |
+| `resolve-url.ts` | `resolve_url` |
+| `source-results.ts`, `source-fetch.ts`, `source-methods.ts`, `identify-page.ts`, `metadata-services.ts`, `pdf-recognition.ts`, `duplicates.ts` | Source identification shared by `import_from_url` and `resolve_url` |
+
 ## Local Zotero Runtime Proof
 
 This repo is a Zotero add-on.
 A passing package build is not proof that the add-on works.
-Any behavior change to `src/bootstrap.ts`, endpoint contracts, packaging, manifest generation, or update metadata requires a live Zotero proof against the real local Zotero profile.
+Any behavior change to the add-on source in `src/`, endpoint contracts, packaging, manifest generation, or update metadata requires a live Zotero proof against the real local Zotero profile.
 
 Required local proof path:
 

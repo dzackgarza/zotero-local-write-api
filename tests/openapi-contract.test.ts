@@ -1,30 +1,19 @@
 import { describe, expect, it } from "bun:test";
-import * as ts from "typescript";
 import * as fs from "fs";
 import * as path from "path";
+import * as ts from "typescript";
 
 // Parse openapi.yaml with a minimal YAML parser (js-yaml is already
 // available as a transitive dependency of redocly).
 const yaml = require("js-yaml");
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
-const BOOTSTRAP_PATH = path.join(REPO_ROOT, "src", "bootstrap.ts");
+const SRC_DIR = path.join(REPO_ROOT, "src");
 const OPENAPI_PATH = path.join(REPO_ROOT, "openapi.yaml");
 const CONFIG_PATH = path.join(REPO_ROOT, "config.yml");
 const VERSION_PATH = path.join(REPO_ROOT, "VERSION");
 
 // ── Helpers ────────────────────────────────────────────────────
-
-function parseBootstrap(): ts.SourceFile {
-  const source = fs.readFileSync(BOOTSTRAP_PATH, "utf8");
-  return ts.createSourceFile(
-    "bootstrap.ts",
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-}
 
 // Minimal structural view of the parts of the spec these tests navigate.
 // The YAML is dynamic, but every access below is covered by this shape.
@@ -52,6 +41,23 @@ interface ConfigDoc {
   endpoints: Record<string, string>;
 }
 
+// Every add-on source module that esbuild bundles into bootstrap.js. The
+// generated OpenAPI types and the ambient declarations hold no handlers.
+function parseSources(): ts.SourceFile[] {
+  return fs
+    .readdirSync(SRC_DIR)
+    .filter((name) => name.endsWith(".ts") && !name.endsWith(".d.ts"))
+    .map((name) =>
+      ts.createSourceFile(
+        name,
+        fs.readFileSync(path.join(SRC_DIR, name), "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TS,
+      ),
+    );
+}
+
 function parseOpenAPI(): OpenAPIDoc {
   const source = fs.readFileSync(OPENAPI_PATH, "utf8");
   return yaml.load(source) as OpenAPIDoc;
@@ -62,178 +68,133 @@ function parseConfig(): ConfigDoc {
   return yaml.load(source) as ConfigDoc;
 }
 
-// Find the runWrite function and its switch statement
-function findRunWriteSwitch(source: ts.SourceFile): ts.SwitchStatement | null {
-  let result: ts.SwitchStatement | null = null;
-
-  function visit(node: ts.Node) {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === "runWrite") {
-      function findSwitch(n: ts.Node) {
-        if (ts.isSwitchStatement(n)) {
-          result = n;
-          return;
-        }
-        ts.forEachChild(n, findSwitch);
-        if (result) {return;}
-      }
-      findSwitch(node);
-    }
-    if (!result) {
-      ts.forEachChild(node, visit);
-    }
-  }
-  visit(source);
-  return result;
+// The object literal a declaration initializes, when the declaration is writeHandlers
+function writeHandlersTable(declaration: ts.VariableDeclaration): ts.ObjectLiteralExpression[] {
+  const initializer = declaration.initializer;
+  const isNamed = ts.isIdentifier(declaration.name) && declaration.name.text === "writeHandlers";
+  return isNamed && initializer !== undefined && ts.isObjectLiteralExpression(initializer)
+    ? [initializer]
+    : [];
 }
 
-// Extract switch case strings and the handler call for each
-function extractSwitchCases(
-  switchStmt: ts.SwitchStatement,
+// Find the writeHandlers table that runWrite dispatches through
+function findWriteHandlers(sources: ts.SourceFile[]): ts.ObjectLiteralExpression {
+  const tables = sources
+    .flatMap((source) => [...source.statements])
+    .filter(ts.isVariableStatement)
+    .flatMap((statement) => statement.declarationList.declarations.flatMap(writeHandlersTable));
+  if (tables.length !== 1) {
+    throw new Error(`Expected one writeHandlers object literal in src/, found ${tables.length}`);
+  }
+  return tables[0];
+}
+
+// Find the one top-level declaration of a handler across the source modules
+function findHandler(sources: ts.SourceFile[], handlerName: string): ts.Statement {
+  const found = sources
+    .flatMap((source) => [...source.statements])
+    .filter(
+      (statement) =>
+        (ts.isFunctionDeclaration(statement) && statement.name?.text === handlerName) ||
+        (ts.isVariableStatement(statement) &&
+          statement.declarationList.declarations.some(
+            (d) => ts.isIdentifier(d.name) && d.name.text === handlerName,
+          )),
+    );
+  if (found.length !== 1) {
+    throw new Error(
+      `Expected one top-level declaration of handler "${handlerName}" in src/, found ${found.length}`,
+    );
+  }
+  return found[0];
+}
+
+// Extract each operation name and the handler it dispatches to
+function extractWriteHandlers(
+  table: ts.ObjectLiteralExpression,
 ): { op: string; handlerName: string }[] {
-  const cases: { op: string; handlerName: string }[] = [];
-
-  for (const clause of switchStmt.caseBlock.clauses) {
-    if (ts.isDefaultClause(clause)) {continue;}
-
-    const caseExpr = clause.expression;
-    if (!ts.isStringLiteral(caseExpr)) {
-      throw new Error(`Non-literal switch case at position ${cases.length}`);
-    }
-    const op = caseExpr.text;
-
-    // Check for fall-through: must have exactly one return statement
-    const returnStmts = clause.statements.filter(ts.isReturnStatement);
-    if (returnStmts.length !== 1) {
+  return table.properties.map((property) => {
+    if (
+      !ts.isPropertyAssignment(property) ||
+      !ts.isIdentifier(property.name) ||
+      !ts.isIdentifier(property.initializer)
+    ) {
       throw new Error(
-        `Case "${op}" must have exactly one return statement, got ${returnStmts.length}`,
+        `writeHandlers entry is not \`operation: handlerName\`: ${property.getText()}`,
       );
     }
-
-    const ret = returnStmts[0];
-    if (!ret.expression || !ts.isCallExpression(ret.expression)) {
-      throw new Error(`Case "${op}" return must be a function call`);
-    }
-
-    // Extract handler name: return handleX(data) or return handleX()
-    const callExpr = ret.expression;
-    let handlerName: string;
-    if (ts.isIdentifier(callExpr.expression)) {
-      handlerName = callExpr.expression.text;
-    } else {
-      throw new Error(
-        `Case "${op}" handler call expression is not a simple identifier`,
-      );
-    }
-
-    cases.push({ op, handlerName });
-  }
-
-  // Check for duplicates
-  const ops = cases.map((c) => c.op);
-  const duplicates = ops.filter((op, i) => ops.indexOf(op) !== i);
-  if (duplicates.length > 0) {
-    throw new Error(`Duplicate switch cases: ${duplicates.join(", ")}`);
-  }
-
-  return cases;
+    return { op: property.name.text, handlerName: property.initializer.text };
+  });
 }
 
 // Find the handler function and extract data.<field> reads
-function extractHandlerFields(
-  source: ts.SourceFile,
-  handlerName: string,
-): string[] {
+function extractHandlerFields(sources: ts.SourceFile[], handlerName: string): string[] {
   const fields = new Set<string>();
-
-  function visit(node: ts.Node) {
+  // Walk the handler body and find all data.<field> property accesses
+  function walkForData(n: ts.Node) {
     if (
-      (ts.isFunctionDeclaration(node) || ts.isVariableStatement(node)) &&
-      ((ts.isFunctionDeclaration(node) && node.name?.text === handlerName) ||
-        (ts.isVariableStatement(node) &&
-          node.declarationList.declarations.some(
-            (d) => ts.isIdentifier(d.name) && d.name.text === handlerName,
-          )))
+      ts.isPropertyAccessExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.expression.text === "data"
     ) {
-      // Walk the handler body and find all data.<field> property accesses
-      function walkForData(n: ts.Node) {
-        if (
-          ts.isPropertyAccessExpression(n) &&
-          ts.isIdentifier(n.expression) &&
-          n.expression.text === "data"
-        ) {
-          fields.add(n.name.text);
-        }
-        ts.forEachChild(n, walkForData);
-      }
-      ts.forEachChild(node, walkForData);
+      fields.add(n.name.text);
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(n, walkForData);
   }
-  visit(source);
+  ts.forEachChild(findHandler(sources, handlerName), walkForData);
   return [...fields].sort();
 }
 
 // Find the first string argument to successResult() in a handler
-function extractSuccessOperation(
-  source: ts.SourceFile,
-  handlerName: string,
-): string | null {
+function extractSuccessOperation(sources: ts.SourceFile[], handlerName: string): string | null {
   let result: string | null = null;
-
-  function visit(node: ts.Node) {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === handlerName) {
-      function findSuccessCall(n: ts.Node) {
-        if (
-          ts.isCallExpression(n) &&
-          ts.isIdentifier(n.expression) &&
-          n.expression.text === "successResult"
-        ) {
-          const firstArg = n.arguments.at(0);
-          if (firstArg && ts.isStringLiteral(firstArg)) {
-            result = firstArg.text;
-          }
-          return;
-        }
-        ts.forEachChild(n, findSuccessCall);
-      }
-      findSuccessCall(node);
-    }
-    ts.forEachChild(node, visit);
+  const handler = findHandler(sources, handlerName);
+  if (!ts.isFunctionDeclaration(handler)) {
+    return result;
   }
-  visit(source);
+  function findSuccessCall(n: ts.Node) {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.expression.text === "successResult"
+    ) {
+      const firstArg = n.arguments.at(0);
+      if (firstArg && ts.isStringLiteral(firstArg)) {
+        result = firstArg.text;
+      }
+      return;
+    }
+    ts.forEachChild(n, findSuccessCall);
+  }
+  findSuccessCall(handler);
   return result;
 }
 
 // ── Tests ───────────────────────────────────────────────────────
 
 describe("OpenAPI contract conformance", () => {
-  const source = parseBootstrap();
+  const sources = parseSources();
   const spec = parseOpenAPI();
   const config = parseConfig();
   const version = fs.readFileSync(VERSION_PATH, "utf8").trim();
 
-  const switchStmt = findRunWriteSwitch(source);
-  if (!switchStmt) {
-    throw new Error("Could not find runWrite switch statement in bootstrap.ts");
-  }
-
-  const runtimeCases = extractSwitchCases(switchStmt);
+  const runtimeCases = extractWriteHandlers(findWriteHandlers(sources));
   const runtimeOps = runtimeCases.map((c) => c.op);
 
-  it("runtime has exactly 32 operations", () => {
-    expect(runtimeOps.length).toBe(32);
+  it("runtime dispatches each operation once", () => {
+    expect(new Set(runtimeOps).size).toBe(runtimeOps.length);
   });
 
-  it("switch cases match WriteRequest discriminator mapping keys", () => {
+  it("dispatch table matches WriteRequest discriminator mapping keys", () => {
     const writeReq = spec.components.schemas.WriteRequest;
     const mappingKeys = Object.keys(writeReq.discriminator.mapping);
     expect(new Set(mappingKeys)).toEqual(new Set(runtimeOps));
   });
 
-  it("switch cases match WriteRequest oneOf refs", () => {
+  it("dispatch table matches WriteRequest oneOf refs", () => {
     const writeReq = spec.components.schemas.WriteRequest;
     const oneOfRefs = writeReq.oneOf.map((s) => s.$ref.split("/").pop()!);
-    expect(oneOfRefs.length).toBe(32);
+    expect(oneOfRefs.length).toBe(runtimeOps.length);
     // Each ref should point to a schema whose operation const matches a runtime op
     for (const ref of oneOfRefs) {
       const schema = spec.components.schemas[ref];
@@ -243,23 +204,23 @@ describe("OpenAPI contract conformance", () => {
     }
   });
 
-  it("switch cases match WriteSuccessResponse discriminator mapping keys", () => {
+  it("dispatch table matches WriteSuccessResponse discriminator mapping keys", () => {
     const writeSuccess = spec.components.schemas.WriteSuccessResponse;
     const mappingKeys = Object.keys(writeSuccess.discriminator.mapping);
     expect(new Set(mappingKeys)).toEqual(new Set(runtimeOps));
   });
 
-  it("switch cases match WriteSuccessResponse oneOf refs", () => {
+  it("dispatch table matches WriteSuccessResponse oneOf refs", () => {
     const writeSuccess = spec.components.schemas.WriteSuccessResponse;
     const oneOfRefs = writeSuccess.oneOf.map((s) => s.$ref.split("/").pop()!);
-    expect(oneOfRefs.length).toBe(32);
+    expect(oneOfRefs.length).toBe(runtimeOps.length);
     for (const ref of oneOfRefs) {
       const schema = spec.components.schemas[ref];
       expect(schema).toBeDefined();
     }
   });
 
-  it("request operation const values match runtime switch cases", () => {
+  it("request operation const values match runtime dispatch table", () => {
     const requestSchemas = runtimeOps.map((op) => {
       const pascal = op
         .split("_")
@@ -273,7 +234,7 @@ describe("OpenAPI contract conformance", () => {
     expect(new Set(requestSchemas)).toEqual(new Set(runtimeOps));
   });
 
-  it("success operation const values match runtime switch cases", () => {
+  it("success operation const values match runtime dispatch table", () => {
     const successSchemas = runtimeOps.map((op) => {
       const pascal = op
         .split("_")
@@ -283,9 +244,7 @@ describe("OpenAPI contract conformance", () => {
       const schema = spec.components.schemas[schemaName];
       expect(schema).toBeDefined();
       // The operation const is nested in the allOf composition
-      const composition = schema.allOf.find(
-        (s) => s.properties?.operation?.const !== undefined,
-      );
+      const composition = schema.allOf.find((s) => s.properties?.operation?.const !== undefined);
       expect(composition).toBeDefined();
       return composition!.properties.operation.const;
     });
@@ -294,7 +253,7 @@ describe("OpenAPI contract conformance", () => {
 
   it("handler data.<field> reads match request schema properties", () => {
     for (const { op, handlerName } of runtimeCases) {
-      const handlerFields = extractHandlerFields(source, handlerName);
+      const handlerFields = extractHandlerFields(sources, handlerName);
       // The handler reads data.operation too, which maps to the discriminator
       const allHandlerFields = new Set(["operation", ...handlerFields]);
 
@@ -319,7 +278,7 @@ describe("OpenAPI contract conformance", () => {
 
   it("successResult first argument matches dispatch case", () => {
     for (const { op, handlerName } of runtimeCases) {
-      const successOp = extractSuccessOperation(source, handlerName);
+      const successOp = extractSuccessOperation(sources, handlerName);
       if (successOp === null) {
         throw new Error(
           `Handler "${handlerName}" has no statically identifiable successResult call`,
@@ -360,15 +319,9 @@ describe("OpenAPI contract conformance", () => {
     expect(versionResp.properties.endpoints.required).toContain("attach");
     expect(versionResp.properties.endpoints.required).toContain("write");
     expect(versionResp.properties.endpoints.required).toContain("version");
-    expect(versionResp.properties.compatibility.required).toContain(
-      "strict_min_version",
-    );
-    expect(versionResp.properties.compatibility.required).toContain(
-      "strict_max_version",
-    );
-    expect(versionResp.properties.compatibility.required).toContain(
-      "tested_zotero_version",
-    );
+    expect(versionResp.properties.compatibility.required).toContain("strict_min_version");
+    expect(versionResp.properties.compatibility.required).toContain("strict_max_version");
+    expect(versionResp.properties.compatibility.required).toContain("tested_zotero_version");
   });
 
   it("attach success response has required top-level fields", () => {
