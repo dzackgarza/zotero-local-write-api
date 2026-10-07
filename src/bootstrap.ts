@@ -1599,7 +1599,11 @@ function recordAttempt<T extends { message: string }>(
 // certificate failure is the service's answer; any other error propagates.
 async function requestService(
   url: string,
-  options: { responseType: "text" | "document"; successCodes?: number[]; headers?: Record<string, string> },
+  options: {
+    responseType: "text" | "document";
+    successCodes?: number[];
+    headers?: Record<string, string>;
+  },
 ): Promise<ServiceAnswer<XMLHttpRequest>> {
   try {
     return answered(await Zotero.HTTP.request("GET", url, options));
@@ -2310,11 +2314,7 @@ async function identifyByServices(
     return null;
   }
   for (let service of EXTERNAL_SERVICES) {
-    let found = recordAttempt(
-      attempts,
-      "external_service",
-      await identifyByService(service, seed),
-    );
+    let found = recordAttempt(attempts, "external_service", await identifyByService(service, seed));
     if (found) {
       return { ...found, method: "external_service" };
     }
