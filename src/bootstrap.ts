@@ -2004,10 +2004,7 @@ let EXTERNAL_SERVICES: ExternalService[] = [
       if (feed === null) {
         throw new Error("arXiv returned no Atom feed");
       }
-      return serviceCandidates(
-        [...feed.getElementsByTagNameNS(ATOM_NS, "entry")],
-        arxivCandidate,
-      );
+      return serviceCandidates([...feed.getElementsByTagNameNS(ATOM_NS, "entry")], arxivCandidate);
     },
   },
   {
@@ -2143,11 +2140,20 @@ async function identifyPage(
 }
 
 function duplicateKeysFromJSON(json: TranslatorItemJSON): DuplicateKeys {
-  return { itemType: json.itemType, title: json.title, DOI: json.DOI, ISBN: json.ISBN, url: json.url };
+  return {
+    itemType: json.itemType,
+    title: json.title,
+    DOI: json.DOI,
+    ISBN: json.ISBN,
+    url: json.url,
+  };
 }
 
 // Zotero stores a field an item lacks as "".
-function storedField(item: Zotero.Item, field: "title" | "DOI" | "ISBN" | "url"): string | undefined {
+function storedField(
+  item: Zotero.Item,
+  field: "title" | "DOI" | "ISBN" | "url",
+): string | undefined {
   let value = item.getField(field);
   return value === "" ? undefined : value;
 }
