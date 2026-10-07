@@ -630,7 +630,13 @@ def _prove_collection_membership(smoke: SmokeRun, item_key: str) -> str:
         {"operation": "create_collection", "name": f"live-smoke-collection-{smoke.suffix}"},
         COLLECTION,
     )["details"]["collection_key"]
+    _prove_add_item_to_collection(smoke, item_key, collection_key)
+    _prove_remove_item_from_collection(smoke, item_key, collection_key)
+    return collection_key
 
+
+def _prove_add_item_to_collection(smoke: SmokeRun, item_key: str, collection_key: str) -> None:
+    """add_item_to_collection puts the collection in the item's collections."""
     smoke.write(
         {"operation": "add_item_to_collection", "item_key": item_key, "collection_key": collection_key},
         ACK,
@@ -639,6 +645,10 @@ def _prove_collection_membership(smoke: SmokeRun, item_key: str) -> str:
         collection_key in smoke.item(item_key)["data"]["collections"],
         "add_item_to_collection did not attach the collection",
     )
+
+
+def _prove_remove_item_from_collection(smoke: SmokeRun, item_key: str, collection_key: str) -> None:
+    """remove_item_from_collection takes the collection out of the item's collections."""
     smoke.write(
         {"operation": "remove_item_from_collection", "item_key": item_key, "collection_key": collection_key},
         ACK,
@@ -647,7 +657,6 @@ def _prove_collection_membership(smoke: SmokeRun, item_key: str) -> str:
         collection_key not in smoke.item(item_key)["data"]["collections"],
         "remove_item_from_collection left the collection attached",
     )
-    return collection_key
 
 
 def _prove_tag_operations(smoke: SmokeRun, item_key: str, keep_tag: str) -> None:
