@@ -60,6 +60,13 @@ BIBTEX_RECORD: Final = Path(__file__).resolve().parent.parent / "tests" / "fixtu
 JsonObject = dict[str, JsonValue]
 ResultT = TypeVar("ResultT")
 
+# The book create_item stores, beside the run's own title.
+BOOK_FIELDS: Final[JsonObject] = {
+    "creators": [{"creatorType": "author", "firstName": "Local", "lastName": "Smoke"}],
+    "date": "2026",
+    "publisher": "Local Write API Smoke",
+}
+
 
 class SmokeFailure(RuntimeError):
     """Raised when the live smoke proof fails."""
@@ -517,25 +524,13 @@ def _prove_version(http: httpx.Client, expected_version: str) -> VersionResponse
     return version_payload
 
 
-def _prove_create_item(smoke: SmokeRun, tags: list[str]) -> str:
-    """create_item stores a book with its title and tags. Returns its key."""
-    title = f"live-smoke-item-{smoke.suffix}"
+def _create_book(smoke: SmokeRun, title: str, tags: list[str]) -> str:
+    """create_item answers a key for a new book, which goes into `created`. Returns it."""
     create_result = smoke.write(
         {
             "operation": "create_item",
             "item_type": "book",
-            "fields": {
-                "title": title,
-                "creators": [
-                    {
-                        "creatorType": "author",
-                        "firstName": "Local",
-                        "lastName": "Smoke",
-                    }
-                ],
-                "date": "2026",
-                "publisher": "Local Write API Smoke",
-            },
+            "fields": {"title": title, **BOOK_FIELDS},
             "tags": list[JsonValue](tags),
         },
         ITEM_KEY,
@@ -543,7 +538,13 @@ def _prove_create_item(smoke: SmokeRun, tags: list[str]) -> str:
     item_key = create_result["item_key"]
     smoke.created.append(item_key)
     _require(bool(item_key), f"create_item did not return item_key: {create_result!r}")
+    return item_key
 
+
+def _prove_create_item(smoke: SmokeRun, tags: list[str]) -> str:
+    """create_item stores a book with its title and tags. Returns its key."""
+    title = f"live-smoke-item-{smoke.suffix}"
+    item_key = _create_book(smoke, title, tags)
     created_item = smoke.item(item_key)
     _require(created_item["data"]["title"] == title, f"Unexpected item title: {created_item!r}")
     created_tags = set(_tag_names(created_item))
