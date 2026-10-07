@@ -457,11 +457,14 @@ def _wait_for_deleted(http: httpx.Client, library_id: str, item_key: str, *, tim
         time.sleep(interval)
 
 
-def _trash_created(http: httpx.Client, write_path: str, created: list[str]) -> None:
-    """Trash every top-level item this run created. Trashing is idempotent, so
-    items the run already trashed or merged away are trashed again harmlessly."""
-    for item_key in created:
-        _post_write(http, write_path, {"operation": "trash_item", "item_key": item_key}, ACK)
+def _trash_created(smoke: SmokeRun) -> None:
+    """Trash every top-level item and collection this run created. Trashing is
+    idempotent, so objects the run already trashed or merged away are trashed
+    again harmlessly."""
+    for item_key in smoke.created:
+        smoke.write({"operation": "trash_item", "item_key": item_key}, ACK)
+    for collection_key in smoke.created_collections:
+        smoke.write({"operation": "trash_collection", "collection_key": collection_key}, ACK)
 
 
 def _select_pane_row(http: httpx.Client, write_path: str, row_id: str) -> None:
@@ -507,8 +510,8 @@ def _require_stored_standalone(
 class SmokeRun(NamedTuple):
     """What every proof step needs: the client, the add-on endpoints from /version,
     the library for read-back, this run's unique suffix, and the keys of top-level
-    items this run created. Each step appends a key as soon as its creation response
-    validates, so the run trashes it even after a later failure."""
+    items and collections this run created. Each step appends a key as soon as its
+    creation response validates, so the run trashes it even after a later failure."""
 
     http: httpx.Client
     write_path: str
@@ -516,6 +519,7 @@ class SmokeRun(NamedTuple):
     library_id: str
     suffix: str
     created: list[str]
+    created_collections: list[str]
 
     def write(self, payload: JsonObject, schema: TypeAdapter[ResultT]) -> ResultT:
         return _post_write(self.http, self.write_path, payload, schema)
@@ -644,10 +648,7 @@ def _prove_collection_membership(smoke: SmokeRun, item_key: str) -> str:
     Zotero.Collections.get, whose documented `false` sentinel was dereferenced
     directly; nothing exercised that path at the real boundary.
     """
-    collection_key = smoke.write(
-        {"operation": "create_collection", "name": f"live-smoke-collection-{smoke.suffix}"},
-        COLLECTION,
-    )["details"]["collection_key"]
+    collection_key = _create_collection(smoke, "live-smoke-collection", None)
     _prove_add_item_to_collection(smoke, item_key, collection_key)
     _prove_remove_item_from_collection(smoke, item_key, collection_key)
     return collection_key
@@ -799,9 +800,7 @@ def _prove_copy_lifecycle(smoke: SmokeRun, item_key: str) -> None:
 
 def _prove_collection_hierarchy(smoke: SmokeRun, item_key: str, collection_key: str) -> None:
     """rename, move, set_item_collections, merge and trash, all on this run's own collections."""
-    parent_key = smoke.write(
-        {"operation": "create_collection", "name": f"live-smoke-parent-{smoke.suffix}"}, COLLECTION
-    )["details"]["collection_key"]
+    parent_key = _create_collection(smoke, "live-smoke-parent", None)
 
     smoke.write(
         {"operation": "rename_collection", "collection_key": collection_key, "new_name": f"live-smoke-renamed-{smoke.suffix}"},
@@ -863,16 +862,13 @@ def _prove_standalone_attach(smoke: SmokeRun) -> list[str]:
     original_row = _run_javascript(
         smoke.http, smoke.write_path, "return Zotero.getActiveZoteroPane().getCollectionTreeRow().id;", JS_TEXT
     )
-    collection_key = smoke.write(
-        {"operation": "create_collection", "name": f"live-smoke-standalone-{smoke.suffix}"}, COLLECTION
-    )["details"]["collection_key"]
+    collection_key = _create_collection(smoke, "live-smoke-standalone", None)
     try:
         collection_row, root_row = _standalone_pane_rows(smoke, collection_key)
         in_collection_key = _prove_standalone_in_collection(smoke, collection_row, collection_key)
         return [in_collection_key, _prove_standalone_at_root(smoke, root_row)]
     finally:
         _select_pane_row(smoke.http, smoke.write_path, original_row)
-        smoke.write({"operation": "trash_collection", "collection_key": collection_key}, ACK)
 
 
 def _prove_trash_item(smoke: SmokeRun, item_key: str) -> None:
@@ -899,7 +895,9 @@ def _create_collection(smoke: SmokeRun, name: str, parent_key: str | None) -> st
     payload: JsonObject = {"operation": "create_collection", "name": f"{name}-{smoke.suffix}"}
     if parent_key is not None:
         payload["parent_key"] = parent_key
-    return smoke.write(payload, COLLECTION)["details"]["collection_key"]
+    collection_key = smoke.write(payload, COLLECTION)["details"]["collection_key"]
+    smoke.created_collections.append(collection_key)
+    return collection_key
 
 
 def _source_and_child_state(smoke: SmokeRun, source_key: str, child_key: str) -> tuple[bool, str]:
@@ -915,20 +913,17 @@ def _prove_merge_into_trashed_descendant(smoke: SmokeRun) -> None:
     """merge_collections refuses with 409, before any change, a target that is a
     trashed descendant below a direct child of the source."""
     source_key = _create_collection(smoke, "live-smoke-merge-source", None)
-    try:
-        child_key = _create_collection(smoke, "live-smoke-merge-child", source_key)
-        grandchild_key = _create_collection(smoke, "live-smoke-merge-grandchild", child_key)
-        smoke.write({"operation": "trash_collection", "collection_key": grandchild_key}, ACK)
-        payload = {"operation": "merge_collections", "source_keys": [source_key], "target_key": grandchild_key}
-        response = smoke.http.post(smoke.write_path, json=payload)
-        _require(response.status_code == 409, f"merge into a trashed grandchild returned HTTP {response.status_code}: {response.text}")
-        ERROR.validate_json(response.content)
-        _require(
-            _source_and_child_state(smoke, source_key, child_key) == (False, source_key),
-            "the refused merge changed the source collection or its child",
-        )
-    finally:
-        smoke.write({"operation": "trash_collection", "collection_key": source_key}, ACK)
+    child_key = _create_collection(smoke, "live-smoke-merge-child", source_key)
+    grandchild_key = _create_collection(smoke, "live-smoke-merge-grandchild", child_key)
+    smoke.write({"operation": "trash_collection", "collection_key": grandchild_key}, ACK)
+    payload = {"operation": "merge_collections", "source_keys": [source_key], "target_key": grandchild_key}
+    response = smoke.http.post(smoke.write_path, json=payload)
+    _require(response.status_code == 409, f"merge into a trashed grandchild returned HTTP {response.status_code}: {response.text}")
+    ERROR.validate_json(response.content)
+    _require(
+        _source_and_child_state(smoke, source_key, child_key) == (False, source_key),
+        "the refused merge changed the source collection or its child",
+    )
 
 
 def _prove_item_edits(smoke: SmokeRun, item_key: str, attachment_key: str, doomed_tag: str, keep_tag: str) -> None:
@@ -973,11 +968,12 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
         library_id=args.library_id,
         suffix=uuid4().hex[:10],
         created=[],
+        created_collections=[],
     )
     try:
         return _prove_library_writes(smoke, version_payload["version"])
     finally:
-        _trash_created(http, smoke.write_path, smoke.created)
+        _trash_created(smoke)
 
 
 def parse_args() -> SmokeArgs:
