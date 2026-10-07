@@ -479,71 +479,6 @@ def _require_stored_standalone(
     )
 
 
-def _prove_standalone_attach(
-    http: httpx.Client,
-    write_path: str,
-    attach_path: str,
-    library_id: str,
-    suffix: str,
-    created: list[str],
-) -> list[str]:
-    """/attach without item_key stores a parentless PDF where the pane points.
-
-    Both targets are proved: a selected collection, and the library root. The
-    user's pane selection is restored afterward. Every attachment key goes into
-    `created` as soon as its response validates, so the caller trashes it on any
-    later failure. Returns the two attachment keys.
-    """
-    original_row = _run_javascript(
-        http,
-        write_path,
-        "return Zotero.getActiveZoteroPane().getCollectionTreeRow().id;",
-        JS_TEXT,
-    )
-    collection_result = _post_write(
-        http,
-        write_path,
-        {"operation": "create_collection", "name": f"live-smoke-standalone-{suffix}"},
-        COLLECTION,
-    )
-    collection_key = collection_result["details"]["collection_key"]
-    try:
-        collection_id = _run_javascript(
-            http,
-            write_path,
-            f"return Zotero.Collections.getByLibraryAndKey(Zotero.Libraries.userLibraryID, {collection_key!r}).id;",
-            JS_INT,
-        )
-        user_library_id = _run_javascript(
-            http, write_path, "return Zotero.Libraries.userLibraryID;", JS_INT
-        )
-        collection_row = f"C{collection_id}"
-        _select_pane_row(http, write_path, collection_row)
-        in_collection_title = f"Live Smoke Standalone {collection_row} {suffix}"
-        in_collection = _store_standalone_pdf(http, attach_path, in_collection_title, COLLECTION_ATTACH)
-        created.append(in_collection["attachment_key"])
-        _require(
-            in_collection["details"]["collection_key"] == collection_key,
-            f"standalone /attach reported collection {in_collection['details']['collection_key']!r}, expected {collection_key!r}",
-        )
-        _require_stored_standalone(
-            http, library_id, in_collection["attachment_key"], in_collection_title, [collection_key]
-        )
-
-        root_row = f"L{user_library_id}"
-        _select_pane_row(http, write_path, root_row)
-        at_root_title = f"Live Smoke Standalone {root_row} {suffix}"
-        at_root = _store_standalone_pdf(http, attach_path, at_root_title, ROOT_ATTACH)
-        created.append(at_root["attachment_key"])
-        _require_stored_standalone(http, library_id, at_root["attachment_key"], at_root_title, [])
-        return [in_collection["attachment_key"], at_root["attachment_key"]]
-    finally:
-        _select_pane_row(http, write_path, original_row)
-        _post_write(
-            http, write_path, {"operation": "trash_collection", "collection_key": collection_key}, ACK
-        )
-
-
 class SmokeRun(NamedTuple):
     """What every proof step needs: the client, the add-on endpoints from /version,
     the library for read-back, this run's unique suffix, and the keys of top-level
@@ -802,6 +737,64 @@ def _prove_collection_hierarchy(smoke: SmokeRun, item_key: str, collection_key: 
     smoke.write({"operation": "trash_collection", "collection_key": parent_key}, ACK)
 
 
+def _standalone_pane_rows(smoke: SmokeRun, collection_key: str) -> tuple[str, str]:
+    """The collection pane's row ids for this run's collection and for the library root."""
+    collection_id = _run_javascript(
+        smoke.http,
+        smoke.write_path,
+        f"return Zotero.Collections.getByLibraryAndKey(Zotero.Libraries.userLibraryID, {collection_key!r}).id;",
+        JS_INT,
+    )
+    user_library_id = _run_javascript(smoke.http, smoke.write_path, "return Zotero.Libraries.userLibraryID;", JS_INT)
+    return f"C{collection_id}", f"L{user_library_id}"
+
+
+def _prove_standalone_in_collection(smoke: SmokeRun, collection_row: str, collection_key: str) -> str:
+    """With a collection selected, /attach without item_key stores the PDF in that
+    collection. Returns the attachment key."""
+    _select_pane_row(smoke.http, smoke.write_path, collection_row)
+    title = f"Live Smoke Standalone {collection_row} {smoke.suffix}"
+    in_collection = _store_standalone_pdf(smoke.http, smoke.attach_path, title, COLLECTION_ATTACH)
+    smoke.created.append(in_collection["attachment_key"])
+    _require(
+        in_collection["details"]["collection_key"] == collection_key,
+        f"standalone /attach reported collection {in_collection['details']['collection_key']!r}, expected {collection_key!r}",
+    )
+    _require_stored_standalone(smoke.http, smoke.library_id, in_collection["attachment_key"], title, [collection_key])
+    return in_collection["attachment_key"]
+
+
+def _prove_standalone_at_root(smoke: SmokeRun, root_row: str) -> str:
+    """With the library root selected, /attach without item_key stores the PDF in no
+    collection. Returns the attachment key."""
+    _select_pane_row(smoke.http, smoke.write_path, root_row)
+    title = f"Live Smoke Standalone {root_row} {smoke.suffix}"
+    at_root = _store_standalone_pdf(smoke.http, smoke.attach_path, title, ROOT_ATTACH)
+    smoke.created.append(at_root["attachment_key"])
+    _require_stored_standalone(smoke.http, smoke.library_id, at_root["attachment_key"], title, [])
+    return at_root["attachment_key"]
+
+
+def _prove_standalone_attach(smoke: SmokeRun) -> list[str]:
+    """/attach without item_key stores a parentless PDF where the pane points, in a
+    selected collection and at the library root, then restores the user's pane
+    selection. Each step adds its attachment key to `created` as soon as the response
+    validates. Returns the two attachment keys."""
+    original_row = _run_javascript(
+        smoke.http, smoke.write_path, "return Zotero.getActiveZoteroPane().getCollectionTreeRow().id;", JS_TEXT
+    )
+    collection_key = smoke.write(
+        {"operation": "create_collection", "name": f"live-smoke-standalone-{smoke.suffix}"}, COLLECTION
+    )["details"]["collection_key"]
+    try:
+        collection_row, root_row = _standalone_pane_rows(smoke, collection_key)
+        in_collection_key = _prove_standalone_in_collection(smoke, collection_row, collection_key)
+        return [in_collection_key, _prove_standalone_at_root(smoke, root_row)]
+    finally:
+        _select_pane_row(smoke.http, smoke.write_path, original_row)
+        smoke.write({"operation": "trash_collection", "collection_key": collection_key}, ACK)
+
+
 def _prove_trash_item(smoke: SmokeRun, item_key: str) -> None:
     """trash_item marks the item deleted."""
     smoke.write({"operation": "trash_item", "item_key": item_key}, ACK)
@@ -838,9 +831,7 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
         _prove_item_and_child_edits(smoke, item_key, attachment_key)
         _prove_copy_lifecycle(smoke, item_key)
         _prove_collection_hierarchy(smoke, item_key, collection_key)
-        standalone_keys = _prove_standalone_attach(
-            http, write_path, smoke.attach_path, smoke.library_id, smoke.suffix, smoke.created
-        )
+        standalone_keys = _prove_standalone_attach(smoke)
         _prove_trash_item(smoke, item_key)
         return {
             "success": True,
