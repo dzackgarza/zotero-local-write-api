@@ -23,7 +23,9 @@ function resolveAttachFilePath(filePath: string): string {
   return file.path;
 }
 
-async function materializeUploadBytes(fileName: string, fileBytesBase64: string) {
+// A new path in Zotero's temp directory for an uploaded file. The file name must keep at
+// least one character that is valid in a file name.
+function uploadTempPath(fileName: string): string {
   let tempDir = Zotero.getTempDirectory();
   let safeFileName = Zotero.File.getValidFileName(fileName.trim());
   if (!safeFileName) {
@@ -32,22 +34,31 @@ async function materializeUploadBytes(fileName: string, fileBytesBase64: string)
   tempDir.append(
     `local-write-api-${Date.now()}-${Math.random().toString(16).slice(2)}-${safeFileName}`,
   );
+  return tempDir.path;
+}
+
+// The decoded base64 bytes as a stream. Mirrors putContentsAsync's own Blob handling
+// (zotero/zotero chrome/content/zotero/xpcom/file.js:411): it converts a Blob to an
+// nsIArrayBufferInputStream because NetUtil.asyncCopy needs a real stream.
+// Building the stream here hits the declared nsIInputStream signature
+// directly; the advertised ArrayBuffer does not work at runtime.
+function base64Stream(fileBytesBase64: string): nsIArrayBufferInputStream {
   let binary = atob(fileBytesBase64);
   let bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index++) {
     bytes[index] = binary.charCodeAt(index);
   }
-  // Mirrors putContentsAsync's own Blob handling (zotero/zotero
-  // chrome/content/zotero/xpcom/file.js:411): it converts a Blob to an
-  // nsIArrayBufferInputStream because NetUtil.asyncCopy needs a real stream.
-  // Building the stream here hits the declared nsIInputStream signature
-  // directly; the advertised ArrayBuffer does not work at runtime.
   let stream = Cc["@mozilla.org/io/arraybuffer-input-stream;1"].createInstance(
     Ci.nsIArrayBufferInputStream,
   );
   stream.setData(bytes.buffer, 0, bytes.byteLength);
-  await Zotero.File.putContentsAsync(tempDir.path, stream);
-  return tempDir.path;
+  return stream;
+}
+
+async function materializeUploadBytes(fileName: string, fileBytesBase64: string) {
+  let tempPath = uploadTempPath(fileName);
+  await Zotero.File.putContentsAsync(tempPath, base64Stream(fileBytesBase64));
+  return tempPath;
 }
 
 // Where a stored file lands: under the parent item with this key, or standalone in the
