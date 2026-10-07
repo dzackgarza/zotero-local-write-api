@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Script, createContext } from "node:vm";
+import { createContext, Script } from "node:vm";
 import "../src/bootstrap";
 
 interface AddonManifest {
