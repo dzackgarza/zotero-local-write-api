@@ -76,6 +76,8 @@ export async function handleMoveCollection(data: RequestData) {
   return successResult("move_collection", collectionDetails(collection));
 }
 
+type MergeCounts = { movedItems: number; movedChildren: number; trashedSources: number };
+
 export async function handleMergeCollections(data: RequestData) {
   let sourceKeys = normalizeStringList(data.source_keys, "source_keys");
   let targetKey = requireNonEmptyString(data.target_key, "target_key");
@@ -83,45 +85,52 @@ export async function handleMergeCollections(data: RequestData) {
     throw conflict("Target collection cannot also be a source collection");
   }
   let targetCollection = await getUserCollectionOrThrow(targetKey);
-  let movedItems = 0;
-  let movedChildren = 0;
-  let trashedSources = 0;
-
+  let counts: MergeCounts = { movedItems: 0, movedChildren: 0, trashedSources: 0 };
   for (let sourceKey of sourceKeys) {
-    let sourceCollection = await getUserCollectionOrThrow(sourceKey);
-    let descendents = sourceCollection.getDescendents(false, null, false);
-    if (descendents.some((d) => d.type === "collection" && d.key === targetKey)) {
-      throw conflict("Cannot merge a collection into one of its descendants");
-    }
-
-    let childItems = sourceCollection.getChildItems(true, true);
-    if (childItems.length) {
-      await targetCollection.addItems(childItems);
-      movedItems += childItems.length;
-    }
-
-    let childCollections = sourceCollection.getChildCollections(false, true);
-    for (let childCollection of childCollections) {
-      if (childCollection.key === targetKey) {
-        continue;
-      }
-      childCollection.parentKey = targetKey;
-      await childCollection.saveTx();
-      movedChildren++;
-    }
-
-    sourceCollection.deleted = true;
-    await sourceCollection.saveTx();
-    trashedSources++;
+    await mergeSourceInto(sourceKey, targetCollection, counts);
   }
-
   return successResult("merge_collections", {
     source_keys: sourceKeys,
     target_key: targetKey,
-    moved_item_count: movedItems,
-    moved_child_collection_count: movedChildren,
-    trashed_source_count: trashedSources,
+    moved_item_count: counts.movedItems,
+    moved_child_collection_count: counts.movedChildren,
+    trashed_source_count: counts.trashedSources,
   });
+}
+
+async function mergeSourceInto(
+  sourceKey: string,
+  targetCollection: Zotero.Collection,
+  counts: MergeCounts,
+) {
+  let sourceCollection = await getUserCollectionOrThrow(sourceKey);
+  // Trashed descendants count too: getChildCollections below also returns trashed
+  // children, so the target can never be among the children that are re-parented.
+  let descendents = sourceCollection.getDescendents(false, "collection", true);
+  if (descendents.some((d) => d.key === targetCollection.key)) {
+    throw conflict("Cannot merge a collection into one of its descendants");
+  }
+  await moveChildren(sourceCollection, targetCollection, counts);
+  sourceCollection.deleted = true;
+  await sourceCollection.saveTx();
+  counts.trashedSources++;
+}
+
+async function moveChildren(
+  sourceCollection: Zotero.Collection,
+  targetCollection: Zotero.Collection,
+  counts: MergeCounts,
+) {
+  let childItems = sourceCollection.getChildItems(true, true);
+  if (childItems.length) {
+    await targetCollection.addItems(childItems);
+    counts.movedItems += childItems.length;
+  }
+  for (let childCollection of sourceCollection.getChildCollections(false, true)) {
+    childCollection.parentKey = targetCollection.key;
+    await childCollection.saveTx();
+    counts.movedChildren++;
+  }
 }
 
 export async function handleAddItemToCollection(data: RequestData) {
