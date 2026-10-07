@@ -77,15 +77,17 @@ afterAll(() => {
   rmSync(scratchDir, { recursive: true, force: true });
 });
 
-test("build emits an update manifest for the exact generated XPI", () => {
+function readXpiManifest(): AddonManifest {
+  return JSON.parse(runCommand(["unzip", "-p", xpiName, "manifest.json"])) as AddonManifest;
+}
+
+test("build packs the generated add-on manifest into the XPI", () => {
   expect(existsSync(xpiName)).toBe(true);
+  expect(readXpiManifest()).toEqual(readJson<AddonManifest>("src/manifest.json"));
+});
 
-  let manifestFromSource = readJson<AddonManifest>("src/manifest.json");
-  let manifestFromXpi = JSON.parse(
-    runCommand(["unzip", "-p", xpiName, "manifest.json"]),
-  ) as AddonManifest;
-  expect(manifestFromXpi).toEqual(manifestFromSource);
-
+test("build emits an update manifest for the exact generated XPI", () => {
+  let zotero = readXpiManifest().applications.zotero;
   let actualHash = createHash("sha256").update(readFileSync(xpiName)).digest("hex");
   let update =
     readJson<UpdatesManifest>(updatesOut).addons["local-write-api@dzackgarza.com"].updates[0];
@@ -96,8 +98,8 @@ test("build emits an update manifest for the exact generated XPI", () => {
     update_hash: `sha256:${actualHash}`,
     applications: {
       zotero: {
-        strict_min_version: manifestFromXpi.applications.zotero.strict_min_version,
-        strict_max_version: manifestFromXpi.applications.zotero.strict_max_version,
+        strict_min_version: zotero.strict_min_version,
+        strict_max_version: zotero.strict_max_version,
       },
     },
   });
