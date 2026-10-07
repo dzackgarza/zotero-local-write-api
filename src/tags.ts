@@ -86,14 +86,21 @@ export async function handleDeleteUnusedTags(_data: RequestData) {
   return successResult("delete_unused_tags", {});
 }
 
-// Zotero.Item.addTag returns false when the item already carries the tag as a
-// manual tag. It makes an automatic tag of the same name manual and returns
-// true, so that tag is reported as added.
+// A tag is added when the item lacks it or carries it as an automatic tag,
+// which Zotero.Item.addTag makes manual. addTag's own return value is no
+// guide: a manual tag loaded from the database has no `type`, so addTag
+// does not recognize it and returns true.
+function addManualTag(item: Zotero.Item, tag: string): boolean {
+  let added = item.getTagType(tag) !== 0;
+  item.addTag(tag);
+  return added;
+}
+
 export async function handleAddItemTags(data: RequestData) {
   let itemKey = requireNonEmptyString(data.item_key, "item_key");
   let tagsToAdd = normalizeStringList(data.tags, "tags");
   let item = await getUserItemOrThrow(itemKey);
-  let added = tagsToAdd.filter((tag) => item.addTag(tag));
+  let added = tagsToAdd.filter((tag) => addManualTag(item, tag));
   await item.saveTx();
   return successResult("add_item_tags", {
     item_key: itemKey,
