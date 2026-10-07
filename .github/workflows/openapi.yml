@@ -21,10 +21,22 @@ jobs:
       # test shells out to it.
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
 
+      # The commit hook formats src/generated/openapi.ts with ai-review-ci's biome config;
+      # openapi:check-generated formats the generator output with the same config.
+      - name: Canonical formatter config
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: dzackgarza/ai-review-ci
+          path: .ai-review-ci
+          sparse-checkout: tool-configs/biome.json
+          sparse-checkout-cone-mode: false
+
       - name: Install dependencies (frozen)
         run: bun install --frozen-lockfile
 
       - name: Lint, drift check, dispatch conformance, typecheck, tests
+        env:
+          AI_REVIEW_CI_CONFIGS: ${{ github.workspace }}/.ai-review-ci/tool-configs
         run: |
           bun run openapi:lint
           bun run openapi:check-generated
