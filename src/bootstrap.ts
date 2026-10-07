@@ -2044,7 +2044,9 @@ let OpenLibrarySearch = v.object({
       author_name: v.optional(v.array(v.string())),
       first_publish_year: v.optional(v.number()),
       editions: v.optional(
-        v.object({ docs: v.optional(v.array(v.object({ isbn: v.optional(v.array(v.string())) }))) }),
+        v.object({
+          docs: v.optional(v.array(v.object({ isbn: v.optional(v.array(v.string())) }))),
+        }),
       ),
     }),
   ),
