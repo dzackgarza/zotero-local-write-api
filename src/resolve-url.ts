@@ -79,7 +79,12 @@ async function resolveByRecognition(
   );
   return recognized === null
     ? null
-    : { csl: recognized.csl, itemType: recognized.itemType, method: "pdf_recognition", translator: null };
+    : {
+        csl: recognized.csl,
+        itemType: recognized.itemType,
+        method: "pdf_recognition",
+        translator: null,
+      };
 }
 
 async function resolvePdfSource(
