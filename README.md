@@ -36,6 +36,14 @@ curl -X POST http://127.0.0.1:23119/attach \
   -d '{"item_key":"ABCD1234","title":"paper.pdf","file_name":"paper.pdf","file_bytes_base64":"JVBERi0xLjQK"}'
 ```
 
+Store the same bytes as a standalone attachment (no parent item) in the collection selected in Zotero's pane, or in the library root when no collection is selected, by leaving out `item_key`:
+
+```bash
+curl -X POST http://127.0.0.1:23119/attach \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"paper.pdf","file_name":"paper.pdf","file_bytes_base64":"JVBERi0xLjQK"}'
+```
+
 See [`examples/`](./examples/) for Python clients and the live smoke proof.
 
 ## TypeScript client

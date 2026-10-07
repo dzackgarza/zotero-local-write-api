@@ -215,6 +215,7 @@ let PLUGIN_CAPABILITIES = [
   "openapi_spec",
   "import_from_url",
   "resolve_url",
+  "attach_standalone",
 ];
 
 let BIBTEX_TRANSLATOR_ID = "9cb70025-a888-4a29-a210-93ec52da40d4";
@@ -307,7 +308,8 @@ type ImportTranslator = {
   translate(options: { libraryID: false; saveAttachments: false }): Promise<TranslatorItemJSON[]>;
 };
 type ActiveZoteroPane = {
-  getSelectedCollection(): Zotero.Collection | null;
+  // Undefined when the selected row is not a collection (observed at runtime).
+  getSelectedCollection(): Zotero.Collection | undefined;
 };
 
 function log(msg: string): void {
@@ -583,8 +585,12 @@ async function materializeUploadBytes(fileName: string, fileBytesBase64: string)
   return tempDir.path;
 }
 
+// Where a stored file lands: under a parent item, or standalone in the given
+// collections, where no collection means the library root.
+type AttachTarget = { parentItemID: number } | { collections: number[] };
+
 async function importStoredAttachment(
-  parentItem: Zotero.Item,
+  target: AttachTarget,
   filePath: string,
   title: string,
 ): Promise<Zotero.Item> {
@@ -603,9 +609,9 @@ async function importStoredAttachment(
   try {
     let result = await Zotero.Attachments.importFromFile({
       file: tempFile.path,
-      libraryID: parentItem.libraryID,
-      parentItemID: parentItem.id,
+      libraryID: userLibraryID(),
       title: title,
+      ...target,
     });
     await result.saveTx();
     attachment = result;
@@ -618,7 +624,9 @@ async function importStoredAttachment(
 }
 
 async function handleFulltextAttach(data: RequestData) {
-  let itemKey = requireNonEmptyString(data.item_key, "item_key");
+  // An absent item_key asks for a standalone attachment; a present one must name an item.
+  let itemKey =
+    data.item_key === undefined ? null : requireNonEmptyString(data.item_key, "item_key");
   let title = requireNonEmptyString(data.title, "title");
   let filePath = optionalNonEmptyString(data.file_path);
   let fileName = optionalNonEmptyString(data.file_name);
@@ -628,7 +636,14 @@ async function handleFulltextAttach(data: RequestData) {
     throw badRequest("Either file_path or file_bytes_base64 must be provided");
   }
 
-  let parentItem = await getUserItemOrThrow(itemKey);
+  let target: AttachTarget;
+  let collection: Zotero.Collection | undefined;
+  if (itemKey === null) {
+    collection = selectedCollection();
+    target = { collections: collection === undefined ? [] : [collection.id] };
+  } else {
+    target = { parentItemID: (await getUserItemOrThrow(itemKey)).id };
+  }
   let attachment: Zotero.Item;
   let sourceMode = "path";
   let tempPath: string | null = null;
@@ -641,14 +656,14 @@ async function handleFulltextAttach(data: RequestData) {
         );
       }
       try {
-        attachment = await importStoredAttachment(parentItem, filePath, title);
+        attachment = await importStoredAttachment(target, filePath, title);
       } catch (error) {
         if (fileBytesBase64 === null || !isUnusableFilePathError(error)) {
           throw error;
         }
         let fallbackName = fileName !== null ? fileName : Zotero.File.pathToFile(filePath).leafName;
         tempPath = await materializeUploadBytes(fallbackName, fileBytesBase64);
-        attachment = await importStoredAttachment(parentItem, tempPath, title);
+        attachment = await importStoredAttachment(target, tempPath, title);
         sourceMode = "bytes_fallback";
       }
     } else {
@@ -657,7 +672,7 @@ async function handleFulltextAttach(data: RequestData) {
         requiredFileName,
         requireNonEmptyString(data.file_bytes_base64, "file_bytes_base64"),
       );
-      attachment = await importStoredAttachment(parentItem, tempPath, title);
+      attachment = await importStoredAttachment(target, tempPath, title);
       sourceMode = "bytes";
     }
   } finally {
@@ -674,6 +689,7 @@ async function handleFulltextAttach(data: RequestData) {
     "attach_file_to_item",
     {
       parent_item_key: itemKey,
+      collection_key: collection === undefined ? null : collection.key,
       file_path: filePath,
       source_mode: sourceMode,
       title: title,
@@ -681,7 +697,10 @@ async function handleFulltextAttach(data: RequestData) {
     {
       attachment_key: attachment.key,
       attachment_id: attachment.id,
-      message: "File attached successfully to item " + itemKey,
+      message:
+        itemKey === null
+          ? "File stored as a standalone attachment"
+          : "File attached successfully to item " + itemKey,
       handler: "fulltext-attach",
     },
   );
@@ -2573,9 +2592,18 @@ async function handleResolveUrl(data: RequestData) {
   );
 }
 
+// The collection selected in Zotero's pane, or undefined when the selected row is not
+// a collection (a library root, a saved search, Unfiled Items, and so on).
+function selectedCollection(): Zotero.Collection | undefined {
+  let pane = Zotero.getActiveZoteroPane() as ActiveZoteroPane | null;
+  if (pane === null) {
+    throw conflict("No Zotero window is open, so no collection is selected.");
+  }
+  return pane.getSelectedCollection();
+}
+
 function handleGetSelectedCollection(): JsonPayload {
-  let pane = Zotero.getActiveZoteroPane() as ActiveZoteroPane;
-  let collection = pane.getSelectedCollection();
+  let collection = selectedCollection();
   if (!collection) {
     throw notFound("No Collection selected.");
   }

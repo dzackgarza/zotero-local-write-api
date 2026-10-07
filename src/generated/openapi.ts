@@ -30,7 +30,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Attach a stored file to an existing item */
+        /**
+         * Store a file as an attachment of an item, or as a standalone attachment
+         * @description With item_key, the file is stored as a child attachment of that item. Without item_key, it is stored as a standalone attachment (an attachment item with no parent) in the collection selected in Zotero's pane; when the selected row is a library root, a saved search, or another row that is not a collection, it is stored in the library root. Servers that support the standalone form list attach_standalone in /version capabilities.
+         */
         post: operations["attachFile"];
         delete?: never;
         options?: never;
@@ -135,10 +138,11 @@ export interface components {
                 strict_max_version: string;
                 tested_zotero_version: string;
             };
-            capabilities: ("attach" | "attach_bytes" | "write" | "version_probe" | "health_probe" | "import_bibtex" | "import_by_identifier" | "selected_collection" | "sync" | "run_javascript" | "openapi_spec" | "import_from_url" | "resolve_url")[];
+            capabilities: ("attach" | "attach_bytes" | "write" | "version_probe" | "health_probe" | "import_bibtex" | "import_by_identifier" | "selected_collection" | "sync" | "run_javascript" | "openapi_spec" | "import_from_url" | "resolve_url" | "attach_standalone")[];
         };
         AttachRequest: {
-            item_key: components["schemas"]["ItemKey"];
+            /** @description Parent item for the attachment. Absent: the attachment is stored standalone (no parent item) in the collection selected in Zotero's pane, or in the library root when the selected row is not a collection. Present: it must name an existing item. */
+            item_key?: components["schemas"]["ItemKey"];
             title: components["schemas"]["NonBlankString"];
             file_path?: components["schemas"]["NonBlankString"];
             file_name?: components["schemas"]["NonBlankString"];
@@ -152,11 +156,14 @@ export interface components {
             /** @constant */
             handler: "fulltext-attach";
             details?: {
-                parent_item_key: string;
+                /** @description The request's item_key; null for a standalone attachment. */
+                parent_item_key: string | null;
                 file_path: string | null;
                 /** @enum {unknown} */
                 source_mode: "path" | "bytes" | "bytes_fallback";
                 title: string;
+                /** @description Collection a standalone attachment was stored in; null when it was stored in the library root or has a parent item. */
+                collection_key: string | null;
             };
         };
         WriteRequest: components["schemas"]["SyncRequest"] | components["schemas"]["RunJavascriptRequest"] | components["schemas"]["UpdateItemFieldsRequest"] | components["schemas"]["ReplaceItemJsonRequest"] | components["schemas"]["SetItemTagsRequest"] | components["schemas"]["AddItemTagsRequest"] | components["schemas"]["RemoveItemTagsRequest"] | components["schemas"]["SetItemCollectionsRequest"] | components["schemas"]["AddItemToCollectionRequest"] | components["schemas"]["RemoveItemFromCollectionRequest"] | components["schemas"]["AttachNoteRequest"] | components["schemas"]["UpdateNoteRequest"] | components["schemas"]["AttachUrlRequest"] | components["schemas"]["TrashItemRequest"] | components["schemas"]["TrashCollectionRequest"] | components["schemas"]["RelinkAttachmentFileRequest"] | components["schemas"]["CreateCollectionRequest"] | components["schemas"]["RenameCollectionRequest"] | components["schemas"]["MoveCollectionRequest"] | components["schemas"]["MergeCollectionsRequest"] | components["schemas"]["RenameTagRequest"] | components["schemas"]["MergeTagsRequest"] | components["schemas"]["DeleteTagRequest"] | components["schemas"]["DeleteUnusedTagsRequest"] | components["schemas"]["CopyItemRequest"] | components["schemas"]["MergeItemsRequest"] | components["schemas"]["CreateItemRequest"] | components["schemas"]["ImportBibtexRequest"] | components["schemas"]["ImportByIdentifierRequest"] | components["schemas"]["GetSelectedCollectionRequest"] | components["schemas"]["RestoreItemRequest"] | components["schemas"]["UpdateAttachmentTitleRequest"] | components["schemas"]["ImportFromUrlRequest"] | components["schemas"]["ResolveUrlRequest"];
@@ -1127,6 +1134,15 @@ export interface operations {
             };
             /** @description Parent item or file not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Standalone attachment requested while no Zotero window is open, so no pane selection exists. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -11,6 +11,7 @@ This script exercises the add-on against a real running Zotero instance:
 - create_item
 - import_bibtex
 - byte-backed PDF attach
+- standalone PDF attach into the selected collection and the library root
 - delete_tag
 - trash_item
 
@@ -273,6 +274,99 @@ def _cleanup_item(base_url: str, write_path: str, item_key: str | None) -> None:
     )
 
 
+def _select_pane_row(base_url: str, write_path: str, row_id: str) -> None:
+    """Select a row of Zotero's collection pane by its tree-row id ("L1", "C42", ...)."""
+    _run_javascript(
+        base_url,
+        write_path,
+        f"await Zotero.getActiveZoteroPane().collectionsView.selectByID({row_id!r}); return true;",
+        auth_headers=_WRITE_AUTH,
+    )
+
+
+def _store_standalone_pdf(base_url: str, attach_path: str, title: str) -> dict[str, Any]:
+    result = _post_attach(
+        base_url,
+        attach_path,
+        {
+            "title": title,
+            "file_name": "live-smoke-standalone.pdf",
+            "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
+        },
+    )
+    _require(result.get("success") is True, f"standalone /attach failed: {result!r}")
+    _require(
+        result["details"]["parent_item_key"] is None,
+        f"standalone /attach reported a parent: {result!r}",
+    )
+    return result
+
+
+def _prove_standalone_attach(
+    base_url: str,
+    write_path: str,
+    attach_path: str,
+    library_id: str,
+    suffix: str,
+    created: list[str],
+) -> None:
+    """/attach without item_key stores a parentless PDF where the pane points.
+
+    Both targets are proved: a selected collection, and the library root. The
+    user's pane selection is restored afterward. Every attachment key goes into
+    `created` as soon as it exists, so the caller trashes it on any failure.
+    """
+    original_row = _run_javascript(
+        base_url,
+        write_path,
+        "return Zotero.getActiveZoteroPane().getCollectionTreeRow().id;",
+        auth_headers=_WRITE_AUTH,
+    )
+    collection_result = _post_write(
+        base_url,
+        write_path,
+        {"operation": "create_collection", "name": f"live-smoke-standalone-{suffix}"},
+    )
+    _require(collection_result.get("success") is True, f"create_collection failed: {collection_result!r}")
+    collection_key = collection_result["details"]["collection_key"]
+    try:
+        collection_id = _run_javascript(
+            base_url,
+            write_path,
+            f"return Zotero.Collections.getByLibraryAndKey(Zotero.Libraries.userLibraryID, {collection_key!r}).id;",
+            auth_headers=_WRITE_AUTH,
+        )
+        user_library_id = _run_javascript(
+            base_url, write_path, "return Zotero.Libraries.userLibraryID;", auth_headers=_WRITE_AUTH
+        )
+        for row_id, expected_collections in (
+            (f"C{collection_id}", [collection_key]),
+            (f"L{user_library_id}", []),
+        ):
+            _select_pane_row(base_url, write_path, row_id)
+            title = f"Live Smoke Standalone {row_id} {suffix}"
+            result = _store_standalone_pdf(base_url, attach_path, title)
+            attachment_key = result["attachment_key"]
+            created.append(attachment_key)
+            expected_key = expected_collections[0] if expected_collections else None
+            _require(
+                result["details"]["collection_key"] == expected_key,
+                f"standalone /attach reported collection {result['details']['collection_key']!r}, expected {expected_key!r}",
+            )
+            stored = _get_item(base_url, library_id, attachment_key)["data"]
+            _require(stored["itemType"] == "attachment", f"standalone item is not an attachment: {stored!r}")
+            _require("parentItem" not in stored, f"standalone attachment has a parent: {stored!r}")
+            _require(stored["contentType"] == "application/pdf", f"standalone contentType mismatch: {stored!r}")
+            _require(stored["title"] == title, f"standalone title mismatch: {stored!r}")
+            _require(
+                stored["collections"] == expected_collections,
+                f"standalone attachment collections {stored['collections']!r}, expected {expected_collections!r}",
+            )
+    finally:
+        _select_pane_row(base_url, write_path, original_row)
+        _post_write(base_url, write_path, {"operation": "trash_collection", "collection_key": collection_key})
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.token:
         _WRITE_AUTH["Authorization"] = f"Bearer {args.token}"
@@ -283,6 +377,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     keep_tag = f"live-smoke-keep-{suffix}"
     item_key: str | None = None
     bibtex_item_key: str | None = None
+    standalone_keys: list[str] = []
     write_path = ""
 
     version_payload = _request_json("GET", f"{base_url}/version")
@@ -305,7 +400,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     _require("capabilities" in version_payload, f"Version probe did not include capabilities: {version_payload!r}")
     capabilities = version_payload["capabilities"]
     _require(isinstance(capabilities, list), f"Version probe capabilities is not a list: {version_payload!r}")
-    for capability in ("attach", "attach_bytes", "write", "version_probe", "import_bibtex"):
+    for capability in ("attach", "attach_bytes", "attach_standalone", "write", "version_probe", "import_bibtex"):
         _require(capability in capabilities, f"Missing required capability {capability!r}: {capabilities!r}")
 
     _prove_openapi_endpoint(base_url, write_path)
@@ -575,6 +670,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
         _post_write(base_url, write_path, {"operation": "trash_collection", "collection_key": parent_key})
 
+        _prove_standalone_attach(base_url, write_path, attach_path, library_id, suffix, standalone_keys)
+
         trash_result = _post_write(
             base_url,
             write_path,
@@ -596,10 +693,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "attachment_key": attachment_key,
             "deleted_tag": doomed_tag,
             "kept_tag": keep_tag,
+            "standalone_attachment_keys": standalone_keys,
         }
     finally:
         _cleanup_item(base_url, write_path, bibtex_item_key)
         _cleanup_item(base_url, write_path, item_key)
+        for standalone_key in standalone_keys:
+            _cleanup_item(base_url, write_path, standalone_key)
 
 
 def parse_args() -> argparse.Namespace:
