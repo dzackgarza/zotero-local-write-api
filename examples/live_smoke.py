@@ -456,20 +456,20 @@ def _select_pane_row(http: httpx.Client, write_path: str, row_id: str) -> None:
     )
 
 
+def _pdf_upload(title: str, file_name: str) -> JsonObject:
+    """The /attach body fields that upload PDF_BYTES inline."""
+    return {
+        "title": title,
+        "file_name": file_name,
+        "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
+    }
+
+
 def _store_standalone_pdf(
     http: httpx.Client, attach_path: str, title: str, placement: TypeAdapter[ResultT]
 ) -> ResultT:
     """POST a parentless PDF; `placement` rejects a response for any other placement."""
-    return _post_write(
-        http,
-        attach_path,
-        {
-            "title": title,
-            "file_name": "live-smoke-standalone.pdf",
-            "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
-        },
-        placement,
-    )
+    return _post_write(http, attach_path, _pdf_upload(title, "live-smoke-standalone.pdf"), placement)
 
 
 def _require_stored_standalone(
@@ -569,18 +569,13 @@ def _prove_import_bibtex(smoke: SmokeRun) -> str:
     return bibtex_item_key
 
 
-def _prove_child_attach(smoke: SmokeRun, item_key: str) -> str:
-    """/attach with item_key stores the uploaded bytes as a PDF child of that item.
-    Returns the attachment key."""
+def _attach_child_pdf(smoke: SmokeRun, item_key: str) -> str:
+    """/attach with item_key answers a child placement of the uploaded bytes under
+    that item. Returns the attachment key."""
     attach_result = _post_write(
         smoke.http,
         smoke.attach_path,
-        {
-            "item_key": item_key,
-            "title": "Live Smoke PDF",
-            "file_name": "live-smoke.pdf",
-            "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
-        },
+        {"item_key": item_key, **_pdf_upload("Live Smoke PDF", "live-smoke.pdf")},
         CHILD_ATTACH,
     )
     attachment_key = attach_result["attachment_key"]
@@ -593,7 +588,13 @@ def _prove_child_attach(smoke: SmokeRun, item_key: str) -> str:
         attach_result["details"]["source_mode"] == "bytes",
         f"Expected bytes source_mode, got: {attach_result!r}",
     )
+    return attachment_key
 
+
+def _prove_child_attach(smoke: SmokeRun, item_key: str) -> str:
+    """/attach with item_key stores the uploaded bytes as a PDF child of that item.
+    Returns the attachment key."""
+    attachment_key = _attach_child_pdf(smoke, item_key)
     children = _get_children(smoke.http, smoke.library_id, item_key)
     matches = [child for child in children if child["key"] == attachment_key]
     _require(len(matches) == 1, f"Attached PDF {attachment_key} not found once in children: {children!r}")
