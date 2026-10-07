@@ -308,6 +308,8 @@ schemathesis-fuzz-live:
 # and trashed afterwards.
 [doc("Live proof of the generated TypeScript client wrapper (MUTATING)")]
 client-live:
+    ZOTERO_LOCAL_BASE_URL="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}" \
+    ZOTERO_LIBRARY_ID="${ZOTERO_LIBRARY_ID:-0}" \
     bun run client:live
 
 # Live proof of import_from_url and resolve_url against a real Zotero and the

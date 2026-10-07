@@ -17,13 +17,12 @@
 import { afterAll, expect, test } from "bun:test";
 
 import { createZoteroLocalWriteClient } from "../../src/client";
+import { liveSetting } from "./settings";
 
-const BASE_URL = process.env.ZOTERO_LOCAL_BASE_URL ?? "http://127.0.0.1:23119";
-const LIBRARY_ID = process.env.ZOTERO_LIBRARY_ID ?? "0";
+const BASE_URL = liveSetting("ZOTERO_LOCAL_BASE_URL");
+const LIBRARY_ID = liveSetting("ZOTERO_LIBRARY_ID");
 
-// Passing the env var through undefined when unset also exercises the
-// wrapper's own default baseUrl, which is the common local path.
-const client = createZoteroLocalWriteClient(process.env.ZOTERO_LOCAL_BASE_URL);
+const client = createZoteroLocalWriteClient(BASE_URL);
 
 const uid = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
 const createdItemKeys: string[] = [];

@@ -19,17 +19,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 
 import { createZoteroLocalWriteClient } from "../../src/client";
+import { liveSetting } from "./settings";
 
-const client = createZoteroLocalWriteClient(process.env.ZOTERO_LOCAL_BASE_URL);
-
-/** A setting the `import-from-url-live` recipe names. */
-function liveSetting(name: "ZOTERO_LOCAL_BASE_URL" | "ZOTERO_LIBRARY_ID"): string {
-  const value = process.env[name];
-  if (value === undefined) {
-    throw new Error(`${name} is not set; run the suite through \`just import-from-url-live\``);
-  }
-  return value;
-}
+const client = createZoteroLocalWriteClient(liveSetting("ZOTERO_LOCAL_BASE_URL"));
 
 /** A URL under the library in Zotero's built-in read-only local API. */
 function libraryUrl(path: string): string {
