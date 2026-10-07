@@ -622,6 +622,7 @@ export interface components {
       operation?: "add_item_tags";
       details?: {
         item_key: string;
+        /** @description Tags that Zotero.Item.addTag changed on the item: tags the item did not carry, and automatic tags of the same name, which become manual tags. */
         added_tags: string[];
         total_tag_count: number;
       };

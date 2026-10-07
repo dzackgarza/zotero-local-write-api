@@ -86,41 +86,31 @@ export async function handleDeleteUnusedTags(_data: RequestData) {
   return successResult("delete_unused_tags", {});
 }
 
+// Zotero.Item.addTag returns false when the item already carries the tag as a
+// manual tag. It makes an automatic tag of the same name manual and returns
+// true, so that tag is reported as added.
 export async function handleAddItemTags(data: RequestData) {
   let itemKey = requireNonEmptyString(data.item_key, "item_key");
   let tagsToAdd = normalizeStringList(data.tags, "tags");
   let item = await getUserItemOrThrow(itemKey);
-  let existing = item.getTags() as TagEntry[];
-  let existingNames = new Set(existing.map((t) => t.tag));
-  let added: string[] = [];
-  for (let tag of tagsToAdd) {
-    if (!existingNames.has(tag)) {
-      existing.push({ tag: tag, type: 0 });
-      existingNames.add(tag);
-      added.push(tag);
-    }
-  }
-  item.setTags(existing);
+  let added = tagsToAdd.filter((tag) => item.addTag(tag));
   await item.saveTx();
   return successResult("add_item_tags", {
     item_key: itemKey,
     added_tags: added,
-    total_tag_count: existing.length,
+    total_tag_count: item.getTags().length,
   });
 }
 
 export async function handleRemoveItemTags(data: RequestData) {
   let itemKey = requireNonEmptyString(data.item_key, "item_key");
-  let tagsToRemove = new Set(normalizeStringList(data.tags, "tags"));
+  let tagsToRemove = normalizeStringList(data.tags, "tags");
   let item = await getUserItemOrThrow(itemKey);
-  let allTags = item.getTags() as TagEntry[];
-  let removedCount = allTags.filter((t) => tagsToRemove.has(t.tag)).length;
-  let filtered = allTags.filter((t) => !tagsToRemove.has(t.tag));
-  item.setTags(filtered);
+  let removedCount = tagsToRemove.filter((tag) => item.removeTag(tag)).length;
   await item.saveTx();
   return successResult("remove_item_tags", {
     item_key: itemKey,
     removed_count: removedCount,
-    remaining_tag_count: filtered.length,
+    remaining_tag_count: item.getTags().length,
   });
 }

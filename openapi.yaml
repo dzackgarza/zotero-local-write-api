@@ -1053,6 +1053,7 @@ components:
                   type: array
                   items:
                     type: string
+                  description: 'Tags that Zotero.Item.addTag changed on the item: tags the item did not carry, and automatic tags of the same name, which become manual tags.'
                 total_tag_count:
                   type: integer
       unevaluatedProperties: false
