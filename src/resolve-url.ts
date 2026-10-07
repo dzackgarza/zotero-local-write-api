@@ -5,6 +5,7 @@ import { fetchSource, requireHttpUrl } from "./source-fetch";
 import { identifierText, identifyByIdentifier } from "./source-methods";
 import {
   type Attempt,
+  type FetchedSource,
   type Identification,
   type MethodResult,
   recordAttempt,
@@ -67,8 +68,7 @@ async function recognizeWithoutSaving(
   }
 }
 
-async function resolvePdfSource(
-  requestedUrl: string,
+async function resolveByRecognition(
   finalUrl: string,
   attempts: Attempt[],
 ): Promise<Resolution | null> {
@@ -77,36 +77,47 @@ async function resolvePdfSource(
     "pdf_recognition",
     await recognizeWithoutSaving(finalUrl),
   );
+  return recognized === null
+    ? null
+    : { csl: recognized.csl, itemType: recognized.itemType, method: "pdf_recognition", translator: null };
+}
+
+async function resolvePdfSource(
+  requestedUrl: string,
+  finalUrl: string,
+  attempts: Attempt[],
+): Promise<Resolution | null> {
+  let recognized = await resolveByRecognition(finalUrl, attempts);
   if (recognized) {
-    return {
-      csl: recognized.csl,
-      itemType: recognized.itemType,
-      method: "pdf_recognition",
-      translator: null,
-    };
+    return recognized;
   }
   let byIdentifier = recordAttempt(
     attempts,
     "identifier",
     await identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
   );
-  if (byIdentifier) {
-    return resolveIdentification({ ...byIdentifier, method: "identifier" });
+  return byIdentifier === null
+    ? null
+    : resolveIdentification({ ...byIdentifier, method: "identifier" });
+}
+
+async function resolveSource(
+  url: string,
+  source: FetchedSource,
+  attempts: Attempt[],
+): Promise<Resolution | null> {
+  if (source.kind === "pdf") {
+    return resolvePdfSource(url, source.finalUrl, attempts);
   }
-  return null;
+  let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
+  return identification === null ? null : resolveIdentification(identification);
 }
 
 export async function handleResolveUrl(data: RequestData) {
   let url = requireHttpUrl(data.url);
   let attempts: Attempt[] = [];
   let source = await fetchSource(url);
-  let resolution: Resolution | null;
-  if (source.kind === "pdf") {
-    resolution = await resolvePdfSource(url, source.finalUrl, attempts);
-  } else {
-    let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
-    resolution = identification === null ? null : resolveIdentification(identification);
-  }
+  let resolution = await resolveSource(url, source, attempts);
   if (resolution === null) {
     throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
   }

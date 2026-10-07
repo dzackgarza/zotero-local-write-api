@@ -21,6 +21,11 @@ let EMBEDDED_METADATA_TRANSLATOR_ID = "951c027d-74ac-47d4-a107-9c3069ab7b48";
 
 type PageIdentification = Identification & { method: SourceMethod };
 
+// Records that a method had nothing to work on.
+function recordNoMatch(attempts: Attempt[], method: SourceMethod, message: string): void {
+  attempts.push({ method, outcome: "no_match", message });
+}
+
 async function identifyBySiteTranslator(
   page: Document,
   detected: WebTranslatorInfo[],
@@ -30,11 +35,7 @@ async function identifyBySiteTranslator(
     (translator) => translator.translatorID !== EMBEDDED_METADATA_TRANSLATOR_ID,
   );
   if (siteTranslators.length === 0) {
-    attempts.push({
-      method: "web_translator",
-      outcome: "no_match",
-      message: "no site translator detected the page",
-    });
+    recordNoMatch(attempts, "web_translator", "no site translator detected the page");
   }
   for (let translator of siteTranslators) {
     let item = await translatePage(page, translator);
@@ -57,11 +58,7 @@ async function identifyByPageMetadata(
     (translator) => translator.translatorID === EMBEDDED_METADATA_TRANSLATOR_ID,
   );
   if (embedded === undefined) {
-    attempts.push({
-      method: "page_metadata",
-      outcome: "no_match",
-      message: "the page carries no embedded citation metadata",
-    });
+    recordNoMatch(attempts, "page_metadata", "the page carries no embedded citation metadata");
     return { found: null, seed: null };
   }
   let item = await translatePage(page, embedded);
@@ -77,11 +74,7 @@ async function identifyByServices(
   attempts: Attempt[],
 ): Promise<PageIdentification | null> {
   if (seed === null) {
-    attempts.push({
-      method: "external_service",
-      outcome: "no_match",
-      message: "the page names no title and author to search for",
-    });
+    recordNoMatch(attempts, "external_service", "the page names no title and author to search for");
     return null;
   }
   for (let service of EXTERNAL_SERVICES) {
@@ -91,6 +84,39 @@ async function identifyByServices(
     }
   }
   return null;
+}
+
+async function identifyByPageIdentifier(
+  requestedUrl: string,
+  finalUrl: string,
+  page: Document,
+  attempts: Attempt[],
+): Promise<PageIdentification | null> {
+  let found = recordAttempt(
+    attempts,
+    "identifier",
+    await identifyByIdentifier(identifierText([requestedUrl, finalUrl], page)),
+  );
+  return found === null ? null : { ...found, method: "identifier" };
+}
+
+// An identifier in the URLs or the page, then the BibTeX record the page links to.
+async function identifyByPublishedRecord(
+  requestedUrl: string,
+  finalUrl: string,
+  page: Document,
+  attempts: Attempt[],
+): Promise<PageIdentification | null> {
+  let byIdentifier = await identifyByPageIdentifier(requestedUrl, finalUrl, page, attempts);
+  if (byIdentifier) {
+    return byIdentifier;
+  }
+  let byBibTeX = recordAttempt(
+    attempts,
+    "published_bibtex",
+    await identifyByPublishedBibTeX(page, finalUrl),
+  );
+  return byBibTeX === null ? null : { ...byBibTeX, method: "published_bibtex" };
 }
 
 export async function identifyPage(
@@ -104,29 +130,10 @@ export async function identifyPage(
   if (bySiteTranslator) {
     return bySiteTranslator;
   }
-
   let byPageMetadata = await identifyByPageMetadata(page, detected, attempts);
   if (byPageMetadata.found) {
     return byPageMetadata.found;
   }
-
-  let byIdentifier = recordAttempt(
-    attempts,
-    "identifier",
-    await identifyByIdentifier(identifierText([requestedUrl, finalUrl], page)),
-  );
-  if (byIdentifier) {
-    return { ...byIdentifier, method: "identifier" };
-  }
-
-  let byBibTeX = recordAttempt(
-    attempts,
-    "published_bibtex",
-    await identifyByPublishedBibTeX(page, finalUrl),
-  );
-  if (byBibTeX) {
-    return { ...byBibTeX, method: "published_bibtex" };
-  }
-
-  return identifyByServices(byPageMetadata.seed, attempts);
+  let byPublishedRecord = await identifyByPublishedRecord(requestedUrl, finalUrl, page, attempts);
+  return byPublishedRecord ?? identifyByServices(byPageMetadata.seed, attempts);
 }
