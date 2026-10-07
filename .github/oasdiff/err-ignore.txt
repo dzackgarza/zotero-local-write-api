@@ -1,0 +1,3 @@
+POST /attach added `#/components/schemas/ItemKey` to the `item_key` request property `allOf` list
+POST /attach the response property `allOf[subschema #2]/details/parent_item_key` became nullable for the status `200`
+POST /write added `#/components/schemas/ImportFromUrlSuccess, #/components/schemas/ResolveUrlSuccess` to the response body `oneOf` list for the response status `200`

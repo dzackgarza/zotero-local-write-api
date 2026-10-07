@@ -86,12 +86,17 @@ jobs:
           spec: openapi.yaml
           fail-on: WARN
 
+      # Every breaking change fails unless a line in .github/oasdiff/{err,warn}-ignore.txt
+      # names it: "METHOD /path" followed by oasdiff's message for that change. A line
+      # accepts one intended contract change for the PR that makes it.
       - name: Breaking-change check vs base
         uses: oasdiff/oasdiff-action/breaking@033c15c845bef10f148afb0fa781bf1b2a7fe1bf # v0
         with:
           base: ${{ steps.base.outputs.path }}
           revision: openapi.yaml
           fail-on: WARN
+          err-ignore: .github/oasdiff/err-ignore.txt
+          warn-ignore: .github/oasdiff/warn-ignore.txt
 
       - name: Changelog (markdown)
         uses: oasdiff/oasdiff-action/changelog@033c15c845bef10f148afb0fa781bf1b2a7fe1bf # v0

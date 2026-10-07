@@ -1,0 +1,4 @@
+GET /version added the new `attach_standalone` enum value to the `capabilities/items/` response property for the response status `200`
+GET /version added the new `import_from_url` enum value to the `capabilities/items/` response property for the response status `200`
+GET /version added the new `openapi_spec` enum value to the `capabilities/items/` response property for the response status `200`
+GET /version added the new `resolve_url` enum value to the `capabilities/items/` response property for the response status `200`
