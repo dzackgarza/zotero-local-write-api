@@ -185,8 +185,8 @@ class JavascriptSuccess(Ack, Generic[ResultT]):
 
 class Tag(TypedDict):
     tag: str
-    # Zotero writes `type` only for an automatic tag (type 1).
-    type: NotRequired[int]
+    # Zotero writes `type` only for an automatic tag, as 1, and omits it for a manual tag.
+    type: NotRequired[Literal[1]]
 
 
 class ChildItemData(TypedDict):
@@ -705,11 +705,11 @@ def _prove_add_item_tags(smoke: SmokeRun, item_key: str, tag: str) -> None:
     _require(_add_item_tags(smoke, item_key, tag) == [], "add_item_tags reported a tag the item already had")
 
 
-def _tag_type(smoke: SmokeRun, item_key: str, name: str) -> int:
-    """The type of the item's tag of that name: 0 manual, 1 automatic."""
+def _tag_type(smoke: SmokeRun, item_key: str, name: str) -> Literal["manual", "automatic"]:
+    """The type of the item's tag of that name."""
     tags = [tag for tag in smoke.item(item_key)["data"]["tags"] if tag["tag"] == name]
     _require(len(tags) == 1, f"expected one tag {name!r} on {item_key}, got {tags!r}")
-    return tags[0].get("type", 0)
+    return "automatic" if "type" in tags[0] else "manual"
 
 
 def _prove_automatic_tag_becomes_manual(smoke: SmokeRun, item_key: str, tag: str) -> None:
@@ -722,9 +722,9 @@ def _prove_automatic_tag_becomes_manual(smoke: SmokeRun, item_key: str, tag: str
         "return true;"
     )
     _run_javascript(smoke.http, smoke.write_path, code, JS_TRUE)
-    _require(_tag_type(smoke, item_key, tag) == 1, "the automatic tag was not stored as automatic")
+    _require(_tag_type(smoke, item_key, tag) == "automatic", "the automatic tag was not stored as automatic")
     _require(_add_item_tags(smoke, item_key, tag) == [tag], "add_item_tags did not report the automatic tag")
-    _require(_tag_type(smoke, item_key, tag) == 0, "add_item_tags left the tag automatic")
+    _require(_tag_type(smoke, item_key, tag) == "manual", "add_item_tags left the tag automatic")
 
 
 def _prove_set_item_tags(smoke: SmokeRun, item_key: str, tags: list[str]) -> None:
