@@ -697,7 +697,10 @@ async function storeAttachmentFile(
     );
   }
   try {
-    return { attachment: await importStoredAttachment(target, filePath, title), sourceMode: "path" };
+    return {
+      attachment: await importStoredAttachment(target, filePath, title),
+      sourceMode: "path",
+    };
   } catch (error) {
     if (bytes === null || !isUnusableFilePathError(error)) {
       throw error;
