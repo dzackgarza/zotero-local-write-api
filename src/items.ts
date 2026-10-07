@@ -40,16 +40,20 @@ export async function handleReplaceItemJSON(data: RequestData) {
   });
 }
 
-export async function handleAttachNote(data: RequestData) {
-  let parentItemKey = requireNonEmptyString(data.parent_item_key, "parent_item_key");
-  let noteText = requireString(data.note_text, "note_text");
-  let parentItem = await getUserItemOrThrow(parentItemKey);
-
+async function saveChildNote(parentItem: Zotero.Item, noteText: string): Promise<Zotero.Item> {
   let noteItem = new Zotero.Item("note");
   noteItem.libraryID = parentItem.libraryID;
   noteItem.parentID = parentItem.id;
   noteItem.setNote(noteText);
   await noteItem.saveTx();
+  return noteItem;
+}
+
+export async function handleAttachNote(data: RequestData) {
+  let parentItemKey = requireNonEmptyString(data.parent_item_key, "parent_item_key");
+  let noteText = requireString(data.note_text, "note_text");
+  let parentItem = await getUserItemOrThrow(parentItemKey);
+  let noteItem = await saveChildNote(parentItem, noteText);
 
   return successResult(
     "attach_note",
@@ -58,10 +62,7 @@ export async function handleAttachNote(data: RequestData) {
       note_length: noteText.length,
       title: typeof data.title === "string" ? data.title : null,
     },
-    {
-      note_key: noteItem.key,
-      note_id: noteItem.id,
-    },
+    { note_key: noteItem.key, note_id: noteItem.id },
   );
 }
 
