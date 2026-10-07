@@ -68,24 +68,21 @@ function parseConfig(): ConfigDoc {
   return yaml.load(source) as ConfigDoc;
 }
 
+// The object literal a declaration initializes, when the declaration is writeHandlers
+function writeHandlersTable(declaration: ts.VariableDeclaration): ts.ObjectLiteralExpression[] {
+  const initializer = declaration.initializer;
+  const isNamed = ts.isIdentifier(declaration.name) && declaration.name.text === "writeHandlers";
+  return isNamed && initializer !== undefined && ts.isObjectLiteralExpression(initializer)
+    ? [initializer]
+    : [];
+}
+
 // Find the writeHandlers table that runWrite dispatches through
 function findWriteHandlers(sources: ts.SourceFile[]): ts.ObjectLiteralExpression {
-  const tables: ts.ObjectLiteralExpression[] = [];
-  for (const statement of sources.flatMap((source) => [...source.statements])) {
-    if (!ts.isVariableStatement(statement)) {
-      continue;
-    }
-    for (const declaration of statement.declarationList.declarations) {
-      if (
-        ts.isIdentifier(declaration.name) &&
-        declaration.name.text === "writeHandlers" &&
-        declaration.initializer &&
-        ts.isObjectLiteralExpression(declaration.initializer)
-      ) {
-        tables.push(declaration.initializer);
-      }
-    }
-  }
+  const tables = sources
+    .flatMap((source) => [...source.statements])
+    .filter(ts.isVariableStatement)
+    .flatMap((statement) => statement.declarationList.declarations.flatMap(writeHandlersTable));
   if (tables.length !== 1) {
     throw new Error(`Expected one writeHandlers object literal in src/, found ${tables.length}`);
   }
