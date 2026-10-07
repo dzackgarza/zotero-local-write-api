@@ -34,7 +34,10 @@ export function bearerAuthFailure(request: EndpointRequest): EndpointResult | nu
   if (token === null) {
     return prefText(PUBLIC_BASE_URL_PREF) === null
       ? null
-      : bearerDenied(request, "Write API is published via publicBaseURL but no token is configured");
+      : bearerDenied(
+          request,
+          "Write API is published via publicBaseURL but no token is configured",
+        );
   }
   if (secretEquals(request.headers.authorization, "Bearer " + token)) {
     return null;
