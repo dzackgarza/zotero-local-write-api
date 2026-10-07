@@ -85,17 +85,24 @@ export async function handleUpdateNote(data: RequestData) {
   });
 }
 
+function linkURLAttachment(
+  parentItem: Zotero.Item,
+  url: string,
+  title: string | null,
+): Promise<Zotero.Item> {
+  return Zotero.Attachments.linkFromURL({
+    url: url,
+    parentItemID: parentItem.id,
+    title: title,
+  });
+}
+
 export async function handleAttachURL(data: RequestData) {
   let parentItemKey = requireNonEmptyString(data.parent_item_key, "parent_item_key");
   let url = requireNonEmptyString(data.url, "url");
   let parentItem = await getUserItemOrThrow(parentItemKey);
   let title = typeof data.title === "string" && data.title.trim() ? data.title.trim() : null;
-
-  let attachment = await Zotero.Attachments.linkFromURL({
-    url: url,
-    parentItemID: parentItem.id,
-    title: title,
-  });
+  let attachment = await linkURLAttachment(parentItem, url, title);
 
   return successResult(
     "attach_url",
@@ -105,10 +112,7 @@ export async function handleAttachURL(data: RequestData) {
       // Report the requested title, or the title Zotero auto-assigned when none was given.
       title: title === null ? attachment.getField("title") : title,
     },
-    {
-      attachment_key: attachment.key,
-      attachment_id: attachment.id,
-    },
+    { attachment_key: attachment.key, attachment_id: attachment.id },
   );
 }
 
