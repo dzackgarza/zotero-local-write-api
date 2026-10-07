@@ -1679,7 +1679,10 @@ async function fetchSource(url: string): Promise<FetchedSource> {
 function finalResponseUrl(xhr: XMLHttpRequest, url: string): string {
   if (xhr.responseURL === "") {
     throw new Error(
-      "Zotero.HTTP.request resolved GET " + url + " (status " + String(xhr.status) +
+      "Zotero.HTTP.request resolved GET " +
+        url +
+        " (status " +
+        String(xhr.status) +
         ") with no responseURL; inspect request() in zotero/zotero chrome/content/zotero/xpcom/http.js",
     );
   }
@@ -1688,7 +1691,11 @@ function finalResponseUrl(xhr: XMLHttpRequest, url: string): string {
 
 // A response is a PDF when it declares the PDF type, or when it is not a parsed
 // document and its final path names a PDF file.
-function isPdfResponse(contentType: string | null, page: Document | null, finalUrl: string): boolean {
+function isPdfResponse(
+  contentType: string | null,
+  page: Document | null,
+  finalUrl: string,
+): boolean {
   if (contentType !== null && /application\/pdf/i.test(contentType)) {
     return true;
   }
