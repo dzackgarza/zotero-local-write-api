@@ -340,7 +340,7 @@ components:
 
       allOf:
         - description: >
-            Either file_path is present, or both file_name and file_bytes_base64 are present. This allows path-only, bytes-only, and path+bytes fallback (where file_name is optional because runtime can use the path basename).
+            Either file_path is present, or both file_name and file_bytes_base64 are present. When file_bytes_base64 is present, those bytes are stored and file_path is not read; file_name may then be absent when file_path is present, and the path basename names the file.
 
           anyOf:
             - required:
@@ -389,7 +389,7 @@ components:
                   enum:
                     - path
                     - bytes
-                    - bytes_fallback
+                  description: 'bytes: the request carried file_bytes_base64 and those bytes were stored. path: the request carried file_path alone and that file was read.'
                 title:
                   type: string
                 collection_key:

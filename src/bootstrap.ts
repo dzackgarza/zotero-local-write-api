@@ -549,24 +549,6 @@ function resolveAttachFilePath(filePath: string): string {
   return file.path;
 }
 
-// XPCOM file errors all sit in the NS_ERROR_MODULE_FILES block, so matching the module
-// covers every way a path can fail to resolve rather than the single name that was
-// previously substring-matched out of the message text. Values read from this runtime
-// via Cr: NOT_FOUND 0x80520012, UNRECOGNIZED_PATH 0x80520001, INVALID_PATH 0x80520009,
-// NOT_DIRECTORY 0x8052000c, NAME_TOO_LONG 0x80520011, ACCESS_DENIED 0x80520015 — only
-// the first of which used to engage the caller-supplied-bytes path.
-let NS_ERROR_MODULE_FILES_FIRST = 0x80520000;
-let NS_ERROR_MODULE_FILES_LAST = 0x8052ffff;
-
-function isUnusableFilePathError(error: unknown): boolean {
-  let result = (error as { result?: unknown }).result;
-  if (typeof result !== "number") {
-    return false;
-  }
-  let code = result >>> 0;
-  return code >= NS_ERROR_MODULE_FILES_FIRST && code <= NS_ERROR_MODULE_FILES_LAST;
-}
-
 async function materializeUploadBytes(fileName: string, fileBytesBase64: string) {
   let tempDir = Zotero.getTempDirectory();
   let safeFileName = Zotero.File.getValidFileName(fileName.trim());
@@ -657,11 +639,10 @@ async function importStoredAttachment(
   return attachment;
 }
 
-// The file an /attach request stores: a path on this machine, which may come with the same
-// file's bytes for when the path is unusable, or the bytes alone.
+// The file an /attach request stores: the request's bytes, or a path on this machine.
 type AttachSource =
   | { kind: "bytes"; fileName: string; bytes: string }
-  | { kind: "path"; filePath: string; fileName: string | null; bytes: string | null };
+  | { kind: "path"; filePath: string };
 
 async function importUploadedBytes(
   target: AttachTarget,
@@ -681,37 +662,55 @@ async function importUploadedBytes(
   }
 }
 
+// Bytes in the request are the file's content and are stored as sent; their name is
+// file_name, or the basename of file_path when file_name is absent.
+function attachSource(
+  filePath: string | null,
+  fileName: string | null,
+  bytes: string | null,
+): AttachSource {
+  if (bytes === null) {
+    if (filePath === null) {
+      throw badRequest("Either file_path or file_bytes_base64 must be provided");
+    }
+    return { kind: "path", filePath };
+  }
+  let name = fileName ?? (filePath === null ? null : Zotero.File.pathToFile(filePath).leafName);
+  if (name === null) {
+    throw badRequest("file_name must be a non-empty string");
+  }
+  return { kind: "bytes", fileName: name, bytes };
+}
+
+// The TypeScript handbook's exhaustiveness check (Narrowing, "Exhaustiveness checking"):
+// a switch arm reaches this only when a union variant has no case.
+function assertNever(value: never): never {
+  throw new Error("Unhandled variant: " + JSON.stringify(value));
+}
+
 async function storeAttachmentFile(
   target: AttachTarget,
   title: string,
   source: AttachSource,
-): Promise<{ attachment: Zotero.Item; sourceMode: string }> {
-  if (source.kind === "bytes") {
-    return {
-      attachment: await importUploadedBytes(target, title, source.fileName, source.bytes),
-      sourceMode: "bytes",
-    };
-  }
-  let { filePath, fileName, bytes } = source;
-  if (!FULLTEXT_ALLOWED_DIRS.some((dir) => filePath.startsWith(dir))) {
-    throw badRequest(
-      "File path must be within allowed directories: " + FULLTEXT_ALLOWED_DIRS.join(", "),
-    );
-  }
-  try {
-    return {
-      attachment: await importStoredAttachment(target, filePath, title),
-      sourceMode: "path",
-    };
-  } catch (error) {
-    if (bytes === null || !isUnusableFilePathError(error)) {
-      throw error;
-    }
-    let fallbackName = fileName !== null ? fileName : Zotero.File.pathToFile(filePath).leafName;
-    return {
-      attachment: await importUploadedBytes(target, title, fallbackName, bytes),
-      sourceMode: "bytes_fallback",
-    };
+): Promise<{ attachment: Zotero.Item; sourceMode: AttachSource["kind"] }> {
+  switch (source.kind) {
+    case "bytes":
+      return {
+        attachment: await importUploadedBytes(target, title, source.fileName, source.bytes),
+        sourceMode: "bytes",
+      };
+    case "path":
+      if (!FULLTEXT_ALLOWED_DIRS.some((dir) => source.filePath.startsWith(dir))) {
+        throw badRequest(
+          "File path must be within allowed directories: " + FULLTEXT_ALLOWED_DIRS.join(", "),
+        );
+      }
+      return {
+        attachment: await importStoredAttachment(target, source.filePath, title),
+        sourceMode: "path",
+      };
+    default:
+      return assertNever(source);
   }
 }
 
@@ -736,19 +735,8 @@ async function handleFulltextAttach(data: RequestData) {
   let fileName = optionalNonEmptyString(data.file_name);
   let fileBytesBase64 = optionalNonEmptyString(data.file_bytes_base64);
 
-  if (filePath === null && fileBytesBase64 === null) {
-    throw badRequest("Either file_path or file_bytes_base64 must be provided");
-  }
-
+  let source = attachSource(filePath, fileName, fileBytesBase64);
   let { target, collection } = await attachTarget(itemKey);
-  let source: AttachSource =
-    filePath === null
-      ? {
-          kind: "bytes",
-          fileName: requireNonEmptyString(data.file_name, "file_name"),
-          bytes: requireNonEmptyString(data.file_bytes_base64, "file_bytes_base64"),
-        }
-      : { kind: "path", filePath, fileName, bytes: fileBytesBase64 };
   let { attachment, sourceMode } = await storeAttachmentFile(target, title, source);
 
   return successResult(

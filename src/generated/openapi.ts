@@ -176,8 +176,11 @@ export interface components {
         /** @description The request's item_key; null for a standalone attachment. */
         parent_item_key: string | null;
         file_path: string | null;
-        /** @enum {unknown} */
-        source_mode: "path" | "bytes" | "bytes_fallback";
+        /**
+         * @description bytes: the request carried file_bytes_base64 and those bytes were stored. path: the request carried file_path alone and that file was read.
+         * @enum {unknown}
+         */
+        source_mode: "path" | "bytes";
         title: string;
         /** @description Collection a standalone attachment was stored in; null when it was stored in the library root or has a parent item. */
         collection_key: string | null;

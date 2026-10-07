@@ -102,7 +102,7 @@ const bytesOnly: AttachRequestBody = {
   file_bytes_base64: "JVBERi0xLjQK",
 };
 
-// path + bytes fallback
+// path + bytes: the bytes are stored, the path names the file
 const pathPlusBytes: AttachRequestBody = {
   item_key: "ABC123",
   title: "paper.pdf",
