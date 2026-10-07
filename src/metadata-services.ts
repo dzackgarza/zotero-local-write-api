@@ -90,13 +90,17 @@ function atomText(element: Element, name: string): string | null {
   return text === undefined || text === null ? null : text.trim();
 }
 
-function arxivCandidate(entry: Element): ServiceCandidate | null {
-  let title = atomText(entry, "title");
-  let id = atomText(entry, "id");
-  let authors = [...entry.getElementsByTagNameNS(ATOM_NS, "author")].flatMap((author) => {
+function atomAuthors(entry: Element): string[] {
+  return [...entry.getElementsByTagNameNS(ATOM_NS, "author")].flatMap((author) => {
     let name = atomText(author, "name");
     return name === null ? [] : [name];
   });
+}
+
+function arxivCandidate(entry: Element): ServiceCandidate | null {
+  let title = atomText(entry, "title");
+  let id = atomText(entry, "id");
+  let authors = atomAuthors(entry);
   if (title === null || id === null || authors.length === 0) {
     return null;
   }
@@ -110,17 +114,20 @@ function arxivCandidate(entry: Element): ServiceCandidate | null {
   };
 }
 
+// The first ISBN of the edition Open Library ranks first; the other ISBNs of
+// that edition are its other formats.
+function firstEditionIsbn(work: OpenLibraryWork): string | undefined {
+  let isbns = work.editions?.docs?.[0]?.isbn;
+  return isbns === undefined
+    ? undefined
+    : isbns.map((value) => Zotero.Utilities.cleanISBN(value)).find((value) => value !== false);
+}
+
 function openLibraryCandidate(work: OpenLibraryWork): ServiceCandidate | null {
   if (work.title === undefined || work.author_name === undefined) {
     return null;
   }
-  // The first ISBN of the edition Open Library ranks first; the other ISBNs of
-  // that edition are its other formats.
-  let isbns = work.editions?.docs?.[0]?.isbn;
-  let isbn =
-    isbns === undefined
-      ? undefined
-      : isbns.map((value) => Zotero.Utilities.cleanISBN(value)).find((value) => value !== false);
+  let isbn = firstEditionIsbn(work);
   return {
     title: work.title,
     authors: work.author_name,

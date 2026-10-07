@@ -79,21 +79,20 @@ function htmlElements(page: Document, name: string): Element[] {
 export function identifierText(urls: string[], page: Document | null): string {
   let parts: string[] = [];
   for (let url of urls) {
-    parts.push(url);
-    for (let value of new URL(url).searchParams.values()) {
-      parts.push(value);
-    }
+    parts.push(url, ...new URL(url).searchParams.values());
   }
   if (page !== null) {
-    for (let meta of htmlElements(page, "meta")) {
-      let content = meta.getAttribute("content");
-      if (content === null || meta.getAttribute("name")?.toLowerCase() === "citation_reference") {
-        continue;
-      }
-      parts.push(content);
-    }
+    parts.push(...metaContents(page));
   }
   return parts.join("\n");
+}
+
+function metaContents(page: Document): string[] {
+  return htmlElements(page, "meta").flatMap((meta) => {
+    let content = meta.getAttribute("content");
+    let isReference = meta.getAttribute("name")?.toLowerCase() === "citation_reference";
+    return content === null || isReference ? [] : [content];
+  });
 }
 
 export function identifierKey(identifier: Identifier): string {

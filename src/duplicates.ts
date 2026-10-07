@@ -41,26 +41,35 @@ export function duplicateKeysFromItem(item: Zotero.Item): DuplicateKeys {
   };
 }
 
-async function fieldRows(field: string, itemType: string | null): Promise<ItemValueRow[]> {
+function requireFieldID(field: string): number {
   let fieldID = (Zotero.ItemFields as ItemFieldsApi).getID(field);
   if (fieldID === false) {
     throw new Error("Zotero has no field " + field);
   }
-  let params: number[] = [userLibraryID(), fieldID];
+  return fieldID;
+}
+
+function requireItemTypeID(itemType: string): number {
+  let itemTypeID = Zotero.ItemTypes.getID(itemType);
+  if (itemTypeID === false) {
+    throw new Error("Zotero has no item type " + itemType);
+  }
+  return itemTypeID;
+}
+
+// The value of the field in each live item of the user library, of the given type if any.
+// queryAsync answers a SELECT with its rows; undefined is only for other statements.
+async function fieldRows(field: string, itemType: string | null): Promise<ItemValueRow[]> {
+  let params: number[] = [userLibraryID(), requireFieldID(field)];
   let sql =
     "SELECT itemID, value FROM items JOIN itemData USING (itemID) " +
     "JOIN itemDataValues USING (valueID) " +
     "WHERE libraryID=? AND fieldID=? " +
     "AND itemID NOT IN (SELECT itemID FROM deletedItems)";
   if (itemType !== null) {
-    let itemTypeID = Zotero.ItemTypes.getID(itemType);
-    if (itemTypeID === false) {
-      throw new Error("Zotero has no item type " + itemType);
-    }
     sql += " AND itemTypeID=?";
-    params.push(itemTypeID);
+    params.push(requireItemTypeID(itemType));
   }
-  // queryAsync answers a SELECT with its rows; undefined is only for other statements.
   let rows = await Zotero.DB.queryAsync(sql, params);
   if (rows === undefined) {
     throw new Error("Zotero answered a SELECT with no rows array");
