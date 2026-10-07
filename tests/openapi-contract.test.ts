@@ -8,22 +8,28 @@ import * as ts from "typescript";
 const yaml = require("js-yaml");
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
-const BOOTSTRAP_PATH = path.join(REPO_ROOT, "src", "bootstrap.ts");
+const SRC_DIR = path.join(REPO_ROOT, "src");
 const OPENAPI_PATH = path.join(REPO_ROOT, "openapi.yaml");
 const CONFIG_PATH = path.join(REPO_ROOT, "config.yml");
 const VERSION_PATH = path.join(REPO_ROOT, "VERSION");
 
 // ── Helpers ────────────────────────────────────────────────────
 
-function parseBootstrap(): ts.SourceFile {
-  const source = fs.readFileSync(BOOTSTRAP_PATH, "utf8");
-  return ts.createSourceFile(
-    "bootstrap.ts",
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+// Every add-on source module that esbuild bundles into bootstrap.js. The
+// generated OpenAPI types and the ambient declarations hold no handlers.
+function parseSources(): ts.SourceFile[] {
+  return fs
+    .readdirSync(SRC_DIR)
+    .filter((name) => name.endsWith(".ts") && !name.endsWith(".d.ts"))
+    .map((name) =>
+      ts.createSourceFile(
+        name,
+        fs.readFileSync(path.join(SRC_DIR, name), "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TS,
+      ),
+    );
 }
 
 // Minimal structural view of the parts of the spec these tests navigate.
@@ -63,8 +69,9 @@ function parseConfig(): ConfigDoc {
 }
 
 // Find the writeHandlers table that runWrite dispatches through
-function findWriteHandlers(source: ts.SourceFile): ts.ObjectLiteralExpression {
-  for (const statement of source.statements) {
+function findWriteHandlers(sources: ts.SourceFile[]): ts.ObjectLiteralExpression {
+  const tables: ts.ObjectLiteralExpression[] = [];
+  for (const statement of sources.flatMap((source) => [...source.statements])) {
     if (!ts.isVariableStatement(statement)) {
       continue;
     }
@@ -75,11 +82,34 @@ function findWriteHandlers(source: ts.SourceFile): ts.ObjectLiteralExpression {
         declaration.initializer &&
         ts.isObjectLiteralExpression(declaration.initializer)
       ) {
-        return declaration.initializer;
+        tables.push(declaration.initializer);
       }
     }
   }
-  throw new Error("Could not find the writeHandlers object literal in bootstrap.ts");
+  if (tables.length !== 1) {
+    throw new Error(`Expected one writeHandlers object literal in src/, found ${tables.length}`);
+  }
+  return tables[0];
+}
+
+// Find the one top-level declaration of a handler across the source modules
+function findHandler(sources: ts.SourceFile[], handlerName: string): ts.Statement {
+  const found = sources
+    .flatMap((source) => [...source.statements])
+    .filter(
+      (statement) =>
+        (ts.isFunctionDeclaration(statement) && statement.name?.text === handlerName) ||
+        (ts.isVariableStatement(statement) &&
+          statement.declarationList.declarations.some(
+            (d) => ts.isIdentifier(d.name) && d.name.text === handlerName,
+          )),
+    );
+  if (found.length !== 1) {
+    throw new Error(
+      `Expected one top-level declaration of handler "${handlerName}" in src/, found ${found.length}`,
+    );
+  }
+  return found[0];
 }
 
 // Extract each operation name and the handler it dispatches to
@@ -101,74 +131,57 @@ function extractWriteHandlers(
 }
 
 // Find the handler function and extract data.<field> reads
-function extractHandlerFields(source: ts.SourceFile, handlerName: string): string[] {
+function extractHandlerFields(sources: ts.SourceFile[], handlerName: string): string[] {
   const fields = new Set<string>();
-
-  function visit(node: ts.Node) {
+  // Walk the handler body and find all data.<field> property accesses
+  function walkForData(n: ts.Node) {
     if (
-      (ts.isFunctionDeclaration(node) || ts.isVariableStatement(node)) &&
-      ((ts.isFunctionDeclaration(node) && node.name?.text === handlerName) ||
-        (ts.isVariableStatement(node) &&
-          node.declarationList.declarations.some(
-            (d) => ts.isIdentifier(d.name) && d.name.text === handlerName,
-          )))
+      ts.isPropertyAccessExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.expression.text === "data"
     ) {
-      // Walk the handler body and find all data.<field> property accesses
-      function walkForData(n: ts.Node) {
-        if (
-          ts.isPropertyAccessExpression(n) &&
-          ts.isIdentifier(n.expression) &&
-          n.expression.text === "data"
-        ) {
-          fields.add(n.name.text);
-        }
-        ts.forEachChild(n, walkForData);
-      }
-      ts.forEachChild(node, walkForData);
+      fields.add(n.name.text);
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(n, walkForData);
   }
-  visit(source);
+  ts.forEachChild(findHandler(sources, handlerName), walkForData);
   return [...fields].sort();
 }
 
 // Find the first string argument to successResult() in a handler
-function extractSuccessOperation(source: ts.SourceFile, handlerName: string): string | null {
+function extractSuccessOperation(sources: ts.SourceFile[], handlerName: string): string | null {
   let result: string | null = null;
-
-  function visit(node: ts.Node) {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === handlerName) {
-      function findSuccessCall(n: ts.Node) {
-        if (
-          ts.isCallExpression(n) &&
-          ts.isIdentifier(n.expression) &&
-          n.expression.text === "successResult"
-        ) {
-          const firstArg = n.arguments.at(0);
-          if (firstArg && ts.isStringLiteral(firstArg)) {
-            result = firstArg.text;
-          }
-          return;
-        }
-        ts.forEachChild(n, findSuccessCall);
-      }
-      findSuccessCall(node);
-    }
-    ts.forEachChild(node, visit);
+  const handler = findHandler(sources, handlerName);
+  if (!ts.isFunctionDeclaration(handler)) {
+    return result;
   }
-  visit(source);
+  function findSuccessCall(n: ts.Node) {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.expression.text === "successResult"
+    ) {
+      const firstArg = n.arguments.at(0);
+      if (firstArg && ts.isStringLiteral(firstArg)) {
+        result = firstArg.text;
+      }
+      return;
+    }
+    ts.forEachChild(n, findSuccessCall);
+  }
+  findSuccessCall(handler);
   return result;
 }
 
 // ── Tests ───────────────────────────────────────────────────────
 
 describe("OpenAPI contract conformance", () => {
-  const source = parseBootstrap();
+  const sources = parseSources();
   const spec = parseOpenAPI();
   const config = parseConfig();
   const version = fs.readFileSync(VERSION_PATH, "utf8").trim();
 
-  const runtimeCases = extractWriteHandlers(findWriteHandlers(source));
+  const runtimeCases = extractWriteHandlers(findWriteHandlers(sources));
   const runtimeOps = runtimeCases.map((c) => c.op);
 
   it("runtime dispatches each operation once", () => {
@@ -243,7 +256,7 @@ describe("OpenAPI contract conformance", () => {
 
   it("handler data.<field> reads match request schema properties", () => {
     for (const { op, handlerName } of runtimeCases) {
-      const handlerFields = extractHandlerFields(source, handlerName);
+      const handlerFields = extractHandlerFields(sources, handlerName);
       // The handler reads data.operation too, which maps to the discriminator
       const allHandlerFields = new Set(["operation", ...handlerFields]);
 
@@ -268,7 +281,7 @@ describe("OpenAPI contract conformance", () => {
 
   it("successResult first argument matches dispatch case", () => {
     for (const { op, handlerName } of runtimeCases) {
-      const successOp = extractSuccessOperation(source, handlerName);
+      const successOp = extractSuccessOperation(sources, handlerName);
       if (successOp === null) {
         throw new Error(
           `Handler "${handlerName}" has no statically identifiable successResult call`,

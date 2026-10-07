@@ -366,7 +366,7 @@ def _write_statuses(http: httpx.Client, write_path: str, probe_token: str) -> tu
 
 
 def _gate_states(probe_token: str) -> tuple[GateState, ...]:
-    """The three states of bearerAuthFailure in src/bootstrap.ts."""
+    """The three states of bearerAuthFailure in src/auth.ts."""
     return (
         GateState("open", {TOKEN_PREF: None, PUBLIC_BASE_URL_PREF: None}, (400, 400, 400)),
         GateState("gated", {TOKEN_PREF: probe_token, PUBLIC_BASE_URL_PREF: None}, (401, 401, 400)),

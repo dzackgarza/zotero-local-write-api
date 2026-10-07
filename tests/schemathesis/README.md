@@ -54,7 +54,7 @@ Two generic-fuzz findings are **not** defects in this add-on and are **not** sil
 They are recorded here instead, with the evidence that they originate in Zotero's core HTTP server, below the add-on's endpoints:
 
 1. **`TRACE {/version,/write,/attach}` → 501 Not Implemented.** The endpoints declare `supportedMethods` (`["POST"]` / `["GET"]`); an unsupported method is rejected by `Zotero.Server` before dispatch.
-   `src/bootstrap.ts` never emits 501 (grep it), so every 501 is core method-dispatch.
+   The add-on source in `src/` never emits 501 (grep it), so every 501 is core method-dispatch.
    Correct REST would be 405, but that lives in Zotero, not in an add-on.
    Reproduce: `curl -X TRACE http://127.0.0.1:23119/version`.
 
