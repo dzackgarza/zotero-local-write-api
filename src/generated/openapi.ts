@@ -4,1268 +4,1357 @@
  */
 
 export interface paths {
-    "/version": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Health check and capability probe */
-        get: operations["getVersion"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+  "/version": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/attach": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Store a file as an attachment of an item, or as a standalone attachment
-         * @description With item_key, the file is stored as a child attachment of that item. Without item_key, it is stored as a standalone attachment (an attachment item with no parent) in the collection selected in Zotero's pane; when the selected row is a library root, a saved search, or another row that is not a collection, it is stored in the library root. Servers that support the standalone form list attach_standalone in /version capabilities.
-         */
-        post: operations["attachFile"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /** Health check and capability probe */
+    get: operations["getVersion"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/attach": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/write": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Execute a write operation discriminated by the `operation` field. */
-        post: operations["write"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Store a file as an attachment of an item, or as a standalone attachment
+     * @description With item_key, the file is stored as a child attachment of that item. Without item_key, it is stored as a standalone attachment (an attachment item with no parent) in the collection selected in Zotero's pane; when the selected row is a library root, a saved search, or another row that is not a collection, it is stored in the library root. Servers that support the standalone form list attach_standalone in /version capabilities.
+     */
+    post: operations["attachFile"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/write": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/openapi.yaml": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * This OpenAPI document
-         * @description Serves the schema bundled with the running plugin. When the extensions.zotero.localWriteAPI.publicBaseURL preference is set, the server URL is rewritten to it so a schema imported by URL points at the public hostname. Always public: no authentication.
-         */
-        get: operations["getOpenApiSpec"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /** Execute a write operation discriminated by the `operation` field. */
+    post: operations["write"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/openapi.yaml": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
+    /**
+     * This OpenAPI document
+     * @description Serves the schema bundled with the running plugin. When the extensions.zotero.localWriteAPI.publicBaseURL preference is set, the server URL is rewritten to it so a schema imported by URL points at the public hostname. Always public: no authentication.
+     */
+    get: operations["getOpenApiSpec"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: {
-        /** @description String containing at least one non-whitespace character. */
-        NonBlankString: string;
-        /** @description Array of non-blank strings. Runtime trims entries, drops blanks, and de-duplicates. */
-        NormalizedStringArray: string[];
-        ItemKey: components["schemas"]["NonBlankString"];
-        CollectionKey: components["schemas"]["NonBlankString"];
-        SuccessEnvelope: {
-            /** @constant */
-            success: true;
-            operation: string;
-            /** @constant */
-            stage: "completed";
-            version: string;
-            details: {
-                [key: string]: unknown;
-            };
-        };
-        ErrorResponse: {
-            /** @constant */
-            success: false;
-            operation: string;
-            stage: string;
-            error: string;
-            details: {
-                /** @description The request body exactly as received, echoed back for diagnostics. Usually an object, but a malformed body is echoed as-is (a JSON null, array, or scalar) alongside the 400 that rejects it, so this is deliberately not constrained to an object. */
-                request: unknown;
-            };
-            version: string;
-        };
-        CollectionDetails: {
-            collection_key: string;
-            collection_name: string;
-            parent_key: string | null;
-        };
-        VersionResponse: {
-            /** @constant */
-            success: true;
-            /** @constant */
-            healthy: true;
-            /** @constant */
-            status: "ok";
-            message: string;
-            version: string;
-            addon_id: string;
-            homepage_url: string;
-            update_url: string;
-            endpoints: {
-                attach: string;
-                write: string;
-                version: string;
-            };
-            compatibility: {
-                strict_min_version: string;
-                strict_max_version: string;
-                tested_zotero_version: string;
-            };
-            capabilities: ("attach" | "attach_bytes" | "write" | "version_probe" | "health_probe" | "import_bibtex" | "import_by_identifier" | "selected_collection" | "sync" | "run_javascript" | "openapi_spec" | "import_from_url" | "resolve_url" | "attach_standalone")[];
-        };
-        AttachRequest: {
-            /** @description Parent item for the attachment. Absent: the attachment is stored standalone (no parent item) in the collection selected in Zotero's pane, or in the library root when the selected row is not a collection. Present: it must name an existing item. */
-            item_key?: components["schemas"]["ItemKey"];
-            title: components["schemas"]["NonBlankString"];
-            file_path?: components["schemas"]["NonBlankString"];
-            file_name?: components["schemas"]["NonBlankString"];
-            /** @description Base64-encoded file bytes. Must be non-blank: the endpoint reads it with the same trim-to-null rule as the other optional strings, so a blank value counts as absent and fails the anyOf below rather than being accepted as bytes. */
-            file_bytes_base64?: components["schemas"]["NonBlankString"];
-        } & (unknown | unknown);
-        AttachSuccessResponse: components["schemas"]["SuccessEnvelope"] & {
-            attachment_key: string;
-            attachment_id: number;
-            message: string;
-            /** @constant */
-            handler: "fulltext-attach";
-            details?: {
-                /** @description The request's item_key; null for a standalone attachment. */
-                parent_item_key: string | null;
-                file_path: string | null;
-                /** @enum {unknown} */
-                source_mode: "path" | "bytes" | "bytes_fallback";
-                title: string;
-                /** @description Collection a standalone attachment was stored in; null when it was stored in the library root or has a parent item. */
-                collection_key: string | null;
-            };
-        };
-        WriteRequest: components["schemas"]["SyncRequest"] | components["schemas"]["RunJavascriptRequest"] | components["schemas"]["UpdateItemFieldsRequest"] | components["schemas"]["ReplaceItemJsonRequest"] | components["schemas"]["SetItemTagsRequest"] | components["schemas"]["AddItemTagsRequest"] | components["schemas"]["RemoveItemTagsRequest"] | components["schemas"]["SetItemCollectionsRequest"] | components["schemas"]["AddItemToCollectionRequest"] | components["schemas"]["RemoveItemFromCollectionRequest"] | components["schemas"]["AttachNoteRequest"] | components["schemas"]["UpdateNoteRequest"] | components["schemas"]["AttachUrlRequest"] | components["schemas"]["TrashItemRequest"] | components["schemas"]["TrashCollectionRequest"] | components["schemas"]["RelinkAttachmentFileRequest"] | components["schemas"]["CreateCollectionRequest"] | components["schemas"]["RenameCollectionRequest"] | components["schemas"]["MoveCollectionRequest"] | components["schemas"]["MergeCollectionsRequest"] | components["schemas"]["RenameTagRequest"] | components["schemas"]["MergeTagsRequest"] | components["schemas"]["DeleteTagRequest"] | components["schemas"]["DeleteUnusedTagsRequest"] | components["schemas"]["CopyItemRequest"] | components["schemas"]["MergeItemsRequest"] | components["schemas"]["CreateItemRequest"] | components["schemas"]["ImportBibtexRequest"] | components["schemas"]["ImportByIdentifierRequest"] | components["schemas"]["GetSelectedCollectionRequest"] | components["schemas"]["RestoreItemRequest"] | components["schemas"]["UpdateAttachmentTitleRequest"] | components["schemas"]["ImportFromUrlRequest"] | components["schemas"]["ResolveUrlRequest"];
-        SyncRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "sync";
-        };
-        /** @description DANGEROUS: Evaluates arbitrary JavaScript in the add-on's privileged chrome scope with full Zotero access. Single-user dev tool. Do NOT expose to untrusted clients. Authentication/feature-gating hardening is a separate concern. */
-        RunJavascriptRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "run_javascript";
-            /** @description Arbitrary JavaScript to evaluate in the add-on's privileged scope. */
-            code: string;
-        };
-        UpdateItemFieldsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "update_item_fields";
-            item_key: components["schemas"]["ItemKey"];
-            fields: {
-                [key: string]: unknown;
-            };
-        };
-        ReplaceItemJsonRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "replace_item_json";
-            item_key: components["schemas"]["ItemKey"];
-            item_json: {
-                [key: string]: unknown;
-            };
-        };
-        SetItemTagsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "set_item_tags";
-            item_key: components["schemas"]["ItemKey"];
-            tags: components["schemas"]["NormalizedStringArray"];
-        };
-        AddItemTagsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "add_item_tags";
-            item_key: components["schemas"]["ItemKey"];
-            tags: components["schemas"]["NormalizedStringArray"];
-        };
-        RemoveItemTagsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "remove_item_tags";
-            item_key: components["schemas"]["ItemKey"];
-            tags: components["schemas"]["NormalizedStringArray"];
-        };
-        SetItemCollectionsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "set_item_collections";
-            item_key: components["schemas"]["ItemKey"];
-            collection_keys: components["schemas"]["NormalizedStringArray"];
-        };
-        AddItemToCollectionRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "add_item_to_collection";
-            item_key: components["schemas"]["ItemKey"];
-            collection_key: components["schemas"]["CollectionKey"];
-        };
-        RemoveItemFromCollectionRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "remove_item_from_collection";
-            item_key: components["schemas"]["ItemKey"];
-            collection_key: components["schemas"]["CollectionKey"];
-        };
-        AttachNoteRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "attach_note";
-            parent_item_key: components["schemas"]["ItemKey"];
-            /** @description Note body. May be an empty string. */
-            note_text: string;
-            title?: string;
-        };
-        UpdateNoteRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "update_note";
-            note_key: components["schemas"]["ItemKey"];
-            /** @description New note content. May be an empty string. */
-            new_content: string;
-        };
-        AttachUrlRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "attach_url";
-            parent_item_key: components["schemas"]["ItemKey"];
-            url: components["schemas"]["NonBlankString"];
-            title?: components["schemas"]["NonBlankString"];
-        };
-        TrashItemRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "trash_item";
-            item_key: components["schemas"]["ItemKey"];
-        };
-        TrashCollectionRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "trash_collection";
-            collection_key: components["schemas"]["CollectionKey"];
-        };
-        RelinkAttachmentFileRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "relink_attachment_file";
-            attachment_key: components["schemas"]["ItemKey"];
-            file_path: components["schemas"]["NonBlankString"];
-        };
-        CreateCollectionRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "create_collection";
-            name: components["schemas"]["NonBlankString"];
-            parent_key?: components["schemas"]["CollectionKey"];
-        };
-        RenameCollectionRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "rename_collection";
-            collection_key: components["schemas"]["CollectionKey"];
-            new_name: components["schemas"]["NonBlankString"];
-        };
-        MoveCollectionRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "move_collection";
-            collection_key: components["schemas"]["CollectionKey"];
-            new_parent_key?: components["schemas"]["CollectionKey"];
-        };
-        MergeCollectionsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "merge_collections";
-            source_keys: components["schemas"]["NormalizedStringArray"];
-            target_key: components["schemas"]["CollectionKey"];
-        };
-        RenameTagRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "rename_tag";
-            old_name: components["schemas"]["NonBlankString"];
-            new_name: components["schemas"]["NonBlankString"];
-        };
-        MergeTagsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "merge_tags";
-            source_tags: components["schemas"]["NormalizedStringArray"];
-            target_tag: components["schemas"]["NonBlankString"];
-        };
-        DeleteTagRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "delete_tag";
-            tag_name: components["schemas"]["NonBlankString"];
-        };
-        DeleteUnusedTagsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "delete_unused_tags";
-        };
-        CopyItemRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "copy_item";
-            item_key: components["schemas"]["ItemKey"];
-        };
-        MergeItemsRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "merge_items";
-            source_key: components["schemas"]["ItemKey"];
-            target_key: components["schemas"]["ItemKey"];
-        };
-        CreateItemRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "create_item";
-            item_type: components["schemas"]["NonBlankString"];
-            fields?: {
-                [key: string]: unknown;
-            };
-            tags?: components["schemas"]["NormalizedStringArray"];
-            collection_keys?: components["schemas"]["NormalizedStringArray"];
-        };
-        ImportBibtexRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "import_bibtex";
-            bibtex: components["schemas"]["NonBlankString"];
-            collection_keys?: components["schemas"]["NormalizedStringArray"];
-        };
-        ImportByIdentifierRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "import_by_identifier";
-            identifier: components["schemas"]["NonBlankString"];
-            collection_keys?: components["schemas"]["NormalizedStringArray"];
-        };
-        GetSelectedCollectionRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "get_selected_collection";
-        };
-        RestoreItemRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "restore_item";
-            item_key: components["schemas"]["ItemKey"];
-        };
-        UpdateAttachmentTitleRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "update_attachment_title";
-            attachment_key: components["schemas"]["ItemKey"];
-            new_title: components["schemas"]["NonBlankString"];
-        };
-        WriteSuccessResponse: components["schemas"]["SyncSuccess"] | components["schemas"]["RunJavascriptSuccess"] | components["schemas"]["UpdateItemFieldsSuccess"] | components["schemas"]["ReplaceItemJsonSuccess"] | components["schemas"]["SetItemTagsSuccess"] | components["schemas"]["AddItemTagsSuccess"] | components["schemas"]["RemoveItemTagsSuccess"] | components["schemas"]["SetItemCollectionsSuccess"] | components["schemas"]["AddItemToCollectionSuccess"] | components["schemas"]["RemoveItemFromCollectionSuccess"] | components["schemas"]["AttachNoteSuccess"] | components["schemas"]["UpdateNoteSuccess"] | components["schemas"]["AttachUrlSuccess"] | components["schemas"]["TrashItemSuccess"] | components["schemas"]["TrashCollectionSuccess"] | components["schemas"]["RelinkAttachmentFileSuccess"] | components["schemas"]["CreateCollectionSuccess"] | components["schemas"]["RenameCollectionSuccess"] | components["schemas"]["MoveCollectionSuccess"] | components["schemas"]["MergeCollectionsSuccess"] | components["schemas"]["RenameTagSuccess"] | components["schemas"]["MergeTagsSuccess"] | components["schemas"]["DeleteTagSuccess"] | components["schemas"]["DeleteUnusedTagsSuccess"] | components["schemas"]["CopyItemSuccess"] | components["schemas"]["MergeItemsSuccess"] | components["schemas"]["CreateItemSuccess"] | components["schemas"]["ImportBibtexSuccess"] | components["schemas"]["ImportByIdentifierSuccess"] | components["schemas"]["GetSelectedCollectionSuccess"] | components["schemas"]["RestoreItemSuccess"] | components["schemas"]["UpdateAttachmentTitleSuccess"] | components["schemas"]["ImportFromUrlSuccess"] | components["schemas"]["ResolveUrlSuccess"];
-        SyncSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "sync";
-            details?: {
-                /** @constant */
-                triggered: true;
-                result: unknown;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "sync";
-        };
-        RunJavascriptSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "run_javascript";
-            details?: {
-                result: unknown;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "run_javascript";
-        };
-        UpdateItemFieldsSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "update_item_fields";
-            details?: {
-                item_key: string;
-                field_names: string[];
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "update_item_fields";
-        };
-        ReplaceItemJsonSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "replace_item_json";
-            details?: {
-                item_key: string;
-                item_type: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "replace_item_json";
-        };
-        SetItemTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "set_item_tags";
-            details?: {
-                item_key: string;
-                tags: string[];
-                tag_count: number;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "set_item_tags";
-        };
-        AddItemTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "add_item_tags";
-            details?: {
-                item_key: string;
-                added_tags: string[];
-                total_tag_count: number;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "add_item_tags";
-        };
-        RemoveItemTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "remove_item_tags";
-            details?: {
-                item_key: string;
-                removed_count: number;
-                remaining_tag_count: number;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "remove_item_tags";
-        };
-        SetItemCollectionsSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "set_item_collections";
-            details?: {
-                item_key: string;
-                collection_keys: string[];
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "set_item_collections";
-        };
-        AddItemToCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "add_item_to_collection";
-            details?: {
-                item_key: string;
-                collection_key: string;
-                collection_name: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "add_item_to_collection";
-        };
-        RemoveItemFromCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "remove_item_from_collection";
-            details?: {
-                item_key: string;
-                collection_key: string;
-                collection_name: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "remove_item_from_collection";
-        };
-        AttachNoteSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "attach_note";
-            note_key: string;
-            note_id: number;
-            details?: {
-                parent_item_key: string;
-                note_length: number;
-                title: string | null;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "attach_note";
-        };
-        UpdateNoteSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "update_note";
-            details?: {
-                note_key: string;
-                parent_item_key: string | null;
-                content_length: number;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "update_note";
-        };
-        AttachUrlSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "attach_url";
-            attachment_key: string;
-            attachment_id: number;
-            details?: {
-                parent_item_key: string;
-                url: string;
-                title: string | null;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "attach_url";
-        };
-        TrashItemSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "trash_item";
-            details?: {
-                item_key: string;
-                item_type: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "trash_item";
-        };
-        TrashCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "trash_collection";
-            details?: components["schemas"]["CollectionDetails"];
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "trash_collection";
-        };
-        RelinkAttachmentFileSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "relink_attachment_file";
-            details?: {
-                attachment_key: string;
-                file_path: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "relink_attachment_file";
-        };
-        CreateCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "create_collection";
-            details?: components["schemas"]["CollectionDetails"];
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "create_collection";
-        };
-        RenameCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "rename_collection";
-            details?: components["schemas"]["CollectionDetails"];
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "rename_collection";
-        };
-        MoveCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "move_collection";
-            details?: components["schemas"]["CollectionDetails"];
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "move_collection";
-        };
-        MergeCollectionsSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "merge_collections";
-            details?: {
-                source_keys: string[];
-                target_key: string;
-                moved_item_count: number;
-                moved_child_collection_count: number;
-                trashed_source_count: number;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "merge_collections";
-        };
-        RenameTagSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "rename_tag";
-            details?: {
-                old_name: string;
-                new_name: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "rename_tag";
-        };
-        MergeTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "merge_tags";
-            details?: {
-                source_tags: string[];
-                target_tag: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "merge_tags";
-        };
-        DeleteTagSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "delete_tag";
-            details?: {
-                tag_name: string;
-                modified_item_count: number;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "delete_tag";
-        };
-        DeleteUnusedTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "delete_unused_tags";
-            details?: Record<string, never>;
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "delete_unused_tags";
-        };
-        CopyItemSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "copy_item";
-            new_key: string;
-            new_item_key: string;
-            details?: {
-                item_key: string;
-                copied_note_count: number;
-                copied_attachment_count: number;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "copy_item";
-        };
-        MergeItemsSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "merge_items";
-            details?: {
-                source_key: string;
-                target_key: string;
-                transferred: {
-                    attachments: number;
-                    notes: number;
-                    tags: number;
-                    relations: number;
-                };
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "merge_items";
-        };
-        CreateItemSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "create_item";
-            item_key: string;
-            item_id: number;
-            details?: {
-                item_type: string;
-                field_names: string[];
-                tag_count: number;
-                collection_count: number;
-            };
-            /** @description The Better BibTeX citation key of the item (Zotero's citationKey field). */
-            citation_key: string;
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "create_item";
-        };
-        ImportBibtexSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "import_bibtex";
-            item_key: string;
-            item_id: number;
-            item_keys: string[];
-            item_ids: number[];
-            titles: string[];
-            details?: {
-                item_count: number;
-                collection_keys: string[];
-                translator_id: string;
-            };
-            /** @description The Better BibTeX citation key of each item, in item_keys order. */
-            citation_keys: string[];
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "import_bibtex";
-        };
-        ImportByIdentifierSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "import_by_identifier";
-            item_key: string;
-            item_id: number;
-            item_keys: string[];
-            item_ids: number[];
-            titles: string[];
-            details?: {
-                identifier: string;
-                item_count: number;
-                collection_keys: string[];
-            };
-            /** @description The Better BibTeX citation key of each item, in item_keys order. */
-            citation_keys: string[];
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "import_by_identifier";
-        };
-        GetSelectedCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "get_selected_collection";
-            details?: {
-                collection_key: string;
-                collection_name: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "get_selected_collection";
-        };
-        RestoreItemSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "restore_item";
-            details?: {
-                item_key: string;
-                item_type: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "restore_item";
-        };
-        UpdateAttachmentTitleSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "update_attachment_title";
-            details?: {
-                attachment_key: string;
-                new_title: string;
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "update_attachment_title";
-        };
-        /** @description Create one Zotero item from a source URL. Methods are tried in order until one identifies the source as exactly one work: web translators, the page embedded metadata (for a PDF: Zotero PDF recognition), identifier discovery (DOI, ISBN, arXiv ID), BibTeX the page links, and external services (Crossref, zbMATH Open, arXiv, Open Library). When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. The item stores the full text Zotero gets for the source: the translator's attachments, an open-access PDF when the translator gives none, and the PDF itself when the URL is a PDF. When no method identifies the source, the 422 names alternative sources in details.remediation; a second request with fallback_metadata then saves the source as the caller describes it. */
-        ImportFromUrlRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "import_from_url";
-            /**
-             * Format: uri
-             * @description An http or https URL.
-             */
-            url: components["schemas"]["NonBlankString"];
-            collection_keys?: components["schemas"]["NormalizedStringArray"];
-            fallback_metadata?: components["schemas"]["FallbackMetadata"];
-        };
-        ImportFromUrlAttempt: {
-            method: components["schemas"]["ImportFromUrlMethod"];
-            /** @enum {unknown} */
-            outcome: "identified" | "no_match" | "ambiguous" | "failed";
-            message: string;
-        };
-        /** @enum {unknown} */
-        ImportFromUrlMethod: "web_translator" | "page_metadata" | "identifier" | "published_bibtex" | "external_service" | "pdf_recognition";
-        ImportFromUrlSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "import_from_url";
-            item_key: string;
-            item_id: number;
-            method: components["schemas"]["ImportFromUrlMethod"] | "caller_metadata";
-            /** @description true when the work was already in the library and that item is returned. */
-            existing: boolean;
-            details: {
-                url: string;
-                /** @description The URL after redirects. */
-                final_url: string;
-                collection_keys: string[];
-                translator: null | {
-                    translator_id: string;
-                    label: string;
-                };
-                attempts: components["schemas"]["ImportFromUrlAttempt"][];
-                /** @description Attachments the translator named that Zotero could not store. The item is saved without them. */
-                attachment_failures: {
-                    title: string;
-                    url: string;
-                    error: string;
-                }[];
-            };
-            /** @description The Better BibTeX citation key of the item (Zotero's citationKey field). */
-            citation_key: string;
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "import_from_url";
-        };
-        /** @description Identify a source URL exactly as import_from_url does, with the same methods in the same order, and return the metadata of the one work it identifies without saving anything to the library. The metadata is Zotero's CSL-JSON rendering of the item import_from_url would create. */
-        ResolveUrlRequest: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "resolve_url";
-            /**
-             * Format: uri
-             * @description An http or https URL.
-             */
-            url: components["schemas"]["NonBlankString"];
-        };
-        ResolveUrlSuccess: components["schemas"]["SuccessEnvelope"] & {
-            /** @constant */
-            operation?: "resolve_url";
-            method: components["schemas"]["ImportFromUrlMethod"];
-            /** @description The Zotero item type of the identified work. */
-            item_type: string;
-            /** @description The identified work as CSL-JSON (Zotero.Utilities.Item.itemToCSLJSON). */
-            csl: {
-                type: string;
-            } & {
-                [key: string]: unknown;
-            };
-            details: {
-                url: string;
-                /** @description The URL after redirects. */
-                final_url: string;
-                translator: null | {
-                    translator_id: string;
-                    label: string;
-                };
-                attempts: components["schemas"]["ImportFromUrlAttempt"][];
-            };
-        } & {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            operation: "resolve_url";
-        };
-        /** @description The caller's description of a source that no method identifies. import_from_url uses it only after every method failed: the item gets this title, these creators as authors, this year as its date, the source URL, the tag metadata:unresolved, and, when the URL is a PDF, that PDF stored under it. Better BibTeX mints the citation key from these fields. */
-        FallbackMetadata: {
-            title: components["schemas"]["NonBlankString"];
-            creators: {
-                first_name?: string;
-                last_name: components["schemas"]["NonBlankString"];
-            }[];
-            year: string;
-        };
-        SourceRemediation: {
-            message: string;
-            alternative_sources: {
-                name: string;
-                /** @description The form of a URL or identifier at this source. */
-                example: string;
-            }[];
-            /** @constant */
-            fallback_field: "fallback_metadata";
-        };
-        SourceNotIdentifiedResponse: components["schemas"]["ErrorResponse"] & {
-            /** @constant */
-            stage: "identify_source";
-            details: {
-                attempts: components["schemas"]["ImportFromUrlAttempt"][];
-                remediation: components["schemas"]["SourceRemediation"];
-            };
-        };
+  schemas: {
+    /** @description String containing at least one non-whitespace character. */
+    NonBlankString: string;
+    /** @description Array of non-blank strings. Runtime trims entries, drops blanks, and de-duplicates. */
+    NormalizedStringArray: string[];
+    ItemKey: components["schemas"]["NonBlankString"];
+    CollectionKey: components["schemas"]["NonBlankString"];
+    SuccessEnvelope: {
+      /** @constant */
+      success: true;
+      operation: string;
+      /** @constant */
+      stage: "completed";
+      version: string;
+      details: {
+        [key: string]: unknown;
+      };
     };
-    responses: never;
-    parameters: never;
-    requestBodies: never;
-    headers: never;
-    pathItems: never;
+    ErrorResponse: {
+      /** @constant */
+      success: false;
+      operation: string;
+      stage: string;
+      error: string;
+      details: {
+        /** @description The request body exactly as received, echoed back for diagnostics. Usually an object, but a malformed body is echoed as-is (a JSON null, array, or scalar) alongside the 400 that rejects it, so this is deliberately not constrained to an object. */
+        request: unknown;
+      };
+      version: string;
+    };
+    CollectionDetails: {
+      collection_key: string;
+      collection_name: string;
+      parent_key: string | null;
+    };
+    VersionResponse: {
+      /** @constant */
+      success: true;
+      /** @constant */
+      healthy: true;
+      /** @constant */
+      status: "ok";
+      message: string;
+      version: string;
+      addon_id: string;
+      homepage_url: string;
+      update_url: string;
+      endpoints: {
+        attach: string;
+        write: string;
+        version: string;
+      };
+      compatibility: {
+        strict_min_version: string;
+        strict_max_version: string;
+        tested_zotero_version: string;
+      };
+      capabilities: (
+        | "attach"
+        | "attach_bytes"
+        | "write"
+        | "version_probe"
+        | "health_probe"
+        | "import_bibtex"
+        | "import_by_identifier"
+        | "selected_collection"
+        | "sync"
+        | "run_javascript"
+        | "openapi_spec"
+        | "import_from_url"
+        | "resolve_url"
+        | "attach_standalone"
+      )[];
+    };
+    AttachRequest: {
+      /** @description Parent item for the attachment. Absent: the attachment is stored standalone (no parent item) in the collection selected in Zotero's pane, or in the library root when the selected row is not a collection. Present: it must name an existing item. */
+      item_key?: components["schemas"]["ItemKey"];
+      title: components["schemas"]["NonBlankString"];
+      file_path?: components["schemas"]["NonBlankString"];
+      file_name?: components["schemas"]["NonBlankString"];
+      /** @description Base64-encoded file bytes. Must be non-blank: the endpoint reads it with the same trim-to-null rule as the other optional strings, so a blank value counts as absent and fails the anyOf below rather than being accepted as bytes. */
+      file_bytes_base64?: components["schemas"]["NonBlankString"];
+    } & (unknown | unknown);
+    AttachSuccessResponse: components["schemas"]["SuccessEnvelope"] & {
+      attachment_key: string;
+      attachment_id: number;
+      message: string;
+      /** @constant */
+      handler: "fulltext-attach";
+      details?: {
+        /** @description The request's item_key; null for a standalone attachment. */
+        parent_item_key: string | null;
+        file_path: string | null;
+        /** @enum {unknown} */
+        source_mode: "path" | "bytes" | "bytes_fallback";
+        title: string;
+        /** @description Collection a standalone attachment was stored in; null when it was stored in the library root or has a parent item. */
+        collection_key: string | null;
+      };
+    };
+    WriteRequest:
+      | components["schemas"]["SyncRequest"]
+      | components["schemas"]["RunJavascriptRequest"]
+      | components["schemas"]["UpdateItemFieldsRequest"]
+      | components["schemas"]["ReplaceItemJsonRequest"]
+      | components["schemas"]["SetItemTagsRequest"]
+      | components["schemas"]["AddItemTagsRequest"]
+      | components["schemas"]["RemoveItemTagsRequest"]
+      | components["schemas"]["SetItemCollectionsRequest"]
+      | components["schemas"]["AddItemToCollectionRequest"]
+      | components["schemas"]["RemoveItemFromCollectionRequest"]
+      | components["schemas"]["AttachNoteRequest"]
+      | components["schemas"]["UpdateNoteRequest"]
+      | components["schemas"]["AttachUrlRequest"]
+      | components["schemas"]["TrashItemRequest"]
+      | components["schemas"]["TrashCollectionRequest"]
+      | components["schemas"]["RelinkAttachmentFileRequest"]
+      | components["schemas"]["CreateCollectionRequest"]
+      | components["schemas"]["RenameCollectionRequest"]
+      | components["schemas"]["MoveCollectionRequest"]
+      | components["schemas"]["MergeCollectionsRequest"]
+      | components["schemas"]["RenameTagRequest"]
+      | components["schemas"]["MergeTagsRequest"]
+      | components["schemas"]["DeleteTagRequest"]
+      | components["schemas"]["DeleteUnusedTagsRequest"]
+      | components["schemas"]["CopyItemRequest"]
+      | components["schemas"]["MergeItemsRequest"]
+      | components["schemas"]["CreateItemRequest"]
+      | components["schemas"]["ImportBibtexRequest"]
+      | components["schemas"]["ImportByIdentifierRequest"]
+      | components["schemas"]["GetSelectedCollectionRequest"]
+      | components["schemas"]["RestoreItemRequest"]
+      | components["schemas"]["UpdateAttachmentTitleRequest"]
+      | components["schemas"]["ImportFromUrlRequest"]
+      | components["schemas"]["ResolveUrlRequest"];
+    SyncRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "sync";
+    };
+    /** @description DANGEROUS: Evaluates arbitrary JavaScript in the add-on's privileged chrome scope with full Zotero access. Single-user dev tool. Do NOT expose to untrusted clients. Authentication/feature-gating hardening is a separate concern. */
+    RunJavascriptRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "run_javascript";
+      /** @description Arbitrary JavaScript to evaluate in the add-on's privileged scope. */
+      code: string;
+    };
+    UpdateItemFieldsRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "update_item_fields";
+      item_key: components["schemas"]["ItemKey"];
+      fields: {
+        [key: string]: unknown;
+      };
+    };
+    ReplaceItemJsonRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "replace_item_json";
+      item_key: components["schemas"]["ItemKey"];
+      item_json: {
+        [key: string]: unknown;
+      };
+    };
+    SetItemTagsRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "set_item_tags";
+      item_key: components["schemas"]["ItemKey"];
+      tags: components["schemas"]["NormalizedStringArray"];
+    };
+    AddItemTagsRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "add_item_tags";
+      item_key: components["schemas"]["ItemKey"];
+      tags: components["schemas"]["NormalizedStringArray"];
+    };
+    RemoveItemTagsRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "remove_item_tags";
+      item_key: components["schemas"]["ItemKey"];
+      tags: components["schemas"]["NormalizedStringArray"];
+    };
+    SetItemCollectionsRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "set_item_collections";
+      item_key: components["schemas"]["ItemKey"];
+      collection_keys: components["schemas"]["NormalizedStringArray"];
+    };
+    AddItemToCollectionRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "add_item_to_collection";
+      item_key: components["schemas"]["ItemKey"];
+      collection_key: components["schemas"]["CollectionKey"];
+    };
+    RemoveItemFromCollectionRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "remove_item_from_collection";
+      item_key: components["schemas"]["ItemKey"];
+      collection_key: components["schemas"]["CollectionKey"];
+    };
+    AttachNoteRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "attach_note";
+      parent_item_key: components["schemas"]["ItemKey"];
+      /** @description Note body. May be an empty string. */
+      note_text: string;
+      title?: string;
+    };
+    UpdateNoteRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "update_note";
+      note_key: components["schemas"]["ItemKey"];
+      /** @description New note content. May be an empty string. */
+      new_content: string;
+    };
+    AttachUrlRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "attach_url";
+      parent_item_key: components["schemas"]["ItemKey"];
+      url: components["schemas"]["NonBlankString"];
+      title?: components["schemas"]["NonBlankString"];
+    };
+    TrashItemRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "trash_item";
+      item_key: components["schemas"]["ItemKey"];
+    };
+    TrashCollectionRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "trash_collection";
+      collection_key: components["schemas"]["CollectionKey"];
+    };
+    RelinkAttachmentFileRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "relink_attachment_file";
+      attachment_key: components["schemas"]["ItemKey"];
+      file_path: components["schemas"]["NonBlankString"];
+    };
+    CreateCollectionRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "create_collection";
+      name: components["schemas"]["NonBlankString"];
+      parent_key?: components["schemas"]["CollectionKey"];
+    };
+    RenameCollectionRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "rename_collection";
+      collection_key: components["schemas"]["CollectionKey"];
+      new_name: components["schemas"]["NonBlankString"];
+    };
+    MoveCollectionRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "move_collection";
+      collection_key: components["schemas"]["CollectionKey"];
+      new_parent_key?: components["schemas"]["CollectionKey"];
+    };
+    MergeCollectionsRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "merge_collections";
+      source_keys: components["schemas"]["NormalizedStringArray"];
+      target_key: components["schemas"]["CollectionKey"];
+    };
+    RenameTagRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "rename_tag";
+      old_name: components["schemas"]["NonBlankString"];
+      new_name: components["schemas"]["NonBlankString"];
+    };
+    MergeTagsRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "merge_tags";
+      source_tags: components["schemas"]["NormalizedStringArray"];
+      target_tag: components["schemas"]["NonBlankString"];
+    };
+    DeleteTagRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "delete_tag";
+      tag_name: components["schemas"]["NonBlankString"];
+    };
+    DeleteUnusedTagsRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "delete_unused_tags";
+    };
+    CopyItemRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "copy_item";
+      item_key: components["schemas"]["ItemKey"];
+    };
+    MergeItemsRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "merge_items";
+      source_key: components["schemas"]["ItemKey"];
+      target_key: components["schemas"]["ItemKey"];
+    };
+    CreateItemRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "create_item";
+      item_type: components["schemas"]["NonBlankString"];
+      fields?: {
+        [key: string]: unknown;
+      };
+      tags?: components["schemas"]["NormalizedStringArray"];
+      collection_keys?: components["schemas"]["NormalizedStringArray"];
+    };
+    ImportBibtexRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "import_bibtex";
+      bibtex: components["schemas"]["NonBlankString"];
+      collection_keys?: components["schemas"]["NormalizedStringArray"];
+    };
+    ImportByIdentifierRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "import_by_identifier";
+      identifier: components["schemas"]["NonBlankString"];
+      collection_keys?: components["schemas"]["NormalizedStringArray"];
+    };
+    GetSelectedCollectionRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "get_selected_collection";
+    };
+    RestoreItemRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "restore_item";
+      item_key: components["schemas"]["ItemKey"];
+    };
+    UpdateAttachmentTitleRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "update_attachment_title";
+      attachment_key: components["schemas"]["ItemKey"];
+      new_title: components["schemas"]["NonBlankString"];
+    };
+    WriteSuccessResponse:
+      | components["schemas"]["SyncSuccess"]
+      | components["schemas"]["RunJavascriptSuccess"]
+      | components["schemas"]["UpdateItemFieldsSuccess"]
+      | components["schemas"]["ReplaceItemJsonSuccess"]
+      | components["schemas"]["SetItemTagsSuccess"]
+      | components["schemas"]["AddItemTagsSuccess"]
+      | components["schemas"]["RemoveItemTagsSuccess"]
+      | components["schemas"]["SetItemCollectionsSuccess"]
+      | components["schemas"]["AddItemToCollectionSuccess"]
+      | components["schemas"]["RemoveItemFromCollectionSuccess"]
+      | components["schemas"]["AttachNoteSuccess"]
+      | components["schemas"]["UpdateNoteSuccess"]
+      | components["schemas"]["AttachUrlSuccess"]
+      | components["schemas"]["TrashItemSuccess"]
+      | components["schemas"]["TrashCollectionSuccess"]
+      | components["schemas"]["RelinkAttachmentFileSuccess"]
+      | components["schemas"]["CreateCollectionSuccess"]
+      | components["schemas"]["RenameCollectionSuccess"]
+      | components["schemas"]["MoveCollectionSuccess"]
+      | components["schemas"]["MergeCollectionsSuccess"]
+      | components["schemas"]["RenameTagSuccess"]
+      | components["schemas"]["MergeTagsSuccess"]
+      | components["schemas"]["DeleteTagSuccess"]
+      | components["schemas"]["DeleteUnusedTagsSuccess"]
+      | components["schemas"]["CopyItemSuccess"]
+      | components["schemas"]["MergeItemsSuccess"]
+      | components["schemas"]["CreateItemSuccess"]
+      | components["schemas"]["ImportBibtexSuccess"]
+      | components["schemas"]["ImportByIdentifierSuccess"]
+      | components["schemas"]["GetSelectedCollectionSuccess"]
+      | components["schemas"]["RestoreItemSuccess"]
+      | components["schemas"]["UpdateAttachmentTitleSuccess"]
+      | components["schemas"]["ImportFromUrlSuccess"]
+      | components["schemas"]["ResolveUrlSuccess"];
+    SyncSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "sync";
+      details?: {
+        /** @constant */
+        triggered: true;
+        result: unknown;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "sync";
+    };
+    RunJavascriptSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "run_javascript";
+      details?: {
+        result: unknown;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "run_javascript";
+    };
+    UpdateItemFieldsSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "update_item_fields";
+      details?: {
+        item_key: string;
+        field_names: string[];
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "update_item_fields";
+    };
+    ReplaceItemJsonSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "replace_item_json";
+      details?: {
+        item_key: string;
+        item_type: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "replace_item_json";
+    };
+    SetItemTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "set_item_tags";
+      details?: {
+        item_key: string;
+        tags: string[];
+        tag_count: number;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "set_item_tags";
+    };
+    AddItemTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "add_item_tags";
+      details?: {
+        item_key: string;
+        added_tags: string[];
+        total_tag_count: number;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "add_item_tags";
+    };
+    RemoveItemTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "remove_item_tags";
+      details?: {
+        item_key: string;
+        removed_count: number;
+        remaining_tag_count: number;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "remove_item_tags";
+    };
+    SetItemCollectionsSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "set_item_collections";
+      details?: {
+        item_key: string;
+        collection_keys: string[];
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "set_item_collections";
+    };
+    AddItemToCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "add_item_to_collection";
+      details?: {
+        item_key: string;
+        collection_key: string;
+        collection_name: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "add_item_to_collection";
+    };
+    RemoveItemFromCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "remove_item_from_collection";
+      details?: {
+        item_key: string;
+        collection_key: string;
+        collection_name: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "remove_item_from_collection";
+    };
+    AttachNoteSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "attach_note";
+      note_key: string;
+      note_id: number;
+      details?: {
+        parent_item_key: string;
+        note_length: number;
+        title: string | null;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "attach_note";
+    };
+    UpdateNoteSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "update_note";
+      details?: {
+        note_key: string;
+        parent_item_key: string | null;
+        content_length: number;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "update_note";
+    };
+    AttachUrlSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "attach_url";
+      attachment_key: string;
+      attachment_id: number;
+      details?: {
+        parent_item_key: string;
+        url: string;
+        title: string | null;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "attach_url";
+    };
+    TrashItemSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "trash_item";
+      details?: {
+        item_key: string;
+        item_type: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "trash_item";
+    };
+    TrashCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "trash_collection";
+      details?: components["schemas"]["CollectionDetails"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "trash_collection";
+    };
+    RelinkAttachmentFileSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "relink_attachment_file";
+      details?: {
+        attachment_key: string;
+        file_path: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "relink_attachment_file";
+    };
+    CreateCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "create_collection";
+      details?: components["schemas"]["CollectionDetails"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "create_collection";
+    };
+    RenameCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "rename_collection";
+      details?: components["schemas"]["CollectionDetails"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "rename_collection";
+    };
+    MoveCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "move_collection";
+      details?: components["schemas"]["CollectionDetails"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "move_collection";
+    };
+    MergeCollectionsSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "merge_collections";
+      details?: {
+        source_keys: string[];
+        target_key: string;
+        moved_item_count: number;
+        moved_child_collection_count: number;
+        trashed_source_count: number;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "merge_collections";
+    };
+    RenameTagSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "rename_tag";
+      details?: {
+        old_name: string;
+        new_name: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "rename_tag";
+    };
+    MergeTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "merge_tags";
+      details?: {
+        source_tags: string[];
+        target_tag: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "merge_tags";
+    };
+    DeleteTagSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "delete_tag";
+      details?: {
+        tag_name: string;
+        modified_item_count: number;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "delete_tag";
+    };
+    DeleteUnusedTagsSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "delete_unused_tags";
+      details?: Record<string, never>;
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "delete_unused_tags";
+    };
+    CopyItemSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "copy_item";
+      new_key: string;
+      new_item_key: string;
+      details?: {
+        item_key: string;
+        copied_note_count: number;
+        copied_attachment_count: number;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "copy_item";
+    };
+    MergeItemsSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "merge_items";
+      details?: {
+        source_key: string;
+        target_key: string;
+        transferred: {
+          attachments: number;
+          notes: number;
+          tags: number;
+          relations: number;
+        };
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "merge_items";
+    };
+    CreateItemSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "create_item";
+      item_key: string;
+      item_id: number;
+      details?: {
+        item_type: string;
+        field_names: string[];
+        tag_count: number;
+        collection_count: number;
+      };
+      /** @description The Better BibTeX citation key of the item (Zotero's citationKey field). */
+      citation_key: string;
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "create_item";
+    };
+    ImportBibtexSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "import_bibtex";
+      item_key: string;
+      item_id: number;
+      item_keys: string[];
+      item_ids: number[];
+      titles: string[];
+      details?: {
+        item_count: number;
+        collection_keys: string[];
+        translator_id: string;
+      };
+      /** @description The Better BibTeX citation key of each item, in item_keys order. */
+      citation_keys: string[];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "import_bibtex";
+    };
+    ImportByIdentifierSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "import_by_identifier";
+      item_key: string;
+      item_id: number;
+      item_keys: string[];
+      item_ids: number[];
+      titles: string[];
+      details?: {
+        identifier: string;
+        item_count: number;
+        collection_keys: string[];
+      };
+      /** @description The Better BibTeX citation key of each item, in item_keys order. */
+      citation_keys: string[];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "import_by_identifier";
+    };
+    GetSelectedCollectionSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "get_selected_collection";
+      details?: {
+        collection_key: string;
+        collection_name: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "get_selected_collection";
+    };
+    RestoreItemSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "restore_item";
+      details?: {
+        item_key: string;
+        item_type: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "restore_item";
+    };
+    UpdateAttachmentTitleSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "update_attachment_title";
+      details?: {
+        attachment_key: string;
+        new_title: string;
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "update_attachment_title";
+    };
+    /** @description Create one Zotero item from a source URL. Methods are tried in order until one identifies the source as exactly one work: web translators, the page embedded metadata (for a PDF: Zotero PDF recognition), identifier discovery (DOI, ISBN, arXiv ID), BibTeX the page links, and external services (Crossref, zbMATH Open, arXiv, Open Library). When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. The item stores the full text Zotero gets for the source: the translator's attachments, an open-access PDF when the translator gives none, and the PDF itself when the URL is a PDF. When no method identifies the source, the 422 names alternative sources in details.remediation; a second request with fallback_metadata then saves the source as the caller describes it. */
+    ImportFromUrlRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "import_from_url";
+      /**
+       * Format: uri
+       * @description An http or https URL.
+       */
+      url: components["schemas"]["NonBlankString"];
+      collection_keys?: components["schemas"]["NormalizedStringArray"];
+      fallback_metadata?: components["schemas"]["FallbackMetadata"];
+    };
+    ImportFromUrlAttempt: {
+      method: components["schemas"]["ImportFromUrlMethod"];
+      /** @enum {unknown} */
+      outcome: "identified" | "no_match" | "ambiguous" | "failed";
+      message: string;
+    };
+    /** @enum {unknown} */
+    ImportFromUrlMethod:
+      | "web_translator"
+      | "page_metadata"
+      | "identifier"
+      | "published_bibtex"
+      | "external_service"
+      | "pdf_recognition";
+    ImportFromUrlSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "import_from_url";
+      item_key: string;
+      item_id: number;
+      method: components["schemas"]["ImportFromUrlMethod"] | "caller_metadata";
+      /** @description true when the work was already in the library and that item is returned. */
+      existing: boolean;
+      details: {
+        url: string;
+        /** @description The URL after redirects. */
+        final_url: string;
+        collection_keys: string[];
+        translator: null | {
+          translator_id: string;
+          label: string;
+        };
+        attempts: components["schemas"]["ImportFromUrlAttempt"][];
+        /** @description Attachments the translator named that Zotero could not store. The item is saved without them. */
+        attachment_failures: {
+          title: string;
+          url: string;
+          error: string;
+        }[];
+      };
+      /** @description The Better BibTeX citation key of the item (Zotero's citationKey field). */
+      citation_key: string;
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "import_from_url";
+    };
+    /** @description Identify a source URL exactly as import_from_url does, with the same methods in the same order, and return the metadata of the one work it identifies without saving anything to the library. The metadata is Zotero's CSL-JSON rendering of the item import_from_url would create. */
+    ResolveUrlRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "resolve_url";
+      /**
+       * Format: uri
+       * @description An http or https URL.
+       */
+      url: components["schemas"]["NonBlankString"];
+    };
+    ResolveUrlSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "resolve_url";
+      method: components["schemas"]["ImportFromUrlMethod"];
+      /** @description The Zotero item type of the identified work. */
+      item_type: string;
+      /** @description The identified work as CSL-JSON (Zotero.Utilities.Item.itemToCSLJSON). */
+      csl: {
+        type: string;
+      } & {
+        [key: string]: unknown;
+      };
+      details: {
+        url: string;
+        /** @description The URL after redirects. */
+        final_url: string;
+        translator: null | {
+          translator_id: string;
+          label: string;
+        };
+        attempts: components["schemas"]["ImportFromUrlAttempt"][];
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "resolve_url";
+    };
+    /** @description The caller's description of a source that no method identifies. import_from_url uses it only after every method failed: the item gets this title, these creators as authors, this year as its date, the source URL, the tag metadata:unresolved, and, when the URL is a PDF, that PDF stored under it. Better BibTeX mints the citation key from these fields. */
+    FallbackMetadata: {
+      title: components["schemas"]["NonBlankString"];
+      creators: {
+        first_name?: string;
+        last_name: components["schemas"]["NonBlankString"];
+      }[];
+      year: string;
+    };
+    SourceRemediation: {
+      message: string;
+      alternative_sources: {
+        name: string;
+        /** @description The form of a URL or identifier at this source. */
+        example: string;
+      }[];
+      /** @constant */
+      fallback_field: "fallback_metadata";
+    };
+    SourceNotIdentifiedResponse: components["schemas"]["ErrorResponse"] & {
+      /** @constant */
+      stage: "identify_source";
+      details: {
+        attempts: components["schemas"]["ImportFromUrlAttempt"][];
+        remediation: components["schemas"]["SourceRemediation"];
+      };
+    };
+  };
+  responses: never;
+  parameters: never;
+  requestBodies: never;
+  headers: never;
+  pathItems: never;
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    getVersion: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Add-on is installed and running. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VersionResponse"];
-                };
-            };
-        };
+  getVersion: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    attachFile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description Add-on is installed and running. */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AttachRequest"];
-            };
+        content: {
+          "application/json": components["schemas"]["VersionResponse"];
         };
-        responses: {
-            /** @description Attachment created. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AttachSuccessResponse"];
-                };
-            };
-            /** @description Malformed request, missing fields, invalid path or base64. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Missing or invalid bearer token (when the localWriteAPI.token pref is set). */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Parent item or file not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Standalone attachment requested while no Zotero window is open, so no pane selection exists. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Unexpected server error. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
+      };
     };
-    write: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WriteRequest"];
-            };
-        };
-        responses: {
-            /** @description Operation completed successfully. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteSuccessResponse"];
-                };
-            };
-            /** @description Malformed request, missing fields, unsupported operation. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Missing or invalid bearer token (when the localWriteAPI.token pref is set). */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Referenced item, note, attachment, collection, or tag not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with current state (wrong item kind, source equals target, collection cycle). */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description import_from_url, resolve_url: no method identified the source as exactly one work. stage is identify_source; details.attempts lists every method tried with its outcome, and details.remediation names alternative sources that Zotero identifies reliably and the fallback_metadata field of import_from_url. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SourceNotIdentifiedResponse"];
-                };
-            };
-            /** @description Unexpected server error. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description import_from_url, resolve_url: the source URL could not be fetched. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
+  };
+  attachFile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    getOpenApiSpec: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The OpenAPI schema for this plugin version. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/yaml": string;
-                };
-            };
-        };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AttachRequest"];
+      };
     };
+    responses: {
+      /** @description Attachment created. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AttachSuccessResponse"];
+        };
+      };
+      /** @description Malformed request, missing fields, invalid path or base64. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Missing or invalid bearer token (when the localWriteAPI.token pref is set). */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Parent item or file not found. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Standalone attachment requested while no Zotero window is open, so no pane selection exists. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Unexpected server error. */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  write: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["WriteRequest"];
+      };
+    };
+    responses: {
+      /** @description Operation completed successfully. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WriteSuccessResponse"];
+        };
+      };
+      /** @description Malformed request, missing fields, unsupported operation. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Missing or invalid bearer token (when the localWriteAPI.token pref is set). */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Referenced item, note, attachment, collection, or tag not found. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description Request conflicts with current state (wrong item kind, source equals target, collection cycle). */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description import_from_url, resolve_url: no method identified the source as exactly one work. stage is identify_source; details.attempts lists every method tried with its outcome, and details.remediation names alternative sources that Zotero identifies reliably and the fallback_metadata field of import_from_url. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SourceNotIdentifiedResponse"];
+        };
+      };
+      /** @description Unexpected server error. */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+      /** @description import_from_url, resolve_url: the source URL could not be fetched. */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorResponse"];
+        };
+      };
+    };
+  };
+  getOpenApiSpec: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The OpenAPI schema for this plugin version. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/yaml": string;
+        };
+      };
+    };
+  };
 }

@@ -68,7 +68,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "409":
+        '409':
           description: Standalone attachment requested while no Zotero window is open, so no pane selection exists.
           content:
             application/json:
@@ -320,7 +320,7 @@ components:
         item_key:
           allOf:
             - $ref: '#/components/schemas/ItemKey'
-          description: 'Parent item for the attachment. Absent: the attachment is stored standalone (no parent item) in the collection selected in Zotero''s pane, or in the library root when the selected row is not a collection. Present: it must name an existing item.'
+          description: "Parent item for the attachment. Absent: the attachment is stored standalone (no parent item) in the collection selected in Zotero's pane, or in the library root when the selected row is not a collection. Present: it must name an existing item."
         title:
           $ref: '#/components/schemas/NonBlankString'
         file_path:
@@ -375,7 +375,7 @@ components:
                 parent_item_key:
                   type:
                     - string
-                    - "null"
+                    - 'null'
                   description: The request's item_key; null for a standalone attachment.
                 file_path:
                   type:
@@ -391,7 +391,7 @@ components:
                 collection_key:
                   type:
                     - string
-                    - "null"
+                    - 'null'
                   description: Collection a standalone attachment was stored in; null when it was stored in the library root or has a parent item.
       unevaluatedProperties: false
     # ── /write request union ────────────────────────────────────────
