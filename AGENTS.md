@@ -35,6 +35,8 @@ bun run openapi:contract
 Zotero loads `bootstrap.js` as a classic script and calls `install`, `startup`, `shutdown` and `uninstall` as top-level functions.
 A classic script that contains an `import` or `export` statement does not compile.
 Thus `src/bootstrap.ts` declares the four lifecycle functions and exports nothing, and the bundle contains no `import` or `export` statement.
+An XPI is a Zotero add-on package.
+It is a ZIP archive with the `.xpi` extension.
 `tests/build-artifacts.test.ts` builds the XPI and compiles its `bootstrap.js` as a classic script with `node:vm`.
 The test then runs the script and asserts that the four lifecycle functions are on its global scope.
 Build-time constants and Zotero's `APP_SHUTDOWN` are ambient declarations in `src/globals.d.ts`.
