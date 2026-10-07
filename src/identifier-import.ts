@@ -1,5 +1,5 @@
 import { badRequest, notFound } from "./errors";
-import { citationKeys, getUserCollectionOrThrow, userLibraryID } from "./library";
+import { citationKeys, userCollectionIDs, userLibraryID } from "./library";
 import { normalizeStringList, requireNonEmptyString } from "./request-fields";
 import { type RequestData, successResult } from "./responses";
 import {
@@ -35,17 +35,20 @@ function requireImportedItems(value: unknown, operation: string): Zotero.Item[] 
   return value as Zotero.Item[];
 }
 
-export async function handleImportBibTeX(data: RequestData) {
-  let bibtex = requireNonEmptyString(data.bibtex, "bibtex");
-  let collectionKeys = Boolean(data.collection_keys)
-    ? normalizeStringList(data.collection_keys, "collection_keys")
-    : [];
-  let collectionIDs: number[] = [];
-  for (let collectionKey of collectionKeys) {
-    let collection = await getUserCollectionOrThrow(collectionKey);
-    collectionIDs.push(collection.id);
-  }
+// The response fields that name the imported items; the first item is the primary one.
+async function importedItemsFields(items: Zotero.Item[]) {
+  return {
+    item_key: items[0].key,
+    item_id: items[0].id,
+    item_keys: items.map((item) => item.key),
+    item_ids: items.map((item) => item.id),
+    titles: items.map((item) => item.getField("title")),
+    citation_keys: await citationKeys(items),
+  };
+}
 
+// Imports one BibTeX entry into the given collections.
+async function translateBibTeX(bibtex: string, collectionIDs: number[]): Promise<Zotero.Item[]> {
   let translator = createImportTranslator();
   translator.setTranslator(BIBTEX_TRANSLATOR_ID);
   translator.setString(bibtex);
@@ -60,6 +63,15 @@ export async function handleImportBibTeX(data: RequestData) {
   if (items.length !== 1) {
     throw new Error("import_bibtex must create exactly one Zotero item");
   }
+  return items;
+}
+
+export async function handleImportBibTeX(data: RequestData) {
+  let bibtex = requireNonEmptyString(data.bibtex, "bibtex");
+  let collectionKeys = Boolean(data.collection_keys)
+    ? normalizeStringList(data.collection_keys, "collection_keys")
+    : [];
+  let items = await translateBibTeX(bibtex, await userCollectionIDs(collectionKeys));
 
   return successResult(
     "import_bibtex",
@@ -68,14 +80,7 @@ export async function handleImportBibTeX(data: RequestData) {
       collection_keys: collectionKeys,
       translator_id: BIBTEX_TRANSLATOR_ID,
     },
-    {
-      item_key: items[0].key,
-      item_id: items[0].id,
-      item_keys: items.map((item) => item.key),
-      item_ids: items.map((item) => item.id),
-      titles: items.map((item) => item.getField("title")),
-      citation_keys: await citationKeys(items),
-    },
+    await importedItemsFields(items),
   );
 }
 
@@ -101,21 +106,25 @@ async function translateIdentifier(
   return items;
 }
 
+async function translateIdentifiers(
+  identifiers: Identifier[],
+  collections: number[],
+): Promise<Zotero.Item[]> {
+  let items: Zotero.Item[] = [];
+  for (let identifier of identifiers) {
+    items.push(...(await translateIdentifier(identifier, collections)));
+  }
+  return items;
+}
+
 export async function handleImportByIdentifier(data: RequestData) {
   let raw = requireNonEmptyString(data.identifier, "identifier");
   let collectionKeys = Boolean(data.collection_keys)
     ? normalizeStringList(data.collection_keys, "collection_keys")
     : [];
-  let collections: number[] = [];
-  for (let collectionKey of collectionKeys) {
-    let collection = await getUserCollectionOrThrow(collectionKey);
-    collections.push(collection.id);
-  }
+  let collections = await userCollectionIDs(collectionKeys);
 
-  let items: Zotero.Item[] = [];
-  for (let identifier of extractIdentifiers(raw)) {
-    items.push(...(await translateIdentifier(identifier, collections)));
-  }
+  let items = await translateIdentifiers(extractIdentifiers(raw), collections);
 
   return successResult(
     "import_by_identifier",
@@ -124,13 +133,6 @@ export async function handleImportByIdentifier(data: RequestData) {
       item_count: items.length,
       collection_keys: collectionKeys,
     },
-    {
-      item_key: items[0].key,
-      item_id: items[0].id,
-      item_keys: items.map((item) => item.key),
-      item_ids: items.map((item) => item.id),
-      titles: items.map((item) => item.getField("title")),
-      citation_keys: await citationKeys(items),
-    },
+    await importedItemsFields(items),
   );
 }

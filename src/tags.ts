@@ -44,28 +44,32 @@ export async function handleMergeTags(data: RequestData) {
   });
 }
 
-export async function handleDeleteTag(data: RequestData) {
-  // NFC for the same reason as normalizeStringList: Zotero stores the
-  // normalized form, so a non-NFC tag_name would miss getID and 404 on a tag
-  // that does exist.
-  let tagName = requireNonEmptyString(data.tag_name, "tag_name").normalize("NFC");
+function requireTagID(tagName: string): number {
   let tagID = Zotero.Tags.getID(tagName);
   if (tagID === false || tagID === 0) {
     throw notFound("Tag not found: " + tagName);
   }
+  return tagID;
+}
 
-  // Remove the tag from every item that carries it before removing it from the
-  // library, and report how many items changed.
+// The number of items in the user library that carry the tag.
+async function taggedItemCount(tagName: string): Promise<number> {
   let search = new Zotero.Search({ libraryID: userLibraryID() });
   search.addCondition("tag", "is", tagName);
-  let itemIDs = await search.search();
+  return (await search.search()).length;
+}
 
-  // Zotero.Tags.removeFromLibrary already detaches the tag from every item that
-  // carries it. Doing that here first left it with an empty item set, and its
-  // UPDATE then built "WHERE itemID IN ()" and failed with "Parameter 1 is
-  // undefined". The search above is kept only to report how many items changed.
-  let modifiedCount = itemIDs.length;
-
+// NFC for the same reason as normalizeStringList: Zotero stores the
+// normalized form, so a non-NFC tag_name would miss getID and 404 on a tag
+// that does exist.
+// Zotero.Tags.removeFromLibrary already detaches the tag from every item that
+// carries it. Doing that here first left it with an empty item set, and its
+// UPDATE then built "WHERE itemID IN ()" and failed with "Parameter 1 is
+// undefined". The items are counted first only to report how many items changed.
+export async function handleDeleteTag(data: RequestData) {
+  let tagName = requireNonEmptyString(data.tag_name, "tag_name").normalize("NFC");
+  let tagID = requireTagID(tagName);
+  let modifiedCount = await taggedItemCount(tagName);
   await removeTagsFromUserLibrary(userLibraryID(), [tagID]);
 
   return successResult("delete_tag", {

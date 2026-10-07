@@ -97,6 +97,19 @@ async function reparent(childIDs: number[], parent: Zotero.Item): Promise<number
   return children.length;
 }
 
+// Moves the source's tags, relations, notes and attachments to the target, then trashes
+// the source; the counts are what moved.
+async function mergeIntoTarget(sourceItem: Zotero.Item, targetItem: Zotero.Item) {
+  let tags = mergeTags(sourceItem, targetItem);
+  let relations = mergeRelations(sourceItem, targetItem);
+  await targetItem.saveTx();
+  let notes = await reparent(sourceItem.getNotes(true), targetItem);
+  let attachments = await reparent(sourceItem.getAttachments(true), targetItem);
+  sourceItem.deleted = true;
+  await sourceItem.saveTx();
+  return { attachments, notes, tags, relations };
+}
+
 export async function handleMergeItems(data: RequestData) {
   let sourceKey = requireNonEmptyString(data.source_key, "source_key");
   let targetKey = requireNonEmptyString(data.target_key, "target_key");
@@ -109,16 +122,7 @@ export async function handleMergeItems(data: RequestData) {
   if (!sourceItem.isRegularItem() || !targetItem.isRegularItem()) {
     throw conflict("merge_items requires two regular Zotero items");
   }
-  let tags = mergeTags(sourceItem, targetItem);
-  let relations = mergeRelations(sourceItem, targetItem);
-  await targetItem.saveTx();
-
-  let notes = await reparent(sourceItem.getNotes(true), targetItem);
-  let attachments = await reparent(sourceItem.getAttachments(true), targetItem);
-  let transferred = { attachments, notes, tags, relations };
-
-  sourceItem.deleted = true;
-  await sourceItem.saveTx();
+  let transferred = await mergeIntoTarget(sourceItem, targetItem);
 
   return successResult("merge_items", {
     source_key: sourceKey,
