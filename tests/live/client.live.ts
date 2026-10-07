@@ -89,8 +89,7 @@ test("wrapper POSTs /write and returns the typed success branch", async () => {
   expect(readBack.data.itemType).toBe("book");
 });
 
-test("wrapper returns the typed error branch and sends the body unchanged",
-async () => {
+test("wrapper returns the typed error branch and sends the body unchanged", async () => {
   // A structurally valid body naming an item that cannot exist: the add-on
   // rejects it and echoes the body it parsed back in details.request, which is
   // what proves the wrapper serialized the body without mutating it.
@@ -110,4 +109,4 @@ async () => {
   expect(error.operation).toBe("add_item_tags");
   expect(error.error).toContain("Item not found");
   expect(error.details.request).toEqual(body);
-},);
+});

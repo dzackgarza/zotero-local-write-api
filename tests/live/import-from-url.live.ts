@@ -171,7 +171,6 @@ async function importFromUrl(url: string, collectionKeys?: string[]) {
 }
 
 beforeAll(async () => {
-  
   const { data, error } = await client.POST("/write", {
     body: { operation: "create_collection", name: `lw-import-url-${uid}` },
   });
@@ -201,8 +200,7 @@ afterAll(async () => {
   }
 });
 
-test("an arXiv abstract page becomes the preprint through the arXiv translator",
-async () => {
+test("an arXiv abstract page becomes the preprint through the arXiv translator", async () => {
   const data = await importFromUrl("https://arxiv.org/abs/1706.03762");
   expect(data.method).toBe("web_translator");
   expect(data.existing).toBe(false);
@@ -213,10 +211,9 @@ async () => {
   expect(data.citation_key).toBe(item.citationKey);
   expect(data.citation_key).not.toBe("");
   await expectStoredPdf(data.item_key);
-},);
+});
 
-test("a DOI landing URL is followed to the publisher page and becomes the article; a second send returns the same item",
-async () => {
+test("a DOI landing URL is followed to the publisher page and becomes the article; a second send returns the same item", async () => {
   const url = "https://doi.org/10.1371/journal.pmed.0020124";
   const first = await importFromUrl(url);
   expect(first.method).toBe("web_translator");
@@ -230,10 +227,9 @@ async () => {
   expect(second.existing).toBe(true);
   expect(second.item_key).toBe(first.item_key);
   expect((await readItem(first.item_key)).collections).toContain(collectionKey);
-},);
+});
 
-test("a direct PDF URL is recognized from the identifier inside the PDF",
-async () => {
+test("a direct PDF URL is recognized from the identifier inside the PDF", async () => {
   const data = await importFromUrl(
     "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0000308&type=printable",
   );
@@ -243,10 +239,9 @@ async () => {
   expect(item.itemType).toBe("journalArticle");
   expect(item.DOI?.toLowerCase()).toBe("10.1371/journal.pone.0000308");
   await expectStoredPdf(data.item_key);
-},);
+});
 
-test("a page with only citation_* tags becomes a journal article in the requested collection",
-async () => {
+test("a page with only citation_* tags becomes a journal article in the requested collection", async () => {
   const title = `lw-citation-${uid}`;
   const url = servePage(`/citation-${uid}`, citationHead(title));
   const data = await importFromUrl(url, [collectionKey]);
@@ -261,7 +256,7 @@ async () => {
   const again = await importFromUrl(url);
   expect(again.existing).toBe(true);
   expect(again.item_key).toBe(data.item_key);
-},);
+});
 
 test("two different papers served at the same URL become two items", async () => {
   const path = `/shared-landing-${uid}`;
@@ -301,8 +296,7 @@ test("a page that publishes its BibTeX is imported from that BibTeX", async () =
   expect(item.title).toBe(title);
 });
 
-test("a page with only a title, an author and a year is identified by an external service",
-async () => {
+test("a page with only a title, an author and a year is identified by an external service", async () => {
   // Silverman's 2009 book has the same title; the author and year pick Tate's 1974 paper.
   const url = servePage(
     `/tate-${uid}`,
@@ -318,10 +312,9 @@ async () => {
   const item = await readItem(data.item_key);
   expect(item.itemType).toBe("journalArticle");
   expect(item.DOI?.toLowerCase()).toBe("10.1007/bf01389745");
-},);
+});
 
-test("a URL that no method identifies returns the typed error and creates nothing",
-async () => {
+test("a URL that no method identifies returns the typed error and creates nothing", async () => {
   const url = servePage(`/plain-${uid}`, "<title>Nothing here</title>");
   const { data, error, response } = await client.POST("/write", {
     body: { operation: "import_from_url", url },
@@ -336,7 +329,7 @@ async () => {
   const remediation = (error.details as { remediation: Remediation }).remediation;
   expect(remediation.fallback_field).toBe("fallback_metadata");
   expect(remediation.alternative_sources.map((source) => source.name)).toContain("arXiv");
-},);
+});
 
 type Remediation = {
   message: string;
@@ -360,8 +353,7 @@ async function importWithFallback(url: string) {
   return data;
 }
 
-test("an unidentified page with fallback_metadata becomes a citable item tagged for review",
-async () => {
+test("an unidentified page with fallback_metadata becomes a citable item tagged for review", async () => {
   const url = servePage(`/plain-fallback-${uid}`, "<title>Nothing here</title>");
   const data = await importWithFallback(url);
   expect(data.method).toBe("caller_metadata");
@@ -380,15 +372,14 @@ async () => {
   const again = await importWithFallback(url);
   expect(again.existing).toBe(true);
   expect(again.item_key).toBe(data.item_key);
-},);
+});
 
-test("an unidentified PDF with fallback_metadata is stored under the new item",
-async () => {
+test("an unidentified PDF with fallback_metadata is stored under the new item", async () => {
   const url = servePdf(`/unidentified-${uid}.pdf`, `lw fixture body ${uid}`);
   const data = await importWithFallback(url);
   expect(data.method).toBe("caller_metadata");
   await expectStoredPdf(data.item_key);
-},);
+});
 
 test("fallback_metadata without a year is rejected and creates nothing", async () => {
   const before = await libraryItemCount();
@@ -408,8 +399,7 @@ test("fallback_metadata without a year is rejected and creates nothing", async (
   expect(await libraryItemCount()).toBe(before);
 });
 
-test("import_by_identifier answers the citation key of every item it creates",
-async () => {
+test("import_by_identifier answers the citation key of every item it creates", async () => {
   const { data, error } = await client.POST("/write", {
     body: { operation: "import_by_identifier", identifier: "arXiv:1512.03385" },
   });
@@ -421,7 +411,7 @@ async () => {
     data.item_keys.map(async (key) => (await readItem(key)).citationKey),
   );
   expect(data.citation_keys).toEqual(keys);
-},);
+});
 
 async function resolveUrl(url: string) {
   const { data, error } = await client.POST("/write", {
@@ -446,8 +436,7 @@ async function libraryItemCount(): Promise<number> {
   return Number(response.headers.get("Total-Results"));
 }
 
-test("resolve_url returns the metadata import_from_url would save, and saves nothing",
-async () => {
+test("resolve_url returns the metadata import_from_url would save, and saves nothing", async () => {
   const title = `lw-resolve-${uid}`;
   const url = servePage(`/resolve-${uid}`, citationHead(title));
   const before = await libraryItemCount();
@@ -458,10 +447,9 @@ async () => {
   expect(data.csl.author).toEqual([{ family: "Fixture", given: "Ada" }]);
   expect(data.csl.issued).toEqual({ "date-parts": [["2021", 3, 4]] });
   expect(await libraryItemCount()).toBe(before);
-},);
+});
 
-test("resolve_url recognizes a direct PDF URL and leaves no item behind",
-async () => {
+test("resolve_url recognizes a direct PDF URL and leaves no item behind", async () => {
   const before = await libraryItemCount();
   const data = await resolveUrl(
     "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0000308&type=printable",
@@ -470,10 +458,9 @@ async () => {
   expect(data.item_type).toBe("journalArticle");
   expect(String(data.csl.DOI).toLowerCase()).toBe("10.1371/journal.pone.0000308");
   expect(await libraryItemCount()).toBe(before);
-},);
+});
 
-test("resolve_url on a URL that no method identifies returns the typed error",
-async () => {
+test("resolve_url on a URL that no method identifies returns the typed error", async () => {
   const url = servePage(`/plain-resolve-${uid}`, "<title>Nothing here</title>");
   const { data, error, response } = await client.POST("/write", {
     body: { operation: "resolve_url", url },
@@ -485,4 +472,4 @@ async () => {
   }
   expect(error.operation).toBe("resolve_url");
   expect(error.stage).toBe("identify_source");
-},);
+});
