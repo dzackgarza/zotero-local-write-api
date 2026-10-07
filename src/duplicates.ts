@@ -87,6 +87,14 @@ async function doiMatches(keys: DuplicateKeys): Promise<number[]> {
   return rows.filter((row) => row.value.trim().toUpperCase() === wanted).map((row) => row.itemID);
 }
 
+// Whether an ISBN field, which may list several ISBNs, holds the given ISBN-13.
+function holdsISBN13(field: string, wanted: string): boolean {
+  return field
+    .split(/\s+/)
+    .map((value) => Zotero.Utilities.cleanISBN(value))
+    .some((value) => value !== false && Zotero.Utilities.toISBN13(value) === wanted);
+}
+
 async function isbnMatches(keys: DuplicateKeys): Promise<number[]> {
   if (keys.itemType !== "book" || keys.ISBN === undefined) {
     return [];
@@ -97,14 +105,7 @@ async function isbnMatches(keys: DuplicateKeys): Promise<number[]> {
   }
   let wanted = Zotero.Utilities.toISBN13(isbn);
   let rows = await fieldRows("ISBN", "book");
-  return rows
-    .filter((row) =>
-      String(row.value)
-        .split(/\s+/)
-        .map((value) => Zotero.Utilities.cleanISBN(value))
-        .some((value) => value !== false && Zotero.Utilities.toISBN13(value) === wanted),
-    )
-    .map((row) => row.itemID);
+  return rows.filter((row) => holdsISBN13(String(row.value), wanted)).map((row) => row.itemID);
 }
 
 async function urlAndTitleMatches(keys: DuplicateKeys): Promise<number[]> {
