@@ -301,28 +301,28 @@ schemathesis-fuzz-live:
 
 # Live proof of the generated OpenAPI client wrapper (src/client.ts) against a
 # real Zotero: real POST /write, body serialized unchanged, typed success/error
-# split. MUTATING, so it is opt-in via ZOTERO_LIVE and is never collected by
-# ordinary `bun test`; objects are uniquely prefixed and trashed afterwards.
-[doc("Live proof of the generated TypeScript client wrapper (MUTATING, opt-in)")]
+# split. MUTATING. The live suites in tests/live have no `.test` in their file
+# names, so `bun test` does not collect them; these recipes run each one by its
+# `./` path, and an unreachable Zotero fails it. Objects are uniquely prefixed
+# and trashed afterwards.
+[doc("Live proof of the generated TypeScript client wrapper (MUTATING)")]
 client-live:
-    ZOTERO_LIVE=1 bun test tests/client-live.test.ts
+    bun test ./tests/live/client.live.ts
 
 # Live proof of import_from_url and resolve_url against a real Zotero and the
-# real publisher and metadata services. MUTATING, so it is opt-in via ZOTERO_LIVE;
-# every item it creates is trashed afterwards. Library 0 is the local API's name
-# for the user library. Remote translators and metadata services answer in
-# seconds, but the PDF case downloads and recognizes a full article, hence the
-# 180 s per-test timeout.
-[doc("Live proof of import_from_url and resolve_url (MUTATING, opt-in)")]
+# real publisher and metadata services. MUTATING; every item it creates is
+# trashed afterwards. Library 0 is the local API's name for the user library.
+# Remote translators and metadata services answer in seconds, but the PDF case
+# downloads and recognizes a full article, hence the 180 s per-test timeout.
+[doc("Live proof of import_from_url and resolve_url (MUTATING)")]
 import-from-url-live:
-    ZOTERO_LIVE=1 \
     ZOTERO_LOCAL_BASE_URL="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}" \
     ZOTERO_LIBRARY_ID="${ZOTERO_LIBRARY_ID:-0}" \
-    bun test --timeout 180000 tests/import-from-url-live.test.ts
+    bun test --timeout 180000 ./tests/live/import-from-url.live.ts
 
 # Stateful create/note/collection/tag/merge/restore/trash proof with Zotero
 # read-back. Safe against a real library: unique-prefixed objects, cleanup in
-# teardown. Skips when no live add-on is reachable.
+# teardown. An unreachable Zotero fails the suite.
 [doc("Stateful create/merge/restore/trash workflow proof against a live Zotero")]
 schemathesis-stateful-live:
     uv run pytest tests/schemathesis/test_stateful.py -q

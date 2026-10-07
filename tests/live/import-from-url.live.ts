@@ -8,22 +8,21 @@
  * sources; the local cases serve fixture pages from this process so that each
  * method can be forced without depending on a third-party page layout.
  *
- * MUTATING: each case writes into the library, so the suite is opt-in via
- * ZOTERO_LIVE=1 (`just import-from-url-live`) and is never collected by ordinary
- * `bun test` QC. Every item the operation reports as newly created is trashed in
+ * MUTATING: each case writes into the library. The file name has no `.test`
+ * part, so `bun test` does not collect it; `just import-from-url-live` runs it by
+ * path. Every item the operation reports as newly created is trashed in
  * `afterAll`, together with the scratch collection. Items reported as already
  * present are never touched, because they are the library's own.
  *
- * Opted in but unreachable is a hard failure, never a skip.
+ * An unreachable Zotero fails the suite in `beforeAll`.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 
-import { createZoteroLocalWriteClient } from "../src/client";
+import { createZoteroLocalWriteClient } from "../../src/client";
 
-const LIVE = process.env.ZOTERO_LIVE === "1";
 const client = createZoteroLocalWriteClient(process.env.ZOTERO_LOCAL_BASE_URL);
 
-/** A setting the `import-from-url-live` recipe names; the suite reads it only when live. */
+/** A setting the `import-from-url-live` recipe names. */
 function liveSetting(name: "ZOTERO_LOCAL_BASE_URL" | "ZOTERO_LIBRARY_ID"): string {
   const value = process.env[name];
   if (value === undefined) {
@@ -172,9 +171,7 @@ async function importFromUrl(url: string, collectionKeys?: string[]) {
 }
 
 beforeAll(async () => {
-  if (!LIVE) {
-    return;
-  }
+  
   const { data, error } = await client.POST("/write", {
     body: { operation: "create_collection", name: `lw-import-url-${uid}` },
   });
@@ -204,77 +201,69 @@ afterAll(async () => {
   }
 });
 
-test.skipIf(!LIVE)(
-  "an arXiv abstract page becomes the preprint through the arXiv translator",
-  async () => {
-    const data = await importFromUrl("https://arxiv.org/abs/1706.03762");
-    expect(data.method).toBe("web_translator");
-    expect(data.existing).toBe(false);
-    const item = await readItem(data.item_key);
-    expect(item.itemType).toBe("preprint");
-    expect(item.title).toBe("Attention Is All You Need");
-    expect(item.DOI).toBe("10.48550/arXiv.1706.03762");
-    expect(data.citation_key).toBe(item.citationKey);
-    expect(data.citation_key).not.toBe("");
-    await expectStoredPdf(data.item_key);
-  },
-);
+test("an arXiv abstract page becomes the preprint through the arXiv translator",
+async () => {
+  const data = await importFromUrl("https://arxiv.org/abs/1706.03762");
+  expect(data.method).toBe("web_translator");
+  expect(data.existing).toBe(false);
+  const item = await readItem(data.item_key);
+  expect(item.itemType).toBe("preprint");
+  expect(item.title).toBe("Attention Is All You Need");
+  expect(item.DOI).toBe("10.48550/arXiv.1706.03762");
+  expect(data.citation_key).toBe(item.citationKey);
+  expect(data.citation_key).not.toBe("");
+  await expectStoredPdf(data.item_key);
+},);
 
-test.skipIf(!LIVE)(
-  "a DOI landing URL is followed to the publisher page and becomes the article; a second send returns the same item",
-  async () => {
-    const url = "https://doi.org/10.1371/journal.pmed.0020124";
-    const first = await importFromUrl(url);
-    expect(first.method).toBe("web_translator");
-    expect(first.existing).toBe(false);
-    const item = await readItem(first.item_key);
-    expect(item.itemType).toBe("journalArticle");
-    expect(item.title).toBe("Why Most Published Research Findings Are False");
-    expect(item.DOI?.toLowerCase()).toBe("10.1371/journal.pmed.0020124");
+test("a DOI landing URL is followed to the publisher page and becomes the article; a second send returns the same item",
+async () => {
+  const url = "https://doi.org/10.1371/journal.pmed.0020124";
+  const first = await importFromUrl(url);
+  expect(first.method).toBe("web_translator");
+  expect(first.existing).toBe(false);
+  const item = await readItem(first.item_key);
+  expect(item.itemType).toBe("journalArticle");
+  expect(item.title).toBe("Why Most Published Research Findings Are False");
+  expect(item.DOI?.toLowerCase()).toBe("10.1371/journal.pmed.0020124");
 
-    const second = await importFromUrl(url, [collectionKey]);
-    expect(second.existing).toBe(true);
-    expect(second.item_key).toBe(first.item_key);
-    expect((await readItem(first.item_key)).collections).toContain(collectionKey);
-  },
-);
+  const second = await importFromUrl(url, [collectionKey]);
+  expect(second.existing).toBe(true);
+  expect(second.item_key).toBe(first.item_key);
+  expect((await readItem(first.item_key)).collections).toContain(collectionKey);
+},);
 
-test.skipIf(!LIVE)(
-  "a direct PDF URL is recognized from the identifier inside the PDF",
-  async () => {
-    const data = await importFromUrl(
-      "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0000308&type=printable",
-    );
-    expect(data.method).toBe("pdf_recognition");
-    expect(data.existing).toBe(false);
-    const item = await readItem(data.item_key);
-    expect(item.itemType).toBe("journalArticle");
-    expect(item.DOI?.toLowerCase()).toBe("10.1371/journal.pone.0000308");
-    await expectStoredPdf(data.item_key);
-  },
-);
+test("a direct PDF URL is recognized from the identifier inside the PDF",
+async () => {
+  const data = await importFromUrl(
+    "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0000308&type=printable",
+  );
+  expect(data.method).toBe("pdf_recognition");
+  expect(data.existing).toBe(false);
+  const item = await readItem(data.item_key);
+  expect(item.itemType).toBe("journalArticle");
+  expect(item.DOI?.toLowerCase()).toBe("10.1371/journal.pone.0000308");
+  await expectStoredPdf(data.item_key);
+},);
 
-test.skipIf(!LIVE)(
-  "a page with only citation_* tags becomes a journal article in the requested collection",
-  async () => {
-    const title = `lw-citation-${uid}`;
-    const url = servePage(`/citation-${uid}`, citationHead(title));
-    const data = await importFromUrl(url, [collectionKey]);
-    expect(data.method).toBe("page_metadata");
-    expect(data.existing).toBe(false);
-    const item = await readItem(data.item_key);
-    expect(item.itemType).toBe("journalArticle");
-    expect(item.title).toBe(title);
-    expect(item.creators.map((creator) => creator.lastName)).toEqual(["Fixture"]);
-    expect(item.collections).toEqual([collectionKey]);
+test("a page with only citation_* tags becomes a journal article in the requested collection",
+async () => {
+  const title = `lw-citation-${uid}`;
+  const url = servePage(`/citation-${uid}`, citationHead(title));
+  const data = await importFromUrl(url, [collectionKey]);
+  expect(data.method).toBe("page_metadata");
+  expect(data.existing).toBe(false);
+  const item = await readItem(data.item_key);
+  expect(item.itemType).toBe("journalArticle");
+  expect(item.title).toBe(title);
+  expect(item.creators.map((creator) => creator.lastName)).toEqual(["Fixture"]);
+  expect(item.collections).toEqual([collectionKey]);
 
-    const again = await importFromUrl(url);
-    expect(again.existing).toBe(true);
-    expect(again.item_key).toBe(data.item_key);
-  },
-);
+  const again = await importFromUrl(url);
+  expect(again.existing).toBe(true);
+  expect(again.item_key).toBe(data.item_key);
+},);
 
-test.skipIf(!LIVE)("two different papers served at the same URL become two items", async () => {
+test("two different papers served at the same URL become two items", async () => {
   const path = `/shared-landing-${uid}`;
   const first = await importFromUrl(servePage(path, citationHead(`lw-shared-a-${uid}`)));
   const second = await importFromUrl(servePage(path, citationHead(`lw-shared-b-${uid}`)));
@@ -284,7 +273,7 @@ test.skipIf(!LIVE)("two different papers served at the same URL become two items
   expect((await readItem(second.item_key)).title).toBe(`lw-shared-b-${uid}`);
 });
 
-test.skipIf(!LIVE)("a page with no metadata is identified by the arXiv ID in its URL", async () => {
+test("a page with no metadata is identified by the arXiv ID in its URL", async () => {
   // A DOI in the URL is claimed first by Zotero's DOI web translator; no
   // web translator claims an arXiv ID outside arxiv.org.
   const url = servePage(`/papers/1512.03385`, "<title>Article</title>");
@@ -295,7 +284,7 @@ test.skipIf(!LIVE)("a page with no metadata is identified by the arXiv ID in its
   expect(item.DOI).toBe("10.48550/arXiv.1512.03385");
 });
 
-test.skipIf(!LIVE)("a page that publishes its BibTeX is imported from that BibTeX", async () => {
+test("a page that publishes its BibTeX is imported from that BibTeX", async () => {
   const title = `lw-bibtex-${uid}`;
   fixtures.set(`/cite-${uid}.bib`, {
     body: `@article{fixture${uid},\n  title = {${title}},\n  author = {Fixture, Ada},\n  journal = {Journal of Fixtures},\n  year = {2020}\n}\n`,
@@ -312,46 +301,42 @@ test.skipIf(!LIVE)("a page that publishes its BibTeX is imported from that BibTe
   expect(item.title).toBe(title);
 });
 
-test.skipIf(!LIVE)(
-  "a page with only a title, an author and a year is identified by an external service",
-  async () => {
-    // Silverman's 2009 book has the same title; the author and year pick Tate's 1974 paper.
-    const url = servePage(
-      `/tate-${uid}`,
-      [
-        `<title>The arithmetic of elliptic curves</title>`,
-        `<meta name="DC.title" content="The arithmetic of elliptic curves">`,
-        `<meta name="DC.creator" content="Tate, John">`,
-        `<meta name="DC.date" content="1974">`,
-      ].join(""),
-    );
-    const data = await importFromUrl(url);
-    expect(data.method).toBe("external_service");
-    const item = await readItem(data.item_key);
-    expect(item.itemType).toBe("journalArticle");
-    expect(item.DOI?.toLowerCase()).toBe("10.1007/bf01389745");
-  },
-);
+test("a page with only a title, an author and a year is identified by an external service",
+async () => {
+  // Silverman's 2009 book has the same title; the author and year pick Tate's 1974 paper.
+  const url = servePage(
+    `/tate-${uid}`,
+    [
+      `<title>The arithmetic of elliptic curves</title>`,
+      `<meta name="DC.title" content="The arithmetic of elliptic curves">`,
+      `<meta name="DC.creator" content="Tate, John">`,
+      `<meta name="DC.date" content="1974">`,
+    ].join(""),
+  );
+  const data = await importFromUrl(url);
+  expect(data.method).toBe("external_service");
+  const item = await readItem(data.item_key);
+  expect(item.itemType).toBe("journalArticle");
+  expect(item.DOI?.toLowerCase()).toBe("10.1007/bf01389745");
+},);
 
-test.skipIf(!LIVE)(
-  "a URL that no method identifies returns the typed error and creates nothing",
-  async () => {
-    const url = servePage(`/plain-${uid}`, "<title>Nothing here</title>");
-    const { data, error, response } = await client.POST("/write", {
-      body: { operation: "import_from_url", url },
-    });
-    expect(data).toBeUndefined();
-    expect(response.status).toBe(422);
-    if (error === undefined) {
-      throw new Error("expected the error branch");
-    }
-    expect(error.operation).toBe("import_from_url");
-    expect(error.stage).toBe("identify_source");
-    const remediation = (error.details as { remediation: Remediation }).remediation;
-    expect(remediation.fallback_field).toBe("fallback_metadata");
-    expect(remediation.alternative_sources.map((source) => source.name)).toContain("arXiv");
-  },
-);
+test("a URL that no method identifies returns the typed error and creates nothing",
+async () => {
+  const url = servePage(`/plain-${uid}`, "<title>Nothing here</title>");
+  const { data, error, response } = await client.POST("/write", {
+    body: { operation: "import_from_url", url },
+  });
+  expect(data).toBeUndefined();
+  expect(response.status).toBe(422);
+  if (error === undefined) {
+    throw new Error("expected the error branch");
+  }
+  expect(error.operation).toBe("import_from_url");
+  expect(error.stage).toBe("identify_source");
+  const remediation = (error.details as { remediation: Remediation }).remediation;
+  expect(remediation.fallback_field).toBe("fallback_metadata");
+  expect(remediation.alternative_sources.map((source) => source.name)).toContain("arXiv");
+},);
 
 type Remediation = {
   message: string;
@@ -375,41 +360,37 @@ async function importWithFallback(url: string) {
   return data;
 }
 
-test.skipIf(!LIVE)(
-  "an unidentified page with fallback_metadata becomes a citable item tagged for review",
-  async () => {
-    const url = servePage(`/plain-fallback-${uid}`, "<title>Nothing here</title>");
-    const data = await importWithFallback(url);
-    expect(data.method).toBe("caller_metadata");
-    expect(data.existing).toBe(false);
-    const item = await readItem(data.item_key);
-    expect(item.title).toBe(FALLBACK_METADATA.title);
-    expect(item.creators).toEqual([
-      { creatorType: "author", firstName: "Ada", lastName: "Fallbackauthor" },
-    ]);
-    expect(item.date).toBe("2019");
-    expect(item.url).toBe(url);
-    expect(item.tags.map((tag) => tag.tag)).toContain("metadata:unresolved");
-    expect(data.citation_key).toBe(item.citationKey);
-    expect(data.citation_key).not.toBe("");
+test("an unidentified page with fallback_metadata becomes a citable item tagged for review",
+async () => {
+  const url = servePage(`/plain-fallback-${uid}`, "<title>Nothing here</title>");
+  const data = await importWithFallback(url);
+  expect(data.method).toBe("caller_metadata");
+  expect(data.existing).toBe(false);
+  const item = await readItem(data.item_key);
+  expect(item.title).toBe(FALLBACK_METADATA.title);
+  expect(item.creators).toEqual([
+    { creatorType: "author", firstName: "Ada", lastName: "Fallbackauthor" },
+  ]);
+  expect(item.date).toBe("2019");
+  expect(item.url).toBe(url);
+  expect(item.tags.map((tag) => tag.tag)).toContain("metadata:unresolved");
+  expect(data.citation_key).toBe(item.citationKey);
+  expect(data.citation_key).not.toBe("");
 
-    const again = await importWithFallback(url);
-    expect(again.existing).toBe(true);
-    expect(again.item_key).toBe(data.item_key);
-  },
-);
+  const again = await importWithFallback(url);
+  expect(again.existing).toBe(true);
+  expect(again.item_key).toBe(data.item_key);
+},);
 
-test.skipIf(!LIVE)(
-  "an unidentified PDF with fallback_metadata is stored under the new item",
-  async () => {
-    const url = servePdf(`/unidentified-${uid}.pdf`, `lw fixture body ${uid}`);
-    const data = await importWithFallback(url);
-    expect(data.method).toBe("caller_metadata");
-    await expectStoredPdf(data.item_key);
-  },
-);
+test("an unidentified PDF with fallback_metadata is stored under the new item",
+async () => {
+  const url = servePdf(`/unidentified-${uid}.pdf`, `lw fixture body ${uid}`);
+  const data = await importWithFallback(url);
+  expect(data.method).toBe("caller_metadata");
+  await expectStoredPdf(data.item_key);
+},);
 
-test.skipIf(!LIVE)("fallback_metadata without a year is rejected and creates nothing", async () => {
+test("fallback_metadata without a year is rejected and creates nothing", async () => {
   const before = await libraryItemCount();
   const url = servePage(`/plain-noyear-${uid}`, "<title>Nothing here</title>");
   const { title, creators } = FALLBACK_METADATA;
@@ -427,22 +408,20 @@ test.skipIf(!LIVE)("fallback_metadata without a year is rejected and creates not
   expect(await libraryItemCount()).toBe(before);
 });
 
-test.skipIf(!LIVE)(
-  "import_by_identifier answers the citation key of every item it creates",
-  async () => {
-    const { data, error } = await client.POST("/write", {
-      body: { operation: "import_by_identifier", identifier: "arXiv:1512.03385" },
-    });
-    if (error !== undefined || data === undefined || data.operation !== "import_by_identifier") {
-      throw new Error("import_by_identifier failed");
-    }
-    createdItemKeys.push(...data.item_keys);
-    const keys = await Promise.all(
-      data.item_keys.map(async (key) => (await readItem(key)).citationKey),
-    );
-    expect(data.citation_keys).toEqual(keys);
-  },
-);
+test("import_by_identifier answers the citation key of every item it creates",
+async () => {
+  const { data, error } = await client.POST("/write", {
+    body: { operation: "import_by_identifier", identifier: "arXiv:1512.03385" },
+  });
+  if (error !== undefined || data === undefined || data.operation !== "import_by_identifier") {
+    throw new Error("import_by_identifier failed");
+  }
+  createdItemKeys.push(...data.item_keys);
+  const keys = await Promise.all(
+    data.item_keys.map(async (key) => (await readItem(key)).citationKey),
+  );
+  expect(data.citation_keys).toEqual(keys);
+},);
 
 async function resolveUrl(url: string) {
   const { data, error } = await client.POST("/write", {
@@ -467,49 +446,43 @@ async function libraryItemCount(): Promise<number> {
   return Number(response.headers.get("Total-Results"));
 }
 
-test.skipIf(!LIVE)(
-  "resolve_url returns the metadata import_from_url would save, and saves nothing",
-  async () => {
-    const title = `lw-resolve-${uid}`;
-    const url = servePage(`/resolve-${uid}`, citationHead(title));
-    const before = await libraryItemCount();
-    const data = await resolveUrl(url);
-    expect(data.method).toBe("page_metadata");
-    expect(data.item_type).toBe("journalArticle");
-    expect(data.csl.title).toBe(title);
-    expect(data.csl.author).toEqual([{ family: "Fixture", given: "Ada" }]);
-    expect(data.csl.issued).toEqual({ "date-parts": [["2021", 3, 4]] });
-    expect(await libraryItemCount()).toBe(before);
-  },
-);
+test("resolve_url returns the metadata import_from_url would save, and saves nothing",
+async () => {
+  const title = `lw-resolve-${uid}`;
+  const url = servePage(`/resolve-${uid}`, citationHead(title));
+  const before = await libraryItemCount();
+  const data = await resolveUrl(url);
+  expect(data.method).toBe("page_metadata");
+  expect(data.item_type).toBe("journalArticle");
+  expect(data.csl.title).toBe(title);
+  expect(data.csl.author).toEqual([{ family: "Fixture", given: "Ada" }]);
+  expect(data.csl.issued).toEqual({ "date-parts": [["2021", 3, 4]] });
+  expect(await libraryItemCount()).toBe(before);
+},);
 
-test.skipIf(!LIVE)(
-  "resolve_url recognizes a direct PDF URL and leaves no item behind",
-  async () => {
-    const before = await libraryItemCount();
-    const data = await resolveUrl(
-      "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0000308&type=printable",
-    );
-    expect(data.method).toBe("pdf_recognition");
-    expect(data.item_type).toBe("journalArticle");
-    expect(String(data.csl.DOI).toLowerCase()).toBe("10.1371/journal.pone.0000308");
-    expect(await libraryItemCount()).toBe(before);
-  },
-);
+test("resolve_url recognizes a direct PDF URL and leaves no item behind",
+async () => {
+  const before = await libraryItemCount();
+  const data = await resolveUrl(
+    "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0000308&type=printable",
+  );
+  expect(data.method).toBe("pdf_recognition");
+  expect(data.item_type).toBe("journalArticle");
+  expect(String(data.csl.DOI).toLowerCase()).toBe("10.1371/journal.pone.0000308");
+  expect(await libraryItemCount()).toBe(before);
+},);
 
-test.skipIf(!LIVE)(
-  "resolve_url on a URL that no method identifies returns the typed error",
-  async () => {
-    const url = servePage(`/plain-resolve-${uid}`, "<title>Nothing here</title>");
-    const { data, error, response } = await client.POST("/write", {
-      body: { operation: "resolve_url", url },
-    });
-    expect(data).toBeUndefined();
-    expect(response.status).toBe(422);
-    if (error === undefined) {
-      throw new Error("expected the error branch");
-    }
-    expect(error.operation).toBe("resolve_url");
-    expect(error.stage).toBe("identify_source");
-  },
-);
+test("resolve_url on a URL that no method identifies returns the typed error",
+async () => {
+  const url = servePage(`/plain-resolve-${uid}`, "<title>Nothing here</title>");
+  const { data, error, response } = await client.POST("/write", {
+    body: { operation: "resolve_url", url },
+  });
+  expect(data).toBeUndefined();
+  expect(response.status).toBe(422);
+  if (error === undefined) {
+    throw new Error("expected the error branch");
+  }
+  expect(error.operation).toBe("resolve_url");
+  expect(error.stage).toBe("identify_source");
+},);

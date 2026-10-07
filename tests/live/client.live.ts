@@ -7,19 +7,17 @@
  * the wrapper against a real running Zotero over real HTTP. There is no mock —
  * a hand-fed mock would prove `openapi-fetch`, not this repo's wrapper.
  *
- * MUTATING: creating an item is a real library write, so the suite is opt-in
- * via ZOTERO_LIVE=1 and is never collected by ordinary `bun test` QC. Every
- * object is uniquely prefixed and trashed in `afterAll`, so it is safe against
- * a real library as well as CI's disposable profile.
+ * MUTATING: creating an item is a real library write. The file name has no
+ * `.test` part, so `bun test` does not collect it; `just client-live` runs it by
+ * path. Every object is uniquely prefixed and trashed in `afterAll`, so it is
+ * safe against a real library as well as CI's disposable profile.
  *
- * Opted in but unreachable is a hard failure, never a skip: the caller asserted
- * a live Zotero is there.
+ * An unreachable Zotero fails every case.
  */
 import { afterAll, expect, test } from "bun:test";
 
-import { createZoteroLocalWriteClient } from "../src/client";
+import { createZoteroLocalWriteClient } from "../../src/client";
 
-const LIVE = process.env.ZOTERO_LIVE === "1";
 const BASE_URL = process.env.ZOTERO_LOCAL_BASE_URL ?? "http://127.0.0.1:23119";
 const LIBRARY_ID = process.env.ZOTERO_LIBRARY_ID ?? "0";
 
@@ -56,7 +54,7 @@ afterAll(async () => {
   }
 });
 
-test.skipIf(!LIVE)("wrapper POSTs /write and returns the typed success branch", async () => {
+test("wrapper POSTs /write and returns the typed success branch", async () => {
   const title = `lw-client-${uid}`;
 
   const { data, error } = await client.POST("/write", {
@@ -91,27 +89,25 @@ test.skipIf(!LIVE)("wrapper POSTs /write and returns the typed success branch", 
   expect(readBack.data.itemType).toBe("book");
 });
 
-test.skipIf(!LIVE)(
-  "wrapper returns the typed error branch and sends the body unchanged",
-  async () => {
-    // A structurally valid body naming an item that cannot exist: the add-on
-    // rejects it and echoes the body it parsed back in details.request, which is
-    // what proves the wrapper serialized the body without mutating it.
-    const body = {
-      operation: "add_item_tags" as const,
-      item_key: `NOSUCH${uid.slice(0, 4).toUpperCase()}`,
-      tags: [`lw-echo-${uid}`, "ünïcodé tag"],
-    };
+test("wrapper returns the typed error branch and sends the body unchanged",
+async () => {
+  // A structurally valid body naming an item that cannot exist: the add-on
+  // rejects it and echoes the body it parsed back in details.request, which is
+  // what proves the wrapper serialized the body without mutating it.
+  const body = {
+    operation: "add_item_tags" as const,
+    item_key: `NOSUCH${uid.slice(0, 4).toUpperCase()}`,
+    tags: [`lw-echo-${uid}`, "ünïcodé tag"],
+  };
 
-    const { data, error } = await client.POST("/write", { body });
+  const { data, error } = await client.POST("/write", { body });
 
-    expect(data).toBeUndefined();
-    if (error === undefined) {
-      throw new Error("expected the error branch to be populated");
-    }
-    expect(error.success).toBe(false);
-    expect(error.operation).toBe("add_item_tags");
-    expect(error.error).toContain("Item not found");
-    expect(error.details.request).toEqual(body);
-  },
-);
+  expect(data).toBeUndefined();
+  if (error === undefined) {
+    throw new Error("expected the error branch to be populated");
+  }
+  expect(error.success).toBe(false);
+  expect(error.operation).toBe("add_item_tags");
+  expect(error.error).toContain("Item not found");
+  expect(error.details.request).toEqual(body);
+},);
