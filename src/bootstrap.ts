@@ -1674,13 +1674,33 @@ async function fetchSource(url: string): Promise<FetchedSource> {
   return fetchedSource(xhr, url);
 }
 
+// Final URL of a completed request, after redirects. Zotero.HTTP.request resolves only
+// once the response arrived, so the XHR always holds the URL that answered.
+function finalResponseUrl(xhr: XMLHttpRequest, url: string): string {
+  if (xhr.responseURL === "") {
+    throw new Error(
+      "Zotero.HTTP.request resolved GET " + url + " (status " + String(xhr.status) +
+        ") with no responseURL; inspect request() in zotero/zotero chrome/content/zotero/xpcom/http.js",
+    );
+  }
+  return xhr.responseURL;
+}
+
+// A response is a PDF when it declares the PDF type, or when it is not a parsed
+// document and its final path names a PDF file.
+function isPdfResponse(contentType: string | null, page: Document | null, finalUrl: string): boolean {
+  if (contentType !== null && /application\/pdf/i.test(contentType)) {
+    return true;
+  }
+  return page === null && new URL(finalUrl).pathname.toLowerCase().endsWith(".pdf");
+}
+
 // Classifies a fetched response as a PDF or an HTML page.
 function fetchedSource(xhr: XMLHttpRequest, url: string): FetchedSource {
-  let finalUrl = xhr.responseURL || url;
+  let finalUrl = finalResponseUrl(xhr, url);
   let contentType = xhr.getResponseHeader("Content-Type");
   let page = xhr.responseXML;
-  let declaredPdf = contentType !== null && /application\/pdf/i.test(contentType);
-  if (declaredPdf || (page === null && new URL(finalUrl).pathname.toLowerCase().endsWith(".pdf"))) {
+  if (isPdfResponse(contentType, page, finalUrl)) {
     return { kind: "pdf", finalUrl };
   }
   if (page === null) {
@@ -1689,11 +1709,7 @@ function fetchedSource(xhr: XMLHttpRequest, url: string): FetchedSource {
       [],
     );
   }
-  return {
-    kind: "html",
-    finalUrl,
-    document: Zotero.HTTP.wrapDocument(page, finalUrl),
-  };
+  return { kind: "html", finalUrl, document: Zotero.HTTP.wrapDocument(page, finalUrl) };
 }
 
 function createTranslateWeb(page: Document): ZoteroTranslateWebApi {
