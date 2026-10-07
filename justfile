@@ -302,12 +302,13 @@ schemathesis-fuzz-live:
 # Live proof of the generated OpenAPI client wrapper (src/client.ts) against a
 # real Zotero: real POST /write, body serialized unchanged, typed success/error
 # split. MUTATING. The live suites in tests/live have no `.test` in their file
-# names, so `bun test` does not collect them; these recipes run each one by its
-# `./` path, and an unreachable Zotero fails it. Objects are uniquely prefixed
+# names, so `bun test` does not collect them; the package scripts `client:live`
+# and `import-from-url:live` run each one by its `./` path, which also declares
+# the suites as entry files to knip. An unreachable Zotero fails a suite. Objects are uniquely prefixed
 # and trashed afterwards.
 [doc("Live proof of the generated TypeScript client wrapper (MUTATING)")]
 client-live:
-    bun test ./tests/live/client.live.ts
+    bun run client:live
 
 # Live proof of import_from_url and resolve_url against a real Zotero and the
 # real publisher and metadata services. MUTATING; every item it creates is
@@ -318,7 +319,7 @@ client-live:
 import-from-url-live:
     ZOTERO_LOCAL_BASE_URL="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}" \
     ZOTERO_LIBRARY_ID="${ZOTERO_LIBRARY_ID:-0}" \
-    bun test --timeout 180000 ./tests/live/import-from-url.live.ts
+    bun run import-from-url:live
 
 # Stateful create/note/collection/tag/merge/restore/trash proof with Zotero
 # read-back. Safe against a real library: unique-prefixed objects, cleanup in

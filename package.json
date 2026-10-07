@@ -19,7 +19,9 @@
     "openapi:generate": "openapi-typescript openapi.yaml | dev/openapi-types.sh write",
     "openapi:check-generated": "openapi-typescript openapi.yaml | dev/openapi-types.sh check",
     "openapi:contract": "bun test tests/openapi-contract.test.ts",
-    "openapi:check": "bun run openapi:lint && bun run openapi:check-generated && bun run openapi:contract"
+    "openapi:check": "bun run openapi:lint && bun run openapi:check-generated && bun run openapi:contract",
+    "client:live": "bun test ./tests/live/client.live.ts",
+    "import-from-url:live": "bun test --timeout 180000 ./tests/live/import-from-url.live.ts"
   },
   "type": "module",
   "dependencies": {
