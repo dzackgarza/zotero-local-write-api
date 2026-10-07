@@ -7,6 +7,7 @@ import {
   createTranslateSearch,
   findIdentifiers,
   type Identifier,
+  type ZoteroTranslateSearchApi,
 } from "./zotero-api";
 
 export let BIBTEX_TRANSLATOR_ID = "9cb70025-a888-4a29-a210-93ec52da40d4";
@@ -84,10 +85,7 @@ export async function handleImportBibTeX(data: RequestData) {
   );
 }
 
-async function translateIdentifier(
-  identifier: Identifier,
-  collections: number[] | false,
-): Promise<Zotero.Item[]> {
+async function identifierSearch(identifier: Identifier): Promise<ZoteroTranslateSearchApi> {
   let search = createTranslateSearch();
   search.setIdentifier(identifier);
   let translators = await search.getTranslators();
@@ -95,6 +93,14 @@ async function translateIdentifier(
     throw notFound("No translator available for identifier: " + JSON.stringify(identifier));
   }
   search.setTranslator(translators);
+  return search;
+}
+
+async function translateIdentifier(
+  identifier: Identifier,
+  collections: number[] | false,
+): Promise<Zotero.Item[]> {
+  let search = await identifierSearch(identifier);
   let items = await search.translate({
     libraryID: userLibraryID(),
     collections: collections,

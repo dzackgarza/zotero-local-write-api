@@ -30,7 +30,7 @@ export function removeTagsFromUserLibrary(libraryID: number, tagIDs: number[]): 
 }
 
 // Zotero.Translate.Search and Zotero.Translate.Import are under-modeled.
-type ZoteroTranslateSearchApi = {
+export type ZoteroTranslateSearchApi = {
   setIdentifier(identifier: Identifier): void;
   getTranslators(): Promise<unknown[]>;
   setTranslator(translators: unknown): void;
