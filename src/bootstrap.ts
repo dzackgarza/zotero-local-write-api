@@ -1,3 +1,5 @@
+import * as v from "valibot";
+
 // APP_SHUTDOWN is a Zotero bootstrap constant not in zotero-types
 declare let APP_SHUTDOWN: number;
 
@@ -1919,12 +1921,25 @@ function requestJSONResponse(url: string, successCodes: number[]): Promise<XMLHt
   });
 }
 
-function parseJSONResponse<T>(xhr: XMLHttpRequest, url: string): T {
-  return JSON.parse(responseTextOf(xhr, url)) as T;
+// A body that does not match the service's documented shape throws, so the
+// service's attempt is recorded as failed.
+function parseJSONResponse<S extends v.GenericSchema>(
+  xhr: XMLHttpRequest,
+  url: string,
+  schema: S,
+): v.InferOutput<S> {
+  let parsed = v.safeParse(schema, JSON.parse(responseTextOf(xhr, url)));
+  if (!parsed.success) {
+    throw new Error(url + " answered an unexpected body: " + v.summarize(parsed.issues));
+  }
+  return parsed.output;
 }
 
-async function requestJSON<T>(url: string): Promise<T> {
-  return parseJSONResponse<T>(await requestJSONResponse(url, [200]), url);
+async function requestJSON<S extends v.GenericSchema>(
+  url: string,
+  schema: S,
+): Promise<v.InferOutput<S>> {
+  return parseJSONResponse(await requestJSONResponse(url, [200]), url, schema);
 }
 
 // Records without a title or an author name cannot match a seed, so they are no
@@ -1972,7 +1987,7 @@ function arxivCandidate(entry: Element): ServiceCandidate | null {
   };
 }
 
-function openLibraryCandidate(work: OpenLibrarySearch["docs"][number]): ServiceCandidate | null {
+function openLibraryCandidate(work: OpenLibraryWork): ServiceCandidate | null {
   if (work.title === undefined || work.author_name === undefined) {
     return null;
   }
@@ -1992,34 +2007,49 @@ function openLibraryCandidate(work: OpenLibrarySearch["docs"][number]): ServiceC
 }
 
 // https://api.crossref.org/swagger-ui/index.html, /works
-type CrossrefWorks = {
-  message: {
-    items: {
-      DOI: string;
-      title?: string[];
-      author?: { family?: string; name?: string }[];
-      issued?: { "date-parts"?: (number | null)[][] };
-    }[];
-  };
-};
+let CrossrefWorks = v.object({
+  message: v.object({
+    items: v.array(
+      v.object({
+        DOI: v.string(),
+        title: v.optional(v.array(v.string())),
+        author: v.optional(
+          v.array(v.object({ family: v.optional(v.string()), name: v.optional(v.string()) })),
+        ),
+        issued: v.optional(
+          v.object({ "date-parts": v.optional(v.array(v.array(v.nullable(v.number())))) }),
+        ),
+      }),
+    ),
+  }),
+});
 // https://api.zbmath.org/docs, /document/_search
-type ZbmathSearch = {
-  result: {
-    title?: { title?: string };
-    year?: string;
-    contributors?: { authors?: { name: string }[] };
-    links?: { type: string; identifier: string }[];
-  }[];
-};
+let ZbmathSearch = v.object({
+  result: v.array(
+    v.object({
+      title: v.optional(v.object({ title: v.optional(v.string()) })),
+      year: v.optional(v.string()),
+      contributors: v.optional(
+        v.object({ authors: v.optional(v.array(v.object({ name: v.string() }))) }),
+      ),
+      links: v.optional(v.array(v.object({ type: v.string(), identifier: v.string() }))),
+    }),
+  ),
+});
 // https://openlibrary.org/dev/docs/api/search
-type OpenLibrarySearch = {
-  docs: {
-    title?: string;
-    author_name?: string[];
-    first_publish_year?: number;
-    editions?: { docs?: { isbn?: string[] }[] };
-  }[];
-};
+let OpenLibrarySearch = v.object({
+  docs: v.array(
+    v.object({
+      title: v.optional(v.string()),
+      author_name: v.optional(v.array(v.string())),
+      first_publish_year: v.optional(v.number()),
+      editions: v.optional(
+        v.object({ docs: v.optional(v.array(v.object({ isbn: v.optional(v.array(v.string())) }))) }),
+      ),
+    }),
+  ),
+});
+type OpenLibraryWork = v.InferOutput<typeof OpenLibrarySearch>["docs"][number];
 
 let ATOM_NS = "http://www.w3.org/2005/Atom";
 
@@ -2033,7 +2063,7 @@ let EXTERNAL_SERVICES: ExternalService[] = [
         encodeURIComponent(seed.title) +
         "&query.author=" +
         encodeURIComponent(seed.surname);
-      let works = await requestJSON<CrossrefWorks>(url);
+      let works = await requestJSON(url, CrossrefWorks);
       return serviceCandidates(works.message.items, (work) => {
         let title = work.title?.[0];
         if (title === undefined || work.author === undefined) {
@@ -2062,7 +2092,7 @@ let EXTERNAL_SERVICES: ExternalService[] = [
       if (xhr.status === 404) {
         return [];
       }
-      let found = parseJSONResponse<ZbmathSearch>(xhr, url);
+      let found = parseJSONResponse(xhr, url, ZbmathSearch);
       return serviceCandidates(found.result, (document) => {
         let title = document.title?.title;
         let authors = document.contributors?.authors;
@@ -2104,7 +2134,7 @@ let EXTERNAL_SERVICES: ExternalService[] = [
         encodeURIComponent(seed.title) +
         "&author=" +
         encodeURIComponent(seed.surname);
-      let found = await requestJSON<OpenLibrarySearch>(url);
+      let found = await requestJSON(url, OpenLibrarySearch);
       return serviceCandidates(found.docs, openLibraryCandidate);
     },
   },

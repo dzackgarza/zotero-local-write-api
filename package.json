@@ -1,17 +1,5 @@
 {
   "name": "local-write-api",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "esbuild src/bootstrap.ts --outfile=src/bootstrap.js --target=firefox115",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test --coverage --coverage-reporter=lcov --coverage-dir=.",
-    "openapi:lint": "redocly lint openapi.yaml",
-    "openapi:generate": "openapi-typescript openapi.yaml | dev/openapi-types.sh write",
-    "openapi:check-generated": "openapi-typescript openapi.yaml | dev/openapi-types.sh check",
-    "openapi:contract": "bun test tests/openapi-contract.test.ts",
-    "openapi:check": "bun run openapi:lint && bun run openapi:check-generated && bun run openapi:contract"
-  },
   "devDependencies": {
     "@redocly/cli": "^2.39.0",
     "@types/bun": "latest",
@@ -21,5 +9,20 @@
     "openapi-typescript": "^7.13.0",
     "typescript": "^5.9.3",
     "zotero-types": "^4.1.2"
+  },
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/bootstrap.ts --bundle --format=esm --tree-shaking=false --outfile=src/bootstrap.js --target=firefox115",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --coverage --coverage-reporter=lcov --coverage-dir=.",
+    "openapi:lint": "redocly lint openapi.yaml",
+    "openapi:generate": "openapi-typescript openapi.yaml | dev/openapi-types.sh write",
+    "openapi:check-generated": "openapi-typescript openapi.yaml | dev/openapi-types.sh check",
+    "openapi:contract": "bun test tests/openapi-contract.test.ts",
+    "openapi:check": "bun run openapi:lint && bun run openapi:check-generated && bun run openapi:contract"
+  },
+  "type": "module",
+  "dependencies": {
+    "valibot": "^1.5.0"
   }
 }
