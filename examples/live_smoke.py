@@ -11,6 +11,7 @@ Live smoke proof for the local-write-api add-on.
 
 This script exercises the add-on against a real running Zotero instance:
 - version probe
+- every state of the /write bearer gate: open, gated, and published without a token
 - create_item
 - import_bibtex
 - byte-backed PDF attach
@@ -31,14 +32,18 @@ import secrets
 import sys
 import time
 import urllib.parse
-from typing import Generic, Literal, NotRequired, TypeVar
+from collections.abc import Generator
+from typing import Final, Generic, Literal, NamedTuple, NotRequired, TypeVar
 from uuid import uuid4
 
 import httpx
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
-TOKEN_PREF = "extensions.zotero.localWriteAPI.token"
+TOKEN_PREF: Final = "extensions.zotero.localWriteAPI.token"
+PUBLIC_BASE_URL_PREF: Final = "extensions.zotero.localWriteAPI.publicBaseURL"
+# How long Zotero holds each gate state before it restores the prior prefs.
+GATE_HOLD_SECONDS: Final = 3
 
 
 PDF_BYTES = (
@@ -197,13 +202,50 @@ class SmokeReport(TypedDict):
     standalone_attachment_keys: list[str]
 
 
+# The two prefs that select the bearer gate's state; None is an unset pref.
+GatePrefs = TypedDict(
+    "GatePrefs",
+    {
+        "extensions.zotero.localWriteAPI.token": str | None,
+        "extensions.zotero.localWriteAPI.publicBaseURL": str | None,
+    },
+)
+
+
+class GateState(NamedTuple):
+    """One state of the gate: the prefs that select it, and the /write status of an
+    empty body sent with no bearer, a wrong bearer, and the probe bearer. The gate runs
+    before body validation, so 400 means the gate let the request through."""
+
+    name: str
+    prefs: GatePrefs
+    statuses: tuple[int, int, int]
+
+
+class BearerAuth(httpx.Auth):
+    """Sends the operator's token on every request that does not override `auth`.
+
+    Follows the custom scheme pattern in httpx's documentation:
+    https://www.python-httpx.org/advanced/authentication/#custom-authentication-schemes
+    """
+
+    def __init__(self, token: str) -> None:
+        self._header = f"Bearer {token}"
+
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+        request.headers["Authorization"] = self._header
+        yield request
+
+
 class SmokeArgs(argparse.Namespace):
     """Typed view of the parsed command line; parse_args() fills every attribute."""
 
     base_url: str
     library_id: str
     expected_version: str
-    token: str
+    # None when the instance is found in the open state: no token pref, so there is no
+    # credential to send. That is the add-on's documented loopback default.
+    token: BearerAuth | None
 
 
 ACK = TypeAdapter(Ack)
@@ -220,6 +262,12 @@ CHILDREN = TypeAdapter(list[ChildItem])
 JS_TEXT = TypeAdapter(JavascriptSuccess[str])
 JS_INT = TypeAdapter(JavascriptSuccess[int])
 JS_TRUE = TypeAdapter(JavascriptSuccess[Literal[True]])
+JS_GATE_PREFS = TypeAdapter(JavascriptSuccess[GatePrefs])
+
+_READ_GATE_PREFS = (
+    f"return Object.fromEntries({json.dumps([TOKEN_PREF, PUBLIC_BASE_URL_PREF])}"
+    ".map((name) => [name, Zotero.Prefs.get(name, true) ?? null]));"
+)
 
 
 def _require(condition: bool, message: str) -> None:
@@ -241,14 +289,11 @@ def _get(http: httpx.Client, path: str, schema: TypeAdapter[ResultT]) -> ResultT
     return schema.validate_json(response.content)
 
 
-def _post(
-    http: httpx.Client,
-    path: str,
-    payload: JsonObject,
-    headers: dict[str, str],
-    schema: TypeAdapter[ResultT],
+def _post_write(
+    http: httpx.Client, path: str, payload: JsonObject, schema: TypeAdapter[ResultT]
 ) -> ResultT:
-    response = http.post(path, json=payload, headers=headers)
+    """POST with the operator's credential, which the client sends on every request."""
+    response = http.post(path, json=payload)
     _require_ok(response)
     return schema.validate_json(response.content)
 
@@ -268,96 +313,90 @@ def _prove_openapi_endpoint(http: httpx.Client, write_path: str) -> None:
     )
 
 
-def _require_write_status(
-    http: httpx.Client, write_path: str, headers: dict[str, str], expected: int, case: str
-) -> None:
-    """POST an empty body to /write and require `expected` as the HTTP status."""
-    response = http.post(write_path, json={}, headers=headers)
-    _require(
-        response.status_code == expected,
-        f"/write {case} returned HTTP {response.status_code}, expected {expected}: {response.text[:200]!r}",
-    )
-
-
-def _prove_bearer_auth(http: httpx.Client, write_path: str, token: str) -> None:
-    """With the token pref set, /write demands a matching bearer token.
-
-    Auth is checked before the request body, so an empty body isolates the gate:
-    no token -> 401; correct token -> the body-validation 400, never 401. This
-    proves the gate without creating or trashing any library item.
-    """
-    _require_write_status(http, write_path, {}, 401, "without a token")
-    _require_write_status(
-        http,
-        write_path,
-        {"Authorization": f"Bearer {token}"},
-        400,
-        "with the token (body validation)",
-    )
-    _require_write_status(
-        http, write_path, {"Authorization": "Bearer not-the-token"}, 401, "with a wrong token"
-    )
-
-
 def _run_javascript(
     http: httpx.Client,
     write_path: str,
     code: str,
-    headers: dict[str, str],
     schema: TypeAdapter[JavascriptSuccess[ResultT]],
 ) -> ResultT:
     payload: JsonObject = {"operation": "run_javascript", "code": code}
-    return _post(http, write_path, payload, headers, schema)["details"]["result"]
+    return _post_write(http, write_path, payload, schema)["details"]["result"]
 
 
-def _prove_bearer_gate(http: httpx.Client, write_path: str, token: str) -> None:
-    """Always exercise the bearer gate, self-provisioning when no token is given.
+def _hold_gate_prefs(http: httpx.Client, write_path: str, prefs: GatePrefs) -> GatePrefs:
+    """Set the gate prefs and return their prior values.
 
-    With an externally-set token (--token), prove against it directly. Otherwise
-    set a random token through the open loopback run_javascript op, prove the
-    gate, then clear it so the caller's default loopback-open state is restored.
+    Zotero itself restores the prior values after GATE_HOLD_SECONDS, so the restore
+    runs when this script dies, and when the held state refuses every request,
+    including the run_javascript that could undo it.
     """
-    if token:
-        _prove_bearer_auth(http, write_path, token)
-        return
-    open_status = http.post(write_path, json={}).status_code
+    code = (
+        f"let target = {json.dumps(prefs)};\n"
+        "let original = Object.fromEntries(Object.keys(target)"
+        ".map((name) => [name, Zotero.Prefs.get(name, true) ?? null]));\n"
+        "let apply = (values) => Object.entries(values).forEach(([name, value]) =>"
+        " value === null ? Zotero.Prefs.clear(name, true) : Zotero.Prefs.set(name, value, true));\n"
+        "apply(target);\n"
+        f"Zotero.Promise.delay({GATE_HOLD_SECONDS * 1000}).then(() => apply(original));\n"
+        "return original;"
+    )
+    return _run_javascript(http, write_path, code, JS_GATE_PREFS)
+
+
+def _write_statuses(http: httpx.Client, write_path: str, probe_token: str) -> tuple[int, int, int]:
+    """/write statuses of an empty body with no bearer, a wrong bearer, and the probe bearer."""
+    # httpx.Auth() is the base scheme, which sends the request unchanged: these probes
+    # carry only their own header, never the operator's credential.
+    no_bearer, wrong, probe = (
+        http.post(write_path, json={}, headers=headers, auth=httpx.Auth()).status_code
+        for headers in ({}, {"Authorization": "Bearer not-the-token"}, {"Authorization": f"Bearer {probe_token}"})
+    )
+    return (no_bearer, wrong, probe)
+
+
+def _gate_states(probe_token: str) -> tuple[GateState, ...]:
+    """The three states of bearerAuthFailure in src/bootstrap.ts."""
+    return (
+        GateState("open", {TOKEN_PREF: None, PUBLIC_BASE_URL_PREF: None}, (400, 400, 400)),
+        GateState("gated", {TOKEN_PREF: probe_token, PUBLIC_BASE_URL_PREF: None}, (401, 401, 400)),
+        GateState(
+            "denied", {TOKEN_PREF: None, PUBLIC_BASE_URL_PREF: "https://live-smoke.invalid"}, (401, 401, 401)
+        ),
+    )
+
+
+def _prove_gate_state(http: httpx.Client, write_path: str, state: GateState, probe_token: str) -> None:
+    """Hold one gate state, require its /write statuses, then require Zotero's restore."""
+    original = _hold_gate_prefs(http, write_path, state.prefs)
+    statuses = _write_statuses(http, write_path, probe_token)
     _require(
-        open_status != 401,
-        "instance already requires a token but none was given; pass --token to prove the gate",
+        statuses == state.statuses,
+        f"gate state {state.name} {state.prefs!r}: /write gave {statuses} for no, wrong and probe "
+        f"bearer, expected {state.statuses}",
+    )
+    time.sleep(GATE_HOLD_SECONDS + 1)
+    restored = _run_javascript(http, write_path, _READ_GATE_PREFS, JS_GATE_PREFS)
+    _require(restored == original, f"gate prefs not restored after {state.name}: {restored!r}, expected {original!r}")
+
+
+def _prove_bearer_gate(http: httpx.Client, write_path: str) -> None:
+    """Prove every state of the bearer gate, whatever state the instance is found in.
+
+    The open state accepts unauthenticated writes, so the proof refuses a published
+    instance: holding that state would expose run_javascript through the tunnel.
+    """
+    found = _run_javascript(http, write_path, _READ_GATE_PREFS, JS_GATE_PREFS)
+    _require(
+        found[PUBLIC_BASE_URL_PREF] in (None, ""),
+        f"publicBaseURL is {found[PUBLIC_BASE_URL_PREF]!r}, so this instance is published and the "
+        "open gate state would expose it. Stop the tunnel and clear publicBaseURL, then run again.",
     )
     probe_token = secrets.token_hex(16)
-    # Printed before it is written: this value goes into a persistent pref on a real
-    # profile, so a run interrupted between the set and the clear would otherwise leave
-    # the instance behind a token nobody knows. With it on stderr the operator can
-    # recover by clearing extensions.zotero.localWriteAPI.token in the Config Editor,
-    # or by replaying the clear with this bearer.
-    print(f"live-smoke: provisioning temporary write token {probe_token}", file=sys.stderr)
-    # run_javascript serializes the code's return value, so each snippet must
-    # return something JSON-encodable (a bare Prefs.set/clear returns undefined).
-    _run_javascript(
-        http,
-        write_path,
-        f"Zotero.Prefs.set({TOKEN_PREF!r}, {probe_token!r}, true); return true;",
-        {},
-        JS_TRUE,
-    )
-    auth = {"Authorization": f"Bearer {probe_token}"}
-    try:
-        _prove_bearer_auth(http, write_path, probe_token)
-    finally:
-        _run_javascript(
-            http,
-            write_path,
-            f"Zotero.Prefs.clear({TOKEN_PREF!r}, true); return true;",
-            auth,
-            JS_TRUE,
-        )
-
-    # The published-without-token deny branch (publicBaseURL set, token unset) is NOT
-    # proved here on purpose. Reaching that state means /write denies every request,
-    # including the run_javascript needed to clear either pref, so a proof that entered
-    # it could not get back out and would leave the instance unusable. Proving it needs
-    # a disposable profile, not the operator's own.
+    # Zotero keeps a held state if it quits during the hold. The operator then
+    # resets both prefs in the Config Editor, or sends this bearer.
+    print(f"live-smoke: gate probe bearer {probe_token}", file=sys.stderr)
+    for state in _gate_states(probe_token):
+        _prove_gate_state(http, write_path, state, probe_token)
 
 
 def _tag_names(item: Item) -> list[str]:
@@ -376,18 +415,6 @@ def _get_item(http: httpx.Client, library_id: str, item_key: str) -> Item:
 def _get_children(http: httpx.Client, library_id: str, item_key: str) -> list[ChildItem]:
     quoted_key = urllib.parse.quote(item_key)
     return _get(http, f"/api/users/{library_id}/items/{quoted_key}/children", CHILDREN)
-
-
-# Bearer header applied to every /write and /attach call, populated by run()
-# from --token. When the instance's token pref is set, the item-lifecycle calls
-# must authenticate too, not just the dedicated gate proof.
-_WRITE_AUTH: dict[str, str] = {}
-
-
-def _post_write(
-    http: httpx.Client, write_path: str, payload: JsonObject, schema: TypeAdapter[ResultT]
-) -> ResultT:
-    return _post(http, write_path, payload, _WRITE_AUTH, schema)
 
 
 def _wait_for_deleted(http: httpx.Client, library_id: str, item_key: str, *, timeout: float = 5.0, interval: float = 0.25) -> Item:
@@ -414,7 +441,6 @@ def _select_pane_row(http: httpx.Client, write_path: str, row_id: str) -> None:
         http,
         write_path,
         f"await Zotero.getActiveZoteroPane().collectionsView.selectByID({row_id!r}); return true;",
-        _WRITE_AUTH,
         JS_TRUE,
     )
 
@@ -468,7 +494,6 @@ def _prove_standalone_attach(
         http,
         write_path,
         "return Zotero.getActiveZoteroPane().getCollectionTreeRow().id;",
-        _WRITE_AUTH,
         JS_TEXT,
     )
     collection_result = _post_write(
@@ -483,11 +508,10 @@ def _prove_standalone_attach(
             http,
             write_path,
             f"return Zotero.Collections.getByLibraryAndKey(Zotero.Libraries.userLibraryID, {collection_key!r}).id;",
-            _WRITE_AUTH,
             JS_INT,
         )
         user_library_id = _run_javascript(
-            http, write_path, "return Zotero.Libraries.userLibraryID;", _WRITE_AUTH, JS_INT
+            http, write_path, "return Zotero.Libraries.userLibraryID;", JS_INT
         )
         collection_row = f"C{collection_id}"
         _select_pane_row(http, write_path, collection_row)
@@ -517,8 +541,6 @@ def _prove_standalone_attach(
 
 
 def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
-    if args.token:
-        _WRITE_AUTH["Authorization"] = f"Bearer {args.token}"
     library_id = args.library_id
     suffix = uuid4().hex[:10]
     doomed_tag = f"live-smoke-delete-{suffix}"
@@ -545,9 +567,7 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
     _require(version_payload["translators_ready"] is True, f"Zotero has not loaded its translators: {version_payload!r}")
 
     _prove_openapi_endpoint(http, write_path)
-    # Always prove the bearer gate: with --token against a pre-authed instance,
-    # otherwise self-provisioning a throwaway token and clearing it after.
-    _prove_bearer_gate(http, write_path, args.token)
+    _prove_bearer_gate(http, write_path)
 
     try:
         create_result = _post_write(
@@ -826,9 +846,10 @@ def parse_args() -> SmokeArgs:
     parser.add_argument("--expected-version", default="", help="Fail unless /version reports this exact add-on version")
     parser.add_argument(
         "--token",
-        default="",
+        type=BearerAuth,
+        default=None,
         help="Bearer token matching the running instance's localWriteAPI.token pref; "
-        "when set, proves /write returns 401 without it and 400 with it",
+        "required when that pref is set",
     )
     return parser.parse_args(namespace=SmokeArgs())
 
@@ -839,6 +860,7 @@ def main() -> int:
     http = httpx.Client(
         base_url=args.base_url.rstrip("/"),
         headers={"Accept": "application/json"},
+        auth=args.token,
         timeout=60.0,
     )
     try:

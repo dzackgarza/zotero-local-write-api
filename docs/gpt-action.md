@@ -77,7 +77,11 @@ Prerequisites: `cloudflared` is logged in (`~/.cloudflared/cert.pem` exists), Zo
    curl https://zotero-write.dzackgarza.com/api/users/0/items # 404: read API not exposed
    ```
 
-   With `ZOTERO_WRITE_API_TOKEN` exported (step 1) and matching the pref, `just smoke-live` additionally proves the bearer gate against the running instance: `/write` returns 401 without the token, 401 with a wrong token, and passes auth with the right one.
+   `just smoke-live` refuses to run while `publicBaseURL` is set.
+   It proves each state of the bearer gate (open, gated, published without a token) by holding the prefs that select it for a few seconds, and the open state would expose `/write` through the tunnel.
+   To run it, stop the tunnel (`systemctl --user stop zotero-write-tunnel.service`) and clear `publicBaseURL` in the Config Editor.
+   With the token pref set, export `ZOTERO_WRITE_API_TOKEN` (step 1) so the smoke can reach the instance.
+   Afterward, set `publicBaseURL` again and run `just tunnel-restart`.
 
 ## Import into a Custom GPT
 

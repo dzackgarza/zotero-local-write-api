@@ -21,6 +21,7 @@ Ensure your Zotero is running with the `zotero-local-write-api` extension instal
 Real runtime smoke proof for the add-on itself.
 It uses Zotero's built-in local API plus the add-on endpoints to:
 - verify `/version`
+- prove each state of the `/write` bearer gate (open, gated, published without a token) by holding the prefs that select it; Zotero restores the prior prefs after each hold
 - create a real item
 - attach a PDF via byte upload
 - delete one tag while preserving another
@@ -33,7 +34,11 @@ Run it against a real Zotero with the current working-tree XPI installed before 
 ```bash
 uv run live_smoke.py
 uv run live_smoke.py --expected-version 3.2.3
+uv run live_smoke.py --token "$ZOTERO_WRITE_API_TOKEN"
 ```
+
+Pass `--token` when the instance's token pref is set.
+The script refuses to run while `publicBaseURL` is set: the open gate state accepts unauthenticated writes, and on a published instance the tunnel would expose them.
 
 ### 2. `find_item_by_bibtex.py`
 
