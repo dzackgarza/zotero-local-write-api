@@ -55,19 +55,13 @@ type TranslatorItemJSON = JsonPayload & {
   creators?: { lastName?: string; name?: string }[];
 };
 // A detected web translator, as Zotero.Translate.Web#getTranslators resolves it.
-type WebTranslatorInfo = { translatorID: string; label: string };
+// itemType is detectWeb's answer: an item type, or "multiple" for a choice of
+// items (translate.js `complete`, detect state).
+type WebTranslatorInfo = { translatorID: string; label: string; itemType: string };
 type ZoteroTranslateWebApi = {
   setDocument(doc: Document): void;
   getTranslators(): Promise<WebTranslatorInfo[]>;
   setTranslator(translator: WebTranslatorInfo): void;
-  setHandler(
-    type: "select",
-    handler: (
-      translate: ZoteroTranslateWebApi,
-      items: Record<string, string>,
-      callback: (selected: Record<string, string>) => void,
-    ) => void,
-  ): void;
   translate(options: { libraryID: false; saveAttachments: false }): Promise<TranslatorItemJSON[]>;
 };
 // Models translation/translate_item.js: the saver the translators themselves
@@ -1511,14 +1505,24 @@ let SOURCE_REMEDIATION = {
   fallback_field: "fallback_metadata",
 };
 
-// A method ran and found nothing usable: no work, or more than one.
-class MethodMiss extends Error {
-  outcome: "no_match" | "ambiguous";
-  constructor(outcome: "no_match" | "ambiguous", message: string) {
-    super(message);
-    this.name = "MethodMiss";
-    this.outcome = outcome;
-  }
+// What a method found: exactly one work, no work, more than one work, or a
+// failure that an external service or translator reported.
+type ServiceFailure = { outcome: "failed"; message: string };
+type MethodMiss = { outcome: "no_match" | "ambiguous"; message: string } | ServiceFailure;
+type MethodResult<T> = { outcome: "identified"; found: T } | MethodMiss;
+// What an external service or translator answered, or the failure it reported.
+type ServiceAnswer<T> = { outcome: "answered"; value: T } | ServiceFailure;
+
+function miss(outcome: MethodMiss["outcome"], message: string): MethodMiss {
+  return { outcome, message };
+}
+
+function answered<T>(value: T): ServiceAnswer<T> {
+  return { outcome: "answered", value };
+}
+
+function serviceFailure(message: string): ServiceFailure {
+  return { outcome: "failed", message };
 }
 
 // The generic translator that reads citation_*, Dublin Core, Open Graph and
@@ -1553,7 +1557,7 @@ type ServiceCandidate = {
 };
 type ExternalService = {
   name: string;
-  search(seed: BibliographicSeed): Promise<ServiceCandidate[]>;
+  search(seed: BibliographicSeed): Promise<ServiceAnswer<ServiceCandidate[]>>;
 };
 
 // zotero-types declares Zotero.ItemFields as `any`.
@@ -1564,6 +1568,9 @@ type ItemFieldsApi = { getID(field: string): number | false };
 type RecognizeDocumentApi = {
   recognizeItems(items: Zotero.Item[]): Promise<void>;
 };
+function recognizeDocument(): RecognizeDocumentApi {
+  return (Zotero as typeof Zotero & { RecognizeDocument: RecognizeDocumentApi }).RecognizeDocument;
+}
 // The fields Zotero's duplicate finder compares; undefined is a field the item lacks.
 type DuplicateKeys = {
   itemType: string;
@@ -1574,22 +1581,46 @@ type DuplicateKeys = {
 };
 type ItemValueRow = { itemID: number; value: string };
 
-async function tryMethod<T extends { message: string }>(
+// Records a method's result as an attempt; the found work, or null for a miss.
+function recordAttempt<T extends { message: string }>(
   attempts: Attempt[],
   method: SourceMethod,
-  run: () => Promise<T>,
-): Promise<T | null> {
+  result: MethodResult<T>,
+): T | null {
+  if (result.outcome === "identified") {
+    attempts.push({ method, outcome: "identified", message: result.found.message });
+    return result.found;
+  }
+  attempts.push({ method, outcome: result.outcome, message: result.message });
+  return null;
+}
+
+// An external service's GET. A failure status, an unreachable host, a timeout or a
+// certificate failure is the service's answer; any other error propagates.
+async function requestService(
+  url: string,
+  options: { responseType: "text" | "document"; successCodes?: number[]; headers?: Record<string, string> },
+): Promise<ServiceAnswer<XMLHttpRequest>> {
   try {
-    let result = await run();
-    attempts.push({ method, outcome: "identified", message: result.message });
-    return result;
+    return answered(await Zotero.HTTP.request("GET", url, options));
   } catch (error) {
-    if (error instanceof MethodMiss) {
-      attempts.push({ method, outcome: error.outcome, message: error.message });
-      return null;
+    if (!isHttpFailure(error)) {
+      throw error;
     }
-    attempts.push({ method, outcome: "failed", message: (error as Error).message });
-    return null;
+    return serviceFailure(error.message);
+  }
+}
+
+// A translation that saves nothing. translate() rejects with the error that ended the
+// translation (translate.js `translate`, its "error" handler): the translator, an
+// external program, failed.
+async function runTranslation(
+  translation: () => Promise<TranslatorItemJSON[]>,
+): Promise<ServiceAnswer<TranslatorItemJSON[]>> {
+  try {
+    return answered(await translation());
+  } catch (error) {
+    return serviceFailure(String(error));
   }
 }
 
@@ -1668,52 +1699,58 @@ function createTranslateWeb(page: Document): ZoteroTranslateWebApi {
   return translate;
 }
 
-// Runs one web translator without saving. A translator that offers a choice
-// of items (a search or table-of-contents page) marks the URL as not naming one
-// work: the choice is declined and the method reports it as ambiguous.
+// Runs one web translator without saving. A translator whose detection found a
+// choice of items (a search or table-of-contents page) marks the URL as not
+// naming one work, and the method reports it as ambiguous without translating.
 async function translatePage(
   page: Document,
   translator: WebTranslatorInfo,
-): Promise<TranslatorItemJSON> {
+): Promise<MethodResult<TranslatorItemJSON>> {
+  if (translator.itemType === "multiple") {
+    return miss("ambiguous", translator.label + " lists several items");
+  }
   let translate = createTranslateWeb(page);
   translate.setTranslator(translator);
-  let offeredChoice = false;
-  translate.setHandler("select", (_translate, _items, callback) => {
-    offeredChoice = true;
-    callback({});
-  });
-  let items: TranslatorItemJSON[];
-  try {
-    items = await translate.translate({ libraryID: false, saveAttachments: false });
-  } catch (error) {
-    if (offeredChoice) {
-      throw new MethodMiss("ambiguous", translator.label + " lists several items");
-    }
-    throw error;
+  let items = await runTranslation(() =>
+    translate.translate({ libraryID: false, saveAttachments: false }),
+  );
+  if (items.outcome === "failed") {
+    return items;
   }
-  if (offeredChoice) {
-    throw new MethodMiss("ambiguous", translator.label + " lists several items");
-  }
-  return singleItem(items, translator.label + " returned");
+  return singleItem(items.value, translator.label + " returned");
 }
 
 // A method that yields no item misses; one that yields several cannot say which is meant.
-function singleItem(items: TranslatorItemJSON[], source: string): TranslatorItemJSON {
+function singleItem(items: TranslatorItemJSON[], source: string): MethodResult<TranslatorItemJSON> {
   if (items.length !== 1) {
-    throw new MethodMiss(
+    return miss(
       items.length === 0 ? "no_match" : "ambiguous",
       source + " " + items.length + " items",
     );
   }
-  return items[0];
+  return { outcome: "identified", found: items[0] };
+}
+
+function identifiedWork(
+  item: MethodResult<TranslatorItemJSON>,
+  translator: WebTranslatorInfo | null,
+  message: string,
+): MethodResult<Identification> {
+  if (item.outcome !== "identified") {
+    return item;
+  }
+  return { outcome: "identified", found: { json: item.found, translator, message } };
 }
 
 // A "webpage" item says only that the URL is a page; it does not identify a work.
-function requireWork(json: TranslatorItemJSON, source: string): TranslatorItemJSON {
-  if (json.itemType === "webpage") {
-    throw new MethodMiss("no_match", source + " describes only a web page");
+function translatedWork(
+  item: MethodResult<TranslatorItemJSON>,
+  translator: WebTranslatorInfo,
+): MethodResult<Identification> {
+  if (item.outcome === "identified" && item.found.itemType === "webpage") {
+    return miss("no_match", translator.label + " describes only a web page");
   }
-  return json;
+  return identifiedWork(item, translator, translator.label);
 }
 
 let XHTML_NS = "http://www.w3.org/1999/xhtml";
@@ -1757,29 +1794,30 @@ function identifierKey(identifier: Identifier): string {
 
 // Resolves an identifier to metadata through Zotero's search translators
 // (Crossref/DataCite for DOI, arXiv, PubMed, library catalogs for ISBN).
-async function resolveIdentifier(identifier: Identifier): Promise<TranslatorItemJSON> {
+async function resolveIdentifier(
+  identifier: Identifier,
+): Promise<MethodResult<TranslatorItemJSON>> {
   let search = createTranslateSearch();
   search.setIdentifier(identifier);
   let translators = await search.getTranslators();
   if (translators.length === 0) {
-    throw new MethodMiss("no_match", "no translator resolves " + JSON.stringify(identifier));
+    return miss("no_match", "no translator resolves " + JSON.stringify(identifier));
   }
   search.setTranslator(translators);
-  let items = await search.translate({ libraryID: false, saveAttachments: false });
-  if (items.length !== 1) {
-    throw new MethodMiss(
-      items.length === 0 ? "no_match" : "ambiguous",
-      JSON.stringify(identifier) + " resolved to " + items.length + " items",
-    );
+  let items = await runTranslation(() =>
+    search.translate({ libraryID: false, saveAttachments: false }),
+  );
+  if (items.outcome === "failed") {
+    return items;
   }
-  return items[0];
+  return singleItem(items.value, JSON.stringify(identifier) + " resolved to");
 }
 
 // Zotero.Utilities.extractIdentifiers takes any bare number of up to nine
 // digits as a PMID when it finds nothing else, which suits a string the user
 // typed as an identifier but not page text, where a year or a page count is
 // such a number. A PubMed page is identified by the PubMed web translator.
-async function identifyByIdentifier(text: string): Promise<Identification> {
+async function identifyByIdentifier(text: string): Promise<MethodResult<Identification>> {
   let distinct = new Map<string, Identifier>();
   for (let identifier of findIdentifiers(text)) {
     if (!("PMID" in identifier)) {
@@ -1787,17 +1825,13 @@ async function identifyByIdentifier(text: string): Promise<Identification> {
     }
   }
   if (distinct.size === 0) {
-    throw new MethodMiss("no_match", "no DOI, ISBN or arXiv ID found");
+    return miss("no_match", "no DOI, ISBN or arXiv ID found");
   }
   if (distinct.size > 1) {
-    throw new MethodMiss(
-      "ambiguous",
-      "several identifiers found: " + [...distinct.keys()].join(", "),
-    );
+    return miss("ambiguous", "several identifiers found: " + [...distinct.keys()].join(", "));
   }
   let [key, identifier] = [...distinct.entries()][0];
-  let json = await resolveIdentifier(identifier);
-  return { json, translator: null, message: key };
+  return identifiedWork(await resolveIdentifier(identifier), null, key);
 }
 
 // The BibTeX files a page links: an alternate <link> of BibTeX type, or an <a> whose href
@@ -1826,24 +1860,33 @@ function publishedBibTeXLinks(page: Document, finalUrl: string): Set<string> {
 async function identifyByPublishedBibTeX(
   page: Document,
   finalUrl: string,
-): Promise<Identification> {
-  let links = publishedBibTeXLinks(page, finalUrl);
-  if (links.size === 0) {
-    throw new MethodMiss("no_match", "the page links no BibTeX");
+): Promise<MethodResult<Identification>> {
+  let links = [...publishedBibTeXLinks(page, finalUrl)];
+  if (links.length === 0) {
+    return miss("no_match", "the page links no BibTeX");
   }
-  if (links.size > 1) {
-    throw new MethodMiss(
-      "ambiguous",
-      "the page links several BibTeX files: " + [...links].join(", "),
-    );
+  if (links.length > 1) {
+    return miss("ambiguous", "the page links several BibTeX files: " + links.join(", "));
   }
-  let [bibUrl] = [...links];
-  let xhr = await Zotero.HTTP.request("GET", bibUrl, { responseType: "text" });
+  let [bibUrl] = links;
+  return identifiedWork(await importPublishedBibTeX(bibUrl), null, bibUrl);
+}
+
+async function importPublishedBibTeX(bibUrl: string): Promise<MethodResult<TranslatorItemJSON>> {
+  let xhr = await requestService(bibUrl, { responseType: "text" });
+  if (xhr.outcome === "failed") {
+    return xhr;
+  }
   let translator = createImportTranslator();
   translator.setTranslator(BIBTEX_TRANSLATOR_ID);
-  translator.setString(responseTextOf(xhr, bibUrl));
-  let items = await translator.translate({ libraryID: false, saveAttachments: false });
-  return { json: singleItem(items, bibUrl + " holds"), translator: null, message: bibUrl };
+  translator.setString(responseTextOf(xhr.value, bibUrl));
+  let items = await runTranslation(() =>
+    translator.translate({ libraryID: false, saveAttachments: false }),
+  );
+  if (items.outcome === "failed") {
+    return items;
+  }
+  return singleItem(items.value, bibUrl + " holds");
 }
 
 // Title normalization from zotero/zotero chrome/content/zotero/xpcom/duplicates.js
@@ -1901,33 +1944,48 @@ function responseTextOf(xhr: XMLHttpRequest, url: string): string {
   return xhr.responseText;
 }
 
-function requestJSONResponse(url: string, successCodes: number[]): Promise<XMLHttpRequest> {
-  return Zotero.HTTP.request("GET", url, {
+function requestJSONResponse(
+  url: string,
+  successCodes: number[],
+): Promise<ServiceAnswer<XMLHttpRequest>> {
+  return requestService(url, {
     responseType: "text",
     successCodes,
     headers: { Accept: "application/json" },
   });
 }
 
-// A body that does not match the service's documented shape throws, so the
-// service's attempt is recorded as failed.
+// A body that is not JSON, or does not match the service's documented shape, is
+// the service's failure.
 function parseJSONResponse<S extends v.GenericSchema>(
   xhr: XMLHttpRequest,
   url: string,
   schema: S,
-): v.InferOutput<S> {
-  let parsed = v.safeParse(schema, JSON.parse(responseTextOf(xhr, url)));
-  if (!parsed.success) {
-    throw new Error(url + " answered an unexpected body: " + v.summarize(parsed.issues));
+): ServiceAnswer<v.InferOutput<S>> {
+  let parsed: v.SafeParseResult<S>;
+  try {
+    parsed = v.safeParse(schema, JSON.parse(responseTextOf(xhr, url)));
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+    return serviceFailure(url + " answered malformed JSON: " + error.message);
   }
-  return parsed.output;
+  if (!parsed.success) {
+    return serviceFailure(url + " answered an unexpected body: " + v.summarize(parsed.issues));
+  }
+  return answered(parsed.output);
 }
 
 async function requestJSON<S extends v.GenericSchema>(
   url: string,
   schema: S,
-): Promise<v.InferOutput<S>> {
-  return parseJSONResponse(await requestJSONResponse(url, [200]), url, schema);
+): Promise<ServiceAnswer<v.InferOutput<S>>> {
+  let xhr = await requestJSONResponse(url, [200]);
+  if (xhr.outcome === "failed") {
+    return xhr;
+  }
+  return parseJSONResponse(xhr.value, url, schema);
 }
 
 // Records without a title or an author name cannot match a seed, so they are no
@@ -2040,6 +2098,37 @@ let OpenLibrarySearch = v.object({
   ),
 });
 type OpenLibraryWork = v.InferOutput<typeof OpenLibrarySearch>["docs"][number];
+type CrossrefWork = v.InferOutput<typeof CrossrefWorks>["message"]["items"][number];
+type ZbmathDocument = v.InferOutput<typeof ZbmathSearch>["result"][number];
+
+function crossrefCandidate(work: CrossrefWork): ServiceCandidate | null {
+  let title = work.title?.[0];
+  if (title === undefined || work.author === undefined) {
+    return null;
+  }
+  let year = work.issued?.["date-parts"]?.[0]?.[0];
+  return {
+    title,
+    authors: crossrefAuthorNames(work.author),
+    year: typeof year === "number" ? String(year) : null,
+    identifier: { DOI: work.DOI },
+  };
+}
+
+function zbmathCandidate(document: ZbmathDocument): ServiceCandidate | null {
+  let title = document.title?.title;
+  let authors = document.contributors?.authors;
+  if (title === undefined || authors === undefined) {
+    return null;
+  }
+  let doi = document.links?.find((link) => link.type === "doi")?.identifier;
+  return {
+    title,
+    authors: authors.map((author) => author.name),
+    year: document.year === undefined ? null : document.year,
+    identifier: doi === undefined ? null : { DOI: doi },
+  };
+}
 
 let ATOM_NS = "http://www.w3.org/2005/Atom";
 
@@ -2054,19 +2143,10 @@ let EXTERNAL_SERVICES: ExternalService[] = [
         "&query.author=" +
         encodeURIComponent(seed.surname);
       let works = await requestJSON(url, CrossrefWorks);
-      return serviceCandidates(works.message.items, (work) => {
-        let title = work.title?.[0];
-        if (title === undefined || work.author === undefined) {
-          return null;
-        }
-        let year = work.issued?.["date-parts"]?.[0]?.[0];
-        return {
-          title,
-          authors: crossrefAuthorNames(work.author),
-          year: typeof year === "number" ? String(year) : null,
-          identifier: { DOI: work.DOI },
-        };
-      });
+      if (works.outcome === "failed") {
+        return works;
+      }
+      return answered(serviceCandidates(works.value.message.items, crossrefCandidate));
     },
   },
   {
@@ -2079,24 +2159,17 @@ let EXTERNAL_SERVICES: ExternalService[] = [
         encodeURIComponent(query);
       // zbMATH answers a search with no results with 404.
       let xhr = await requestJSONResponse(url, [200, 404]);
-      if (xhr.status === 404) {
-        return [];
+      if (xhr.outcome === "failed") {
+        return xhr;
       }
-      let found = parseJSONResponse(xhr, url, ZbmathSearch);
-      return serviceCandidates(found.result, (document) => {
-        let title = document.title?.title;
-        let authors = document.contributors?.authors;
-        if (title === undefined || authors === undefined) {
-          return null;
-        }
-        let doi = document.links?.find((link) => link.type === "doi")?.identifier;
-        return {
-          title,
-          authors: authors.map((author) => author.name),
-          year: document.year === undefined ? null : document.year,
-          identifier: doi === undefined ? null : { DOI: doi },
-        };
-      });
+      if (xhr.value.status === 404) {
+        return answered([]);
+      }
+      let found = parseJSONResponse(xhr.value, url, ZbmathSearch);
+      if (found.outcome === "failed") {
+        return found;
+      }
+      return answered(serviceCandidates(found.value.result, zbmathCandidate));
     },
   },
   {
@@ -2106,12 +2179,16 @@ let EXTERNAL_SERVICES: ExternalService[] = [
       let url =
         "https://export.arxiv.org/api/query?max_results=20&search_query=" +
         encodeURIComponent(query);
-      let xhr = await Zotero.HTTP.request("GET", url, { responseType: "document" });
-      let feed = xhr.responseXML;
-      if (feed === null) {
-        throw new Error("arXiv returned no Atom feed");
+      let xhr = await requestService(url, { responseType: "document" });
+      if (xhr.outcome === "failed") {
+        return xhr;
       }
-      return serviceCandidates([...feed.getElementsByTagNameNS(ATOM_NS, "entry")], arxivCandidate);
+      let feed = xhr.value.responseXML;
+      if (feed === null) {
+        return serviceFailure("arXiv returned no Atom feed");
+      }
+      let entries = [...feed.getElementsByTagNameNS(ATOM_NS, "entry")];
+      return answered(serviceCandidates(entries, arxivCandidate));
     },
   },
   {
@@ -2125,36 +2202,46 @@ let EXTERNAL_SERVICES: ExternalService[] = [
         "&author=" +
         encodeURIComponent(seed.surname);
       let found = await requestJSON(url, OpenLibrarySearch);
-      return serviceCandidates(found.docs, openLibraryCandidate);
+      if (found.outcome === "failed") {
+        return found;
+      }
+      return answered(serviceCandidates(found.value.docs, openLibraryCandidate));
     },
   },
 ];
 
-async function identifyByService(
-  service: ExternalService,
+// The distinct identifiers of the candidates that match the seed.
+function matchingIdentifiers(
   seed: BibliographicSeed,
-): Promise<Identification> {
+  candidates: ServiceCandidate[],
+): Map<string, Identifier> {
   let matches = new Map<string, Identifier>();
-  for (let candidate of await service.search(seed)) {
+  for (let candidate of candidates) {
     if (candidate.identifier !== null && matchesSeed(seed, candidate)) {
       matches.set(identifierKey(candidate.identifier), candidate.identifier);
     }
   }
+  return matches;
+}
+
+async function identifyByService(
+  service: ExternalService,
+  seed: BibliographicSeed,
+): Promise<MethodResult<Identification>> {
+  let candidates = await service.search(seed);
+  if (candidates.outcome === "failed") {
+    return candidates;
+  }
+  let matches = matchingIdentifiers(seed, candidates.value);
   if (matches.size === 0) {
-    throw new MethodMiss(
-      "no_match",
-      service.name + ": no record matches the title, author and year",
-    );
+    return miss("no_match", service.name + ": no record matches the title, author and year");
   }
   if (matches.size > 1) {
-    throw new MethodMiss(
-      "ambiguous",
-      service.name + ": several records match: " + [...matches.keys()].join(", "),
-    );
+    let keys = [...matches.keys()].join(", ");
+    return miss("ambiguous", service.name + ": several records match: " + keys);
   }
   let [key, identifier] = [...matches.entries()][0];
-  let json = await resolveIdentifier(identifier);
-  return { json, translator: null, message: service.name + ": " + key };
+  return identifiedWork(await resolveIdentifier(identifier), null, service.name + ": " + key);
 }
 
 type PageIdentification = Identification & { method: SourceMethod };
@@ -2175,11 +2262,8 @@ async function identifyBySiteTranslator(
     });
   }
   for (let translator of siteTranslators) {
-    let found = await tryMethod(attempts, "web_translator", async () => ({
-      json: requireWork(await translatePage(page, translator), translator.label),
-      translator,
-      message: translator.label,
-    }));
+    let item = await translatePage(page, translator);
+    let found = recordAttempt(attempts, "web_translator", translatedWork(item, translator));
     if (found) {
       return { ...found, method: "web_translator" };
     }
@@ -2205,19 +2289,12 @@ async function identifyByPageMetadata(
     });
     return { found: null, seed: null };
   }
-  // `as` keeps the declared union: the closure below assigns the seed, and
-  // TypeScript would otherwise narrow it to `null` for the rest of the function.
-  let seed = null as BibliographicSeed | null;
-  let found = await tryMethod(attempts, "page_metadata", async () => {
-    let json = await translatePage(page, embedded);
-    seed = seedFromJSON(json);
-    return {
-      json: requireWork(json, embedded.label),
-      translator: embedded,
-      message: embedded.label,
-    };
-  });
-  return { found: found === null ? null : { ...found, method: "page_metadata" }, seed };
+  let item = await translatePage(page, embedded);
+  let found = recordAttempt(attempts, "page_metadata", translatedWork(item, embedded));
+  return {
+    found: found === null ? null : { ...found, method: "page_metadata" },
+    seed: item.outcome === "identified" ? seedFromJSON(item.found) : null,
+  };
 }
 
 async function identifyByServices(
@@ -2233,8 +2310,10 @@ async function identifyByServices(
     return null;
   }
   for (let service of EXTERNAL_SERVICES) {
-    let found = await tryMethod(attempts, "external_service", () =>
-      identifyByService(service, seed),
+    let found = recordAttempt(
+      attempts,
+      "external_service",
+      await identifyByService(service, seed),
     );
     if (found) {
       return { ...found, method: "external_service" };
@@ -2260,15 +2339,19 @@ async function identifyPage(
     return byPageMetadata.found;
   }
 
-  let byIdentifier = await tryMethod(attempts, "identifier", () =>
-    identifyByIdentifier(identifierText([requestedUrl, finalUrl], page)),
+  let byIdentifier = recordAttempt(
+    attempts,
+    "identifier",
+    await identifyByIdentifier(identifierText([requestedUrl, finalUrl], page)),
   );
   if (byIdentifier) {
     return { ...byIdentifier, method: "identifier" };
   }
 
-  let byBibTeX = await tryMethod(attempts, "published_bibtex", () =>
-    identifyByPublishedBibTeX(page, finalUrl),
+  let byBibTeX = recordAttempt(
+    attempts,
+    "published_bibtex",
+    await identifyByPublishedBibTeX(page, finalUrl),
   );
   if (byBibTeX) {
     return { ...byBibTeX, method: "published_bibtex" };
@@ -2474,24 +2557,35 @@ async function saveIdentification(
 // is the only failure signal; the parentless PDF is then erased.
 async function recognizeParent(
   finalUrl: string,
-): Promise<{ parent: Zotero.Item; pdf: Zotero.Item }> {
-  let pdf = await storePdf(finalUrl, null);
-  let recognizer = (Zotero as typeof Zotero & { RecognizeDocument: RecognizeDocumentApi })
-    .RecognizeDocument;
-  await recognizer.recognizeItems([pdf]);
-  let parentID = pdf.parentItemID;
+): Promise<MethodResult<{ parent: Zotero.Item; pdf: Zotero.Item }>> {
+  let pdf = await downloadSourcePdf(finalUrl);
+  if (pdf.outcome === "failed") {
+    return pdf;
+  }
+  await recognizeDocument().recognizeItems([pdf.value]);
+  let parentID = pdf.value.parentItemID;
   if (parentID === undefined || parentID === false) {
-    await pdf.eraseTx();
-    throw new MethodMiss(
-      "no_match",
-      "the recognizer produced no parent item (see the Zotero debug log)",
-    );
+    await pdf.value.eraseTx();
+    return miss("no_match", "the recognizer produced no parent item (see the Zotero debug log)");
   }
   let parent = await Zotero.Items.getAsync(parentID);
   if (parent === false) {
     throw new Error("recognized parent item " + parentID + " is missing");
   }
-  return { parent, pdf };
+  return { outcome: "identified", found: { parent, pdf: pdf.value } };
+}
+
+// The source's server answers the download with a failure, or with a file that is
+// not a PDF (attachments.js `downloadFile`, `_enforceFileType`); any other error propagates.
+async function downloadSourcePdf(finalUrl: string): Promise<ServiceAnswer<Zotero.Item>> {
+  try {
+    return answered(await storePdf(finalUrl, null));
+  } catch (error) {
+    if (!isHttpFailure(error) && !(error instanceof Zotero.Attachments.InvalidPDFException)) {
+      throw error;
+    }
+    return serviceFailure(error.message);
+  }
 }
 
 // Zotero downloads the URL and stores the file in the library, as the
@@ -2511,13 +2605,25 @@ function hasStoredPdf(item: Zotero.Item): boolean {
   );
 }
 
-// An existing item is the library's own: the recognized copy and its PDF are
-// erased, and the existing item only gains the requested collections.
+type RecognizedImport = Omit<ImportOutcome, "method"> & { message: string };
+
 async function recognizePdf(
   finalUrl: string,
   collectionIDs: number[],
-): Promise<Omit<ImportOutcome, "method"> & { message: string }> {
-  let { parent, pdf } = await recognizeParent(finalUrl);
+): Promise<MethodResult<RecognizedImport>> {
+  let recognized = await recognizeParent(finalUrl);
+  if (recognized.outcome !== "identified") {
+    return recognized;
+  }
+  return { outcome: "identified", found: await fileRecognized(recognized.found, collectionIDs) };
+}
+
+// An existing item is the library's own: the recognized copy and its PDF are
+// erased, and the existing item only gains the requested collections.
+async function fileRecognized(
+  { parent, pdf }: { parent: Zotero.Item; pdf: Zotero.Item },
+  collectionIDs: number[],
+): Promise<RecognizedImport> {
   let existing = await findExistingItem(duplicateKeysFromItem(parent), parent.id);
   if (existing) {
     await pdf.eraseTx();
@@ -2550,14 +2656,18 @@ async function importPdfSource(
   collectionIDs: number[],
   attempts: Attempt[],
 ): Promise<ImportOutcome | null> {
-  let recognized = await tryMethod(attempts, "pdf_recognition", () =>
-    recognizePdf(finalUrl, collectionIDs),
+  let recognized = recordAttempt(
+    attempts,
+    "pdf_recognition",
+    await recognizePdf(finalUrl, collectionIDs),
   );
   if (recognized) {
     return { ...recognized, method: "pdf_recognition" };
   }
-  let byIdentifier = await tryMethod(attempts, "identifier", () =>
-    identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
+  let byIdentifier = recordAttempt(
+    attempts,
+    "identifier",
+    await identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
   );
   if (byIdentifier === null) {
     return null;
@@ -2782,17 +2892,18 @@ function resolveIdentification(
 
 async function recognizeWithoutSaving(
   finalUrl: string,
-): Promise<{ csl: CslItem; itemType: string; message: string }> {
-  let { parent, pdf } = await recognizeParent(finalUrl);
+): Promise<MethodResult<{ csl: CslItem; itemType: string; message: string }>> {
+  let recognized = await recognizeParent(finalUrl);
+  if (recognized.outcome !== "identified") {
+    return recognized;
+  }
+  let { parent, pdf } = recognized.found;
   try {
     let csl = itemToCsl(parent);
     // The CSL id is the URI of the parent, which is erased below.
     delete csl.id;
-    return {
-      csl,
-      itemType: parent.itemType,
-      message: parent.getField("title"),
-    };
+    let message = parent.getField("title");
+    return { outcome: "identified", found: { csl, itemType: parent.itemType, message } };
   } finally {
     await pdf.eraseTx();
     await parent.eraseTx();
@@ -2804,8 +2915,10 @@ async function resolvePdfSource(
   finalUrl: string,
   attempts: Attempt[],
 ): Promise<Resolution | null> {
-  let recognized = await tryMethod(attempts, "pdf_recognition", () =>
-    recognizeWithoutSaving(finalUrl),
+  let recognized = recordAttempt(
+    attempts,
+    "pdf_recognition",
+    await recognizeWithoutSaving(finalUrl),
   );
   if (recognized) {
     return {
@@ -2815,8 +2928,10 @@ async function resolvePdfSource(
       translator: null,
     };
   }
-  let byIdentifier = await tryMethod(attempts, "identifier", () =>
-    identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
+  let byIdentifier = recordAttempt(
+    attempts,
+    "identifier",
+    await identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
   );
   if (byIdentifier) {
     return resolveIdentification({ ...byIdentifier, method: "identifier" });
