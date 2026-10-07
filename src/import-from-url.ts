@@ -10,10 +10,10 @@ import { identifierText, identifyByIdentifier } from "./source-methods";
 import {
   type AttachmentFailure,
   type Attempt,
+  existingOutcome,
   type FetchedSource,
   type Identification,
   type ImportOutcome,
-  existingOutcome,
   recordAttempt,
   type SourceMethod,
   SourceNotIdentifiedError,
