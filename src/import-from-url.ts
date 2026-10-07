@@ -148,7 +148,10 @@ async function fetchAndIdentify(
   let source: FetchedSource | null = null;
   try {
     source = await fetchSource(url);
-    return { source, outcome: await identifySource(url, source, collectionIDs, attempts) };
+    return {
+      source,
+      outcome: await identifySource(url, source, collectionIDs, attempts),
+    };
   } catch (error) {
     if (!(error instanceof SourceNotIdentifiedError && fallback !== null)) {
       throw error;
@@ -172,7 +175,10 @@ async function importSource(
   if (fallback === null) {
     throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
   }
-  return { source, outcome: await saveFallback(url, source, fallback, collectionIDs) };
+  return {
+    source,
+    outcome: await saveFallback(url, source, fallback, collectionIDs),
+  };
 }
 
 export async function handleImportFromUrl(data: RequestData) {
