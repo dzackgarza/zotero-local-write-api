@@ -89,23 +89,17 @@ async function fileRecognized(
     await pdf.eraseTx();
     await parent.eraseTx();
     await fileExistingItem(existing, collectionIDs);
-    return {
-      item: existing,
-      existing: true,
-      translator: null,
-      attachmentFailures: [],
-      message: existing.getField("title"),
-    };
+    return recognizedImport(existing, true);
   }
   if (collectionIDs.length) {
     parent.setCollections(collectionIDs);
     await parent.saveTx();
   }
-  return {
-    item: parent,
-    existing: false,
-    translator: null,
-    attachmentFailures: [],
-    message: parent.getField("title"),
-  };
+  return recognizedImport(parent, false);
+}
+
+// The recognizer saves no attachment of its own, so it has no attachment failures.
+function recognizedImport(item: Zotero.Item, existing: boolean): RecognizedImport {
+  let message = item.getField("title");
+  return { item, existing, translator: null, attachmentFailures: [], message };
 }

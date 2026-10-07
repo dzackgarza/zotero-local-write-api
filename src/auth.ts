@@ -18,23 +18,23 @@ export let TOKEN_PREF = "extensions.zotero.localWriteAPI.token";
 // one, so the GPT builder can import the schema straight from the tunnel.
 export let PUBLIC_BASE_URL_PREF = "extensions.zotero.localWriteAPI.publicBaseURL";
 
+// The string value of a pref, or null when the pref is unset or empty.
+function prefText(pref: string): string | null {
+  let value = Zotero.Prefs.get(pref, true);
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+// Loopback with no token is the documented default and stays open. What must never
+// happen is an unauthenticated surface being *published*: publicBaseURL is what makes
+// the plugin reachable beyond loopback, and both prefs are editable at runtime with no
+// restart, so the two are checked together on every request rather than once at
+// tunnel bring-up.
 export function bearerAuthFailure(request: EndpointRequest): EndpointResult | null {
-  // Loopback with no token is the documented default and stays open. What must never
-  // happen is an unauthenticated surface being *published*: publicBaseURL is what makes
-  // the plugin reachable beyond loopback, and both prefs are editable at runtime with no
-  // restart, so the two are checked together on every request rather than once at
-  // tunnel bring-up.
-  let token = Zotero.Prefs.get(TOKEN_PREF, true);
-  let published = Zotero.Prefs.get(PUBLIC_BASE_URL_PREF, true);
-  let hasToken = typeof token === "string" && token !== "";
-  if (!hasToken) {
-    if (typeof published === "string" && published !== "") {
-      return bearerDenied(
-        request,
-        "Write API is published via publicBaseURL but no token is configured",
-      );
-    }
-    return null;
+  let token = prefText(TOKEN_PREF);
+  if (token === null) {
+    return prefText(PUBLIC_BASE_URL_PREF) === null
+      ? null
+      : bearerDenied(request, "Write API is published via publicBaseURL but no token is configured");
   }
   if (secretEquals(request.headers.authorization, "Bearer " + token)) {
     return null;

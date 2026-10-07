@@ -126,12 +126,12 @@ async function runWrite(data: RequestData) {
   return writeHandlers[operation](data);
 }
 
+// operation may be absent on a malformed request; label it explicitly for
+// diagnostics. This is the error-rendering boundary, not a runtime default.
+// It is computed inside the try: reading data.operation on a null body
+// throws, and doing that outside the try left the error unrendered, which
+// hung the request forever instead of answering 400.
 export async function handleWriteRequest(data: unknown): Promise<EndpointResult> {
-  // operation may be absent on a malformed request; label it explicitly for
-  // diagnostics. This is the error-rendering boundary, not a runtime default.
-  // It is computed inside the try: reading data.operation on a null body
-  // throws, and doing that outside the try left the error unrendered, which
-  // hung the request forever instead of answering 400.
   let operationLabel = "unknown_operation";
   try {
     let body = requireRequestObject(data);
@@ -141,22 +141,24 @@ export async function handleWriteRequest(data: unknown): Promise<EndpointResult>
     log("Received POST request to " + LOCAL_WRITE_PATH + " [operation=" + operationLabel + "]");
     return jsonResult(200, await runWrite(body));
   } catch (error) {
-    let msg = (error as Error).message;
-    let status = isApiError(error) ? error.status : 500;
-    log("Error in " + LOCAL_WRITE_PATH + " [operation=" + operationLabel + "]: " + msg);
-    if (error instanceof SourceNotIdentifiedError) {
-      return jsonResult(
-        status,
-        errorResult(operationLabel, "identify_source", msg, {
-          request: data,
-          attempts: error.attempts,
-          remediation: SOURCE_REMEDIATION,
-        }),
-      );
-    }
+    return writeError(error as Error, operationLabel, data);
+  }
+}
+
+// The response for a write that failed: an unidentified source also carries its attempts.
+function writeError(error: Error, operationLabel: string, data: unknown): EndpointResult {
+  let msg = error.message;
+  let status = isApiError(error) ? error.status : 500;
+  log("Error in " + LOCAL_WRITE_PATH + " [operation=" + operationLabel + "]: " + msg);
+  if (error instanceof SourceNotIdentifiedError) {
     return jsonResult(
       status,
-      errorResult(operationLabel, "write_endpoint", msg, { request: data }),
+      errorResult(operationLabel, "identify_source", msg, {
+        request: data,
+        attempts: error.attempts,
+        remediation: SOURCE_REMEDIATION,
+      }),
     );
   }
+  return jsonResult(status, errorResult(operationLabel, "write_endpoint", msg, { request: data }));
 }
