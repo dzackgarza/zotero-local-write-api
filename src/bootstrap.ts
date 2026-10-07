@@ -1562,12 +1562,34 @@ function requireHttpUrl(value: unknown): string {
   return parsed.href;
 }
 
+// zotero-types omits the Zotero.HTTP exception constructors. Models zotero/zotero
+// chrome/content/zotero/xpcom/http.js: request() rejects with one of these when the source
+// answers with a failure status, cannot be reached, times out, or fails a certificate check.
+type ZoteroHttpFailureApi = {
+  UnexpectedStatusException: new (...args: never[]) => Error;
+  BrowserOfflineException: new (...args: never[]) => Error;
+  TimeoutException: new (...args: never[]) => Error;
+  SecurityException: new (...args: never[]) => Error;
+};
+function isHttpFailure(error: unknown): error is Error {
+  let http = Zotero.HTTP as typeof Zotero.HTTP & ZoteroHttpFailureApi;
+  return (
+    error instanceof http.UnexpectedStatusException ||
+    error instanceof http.BrowserOfflineException ||
+    error instanceof http.TimeoutException ||
+    error instanceof http.SecurityException
+  );
+}
+
 async function fetchSource(url: string): Promise<FetchedSource> {
   let xhr: XMLHttpRequest;
   try {
     xhr = await Zotero.HTTP.request("GET", url, { responseType: "document" });
   } catch (error) {
-    throw new ApiError(502, "Source could not be fetched: " + (error as Error).message);
+    if (!isHttpFailure(error)) {
+      throw error;
+    }
+    throw new ApiError(502, "Source could not be fetched: " + error.message);
   }
   let finalUrl = xhr.responseURL || url;
   let contentType = xhr.getResponseHeader("Content-Type");
@@ -2776,80 +2798,52 @@ async function handleRunJavascript(data: RequestData) {
   return successResult("run_javascript", { result: serialized });
 }
 
+type WriteHandler = (data: RequestData) => JsonPayload | Promise<JsonPayload>;
+
+// One handler per /write operation; openapi.yaml's WriteRequest names the same operations.
+let writeHandlers: Record<string, WriteHandler> = {
+  sync: handleSync,
+  run_javascript: handleRunJavascript,
+  update_item_fields: handleUpdateItemFields,
+  replace_item_json: handleReplaceItemJSON,
+  set_item_tags: handleSetItemTags,
+  add_item_tags: handleAddItemTags,
+  remove_item_tags: handleRemoveItemTags,
+  set_item_collections: handleSetItemCollections,
+  add_item_to_collection: handleAddItemToCollection,
+  remove_item_from_collection: handleRemoveItemFromCollection,
+  attach_note: handleAttachNote,
+  update_note: handleUpdateNote,
+  attach_url: handleAttachURL,
+  trash_item: handleTrashItem,
+  trash_collection: handleTrashCollection,
+  relink_attachment_file: handleRelinkAttachmentFile,
+  create_collection: handleCreateCollection,
+  rename_collection: handleRenameCollection,
+  move_collection: handleMoveCollection,
+  merge_collections: handleMergeCollections,
+  rename_tag: handleRenameTag,
+  merge_tags: handleMergeTags,
+  delete_tag: handleDeleteTag,
+  delete_unused_tags: handleDeleteUnusedTags,
+  copy_item: handleCopyItem,
+  merge_items: handleMergeItems,
+  create_item: handleCreateItem,
+  import_bibtex: handleImportBibTeX,
+  import_by_identifier: handleImportByIdentifier,
+  get_selected_collection: handleGetSelectedCollection,
+  restore_item: handleRestoreItem,
+  update_attachment_title: handleUpdateAttachmentTitle,
+  import_from_url: handleImportFromUrl,
+  resolve_url: handleResolveUrl,
+};
+
 async function runWrite(data: RequestData) {
   let operation = requireNonEmptyString(data.operation, "operation");
-  switch (operation) {
-    case "sync":
-      return handleSync(data);
-    case "run_javascript":
-      return handleRunJavascript(data);
-    case "update_item_fields":
-      return handleUpdateItemFields(data);
-    case "replace_item_json":
-      return handleReplaceItemJSON(data);
-    case "set_item_tags":
-      return handleSetItemTags(data);
-    case "add_item_tags":
-      return handleAddItemTags(data);
-    case "remove_item_tags":
-      return handleRemoveItemTags(data);
-    case "set_item_collections":
-      return handleSetItemCollections(data);
-    case "add_item_to_collection":
-      return handleAddItemToCollection(data);
-    case "remove_item_from_collection":
-      return handleRemoveItemFromCollection(data);
-    case "attach_note":
-      return handleAttachNote(data);
-    case "update_note":
-      return handleUpdateNote(data);
-    case "attach_url":
-      return handleAttachURL(data);
-    case "trash_item":
-      return handleTrashItem(data);
-    case "trash_collection":
-      return handleTrashCollection(data);
-    case "relink_attachment_file":
-      return handleRelinkAttachmentFile(data);
-    case "create_collection":
-      return handleCreateCollection(data);
-    case "rename_collection":
-      return handleRenameCollection(data);
-    case "move_collection":
-      return handleMoveCollection(data);
-    case "merge_collections":
-      return handleMergeCollections(data);
-    case "rename_tag":
-      return handleRenameTag(data);
-    case "merge_tags":
-      return handleMergeTags(data);
-    case "delete_tag":
-      return handleDeleteTag(data);
-    case "delete_unused_tags":
-      return handleDeleteUnusedTags(data);
-    case "copy_item":
-      return handleCopyItem(data);
-    case "merge_items":
-      return handleMergeItems(data);
-    case "create_item":
-      return handleCreateItem(data);
-    case "import_bibtex":
-      return handleImportBibTeX(data);
-    case "import_by_identifier":
-      return handleImportByIdentifier(data);
-    case "get_selected_collection":
-      return handleGetSelectedCollection();
-    case "restore_item":
-      return handleRestoreItem(data);
-    case "update_attachment_title":
-      return handleUpdateAttachmentTitle(data);
-    case "import_from_url":
-      return handleImportFromUrl(data);
-    case "resolve_url":
-      return handleResolveUrl(data);
-    default:
-      throw badRequest("Unsupported operation: " + operation);
+  if (!Object.hasOwn(writeHandlers, operation)) {
+    throw badRequest("Unsupported operation: " + operation);
   }
+  return writeHandlers[operation](data);
 }
 
 function jsonResult(status: number, payload: JsonPayload): EndpointResult {

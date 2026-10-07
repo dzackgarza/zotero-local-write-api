@@ -62,80 +62,40 @@ function parseConfig(): ConfigDoc {
   return yaml.load(source) as ConfigDoc;
 }
 
-// Find the runWrite function and its switch statement
-function findRunWriteSwitch(source: ts.SourceFile): ts.SwitchStatement | null {
-  let result: ts.SwitchStatement | null = null;
-
-  function visit(node: ts.Node) {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === "runWrite") {
-      function findSwitch(n: ts.Node) {
-        if (ts.isSwitchStatement(n)) {
-          result = n;
-          return;
-        }
-        ts.forEachChild(n, findSwitch);
-        if (result) {
-          return;
-        }
-      }
-      findSwitch(node);
-    }
-    if (!result) {
-      ts.forEachChild(node, visit);
-    }
-  }
-  visit(source);
-  return result;
-}
-
-// Extract switch case strings and the handler call for each
-function extractSwitchCases(switchStmt: ts.SwitchStatement): { op: string; handlerName: string }[] {
-  const cases: { op: string; handlerName: string }[] = [];
-
-  for (const clause of switchStmt.caseBlock.clauses) {
-    if (ts.isDefaultClause(clause)) {
+// Find the writeHandlers table that runWrite dispatches through
+function findWriteHandlers(source: ts.SourceFile): ts.ObjectLiteralExpression {
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) {
       continue;
     }
-
-    const caseExpr = clause.expression;
-    if (!ts.isStringLiteral(caseExpr)) {
-      throw new Error(`Non-literal switch case at position ${cases.length}`);
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        ts.isIdentifier(declaration.name) &&
+        declaration.name.text === "writeHandlers" &&
+        declaration.initializer &&
+        ts.isObjectLiteralExpression(declaration.initializer)
+      ) {
+        return declaration.initializer;
+      }
     }
-    const op = caseExpr.text;
-
-    // Check for fall-through: must have exactly one return statement
-    const returnStmts = clause.statements.filter(ts.isReturnStatement);
-    if (returnStmts.length !== 1) {
-      throw new Error(
-        `Case "${op}" must have exactly one return statement, got ${returnStmts.length}`,
-      );
-    }
-
-    const ret = returnStmts[0];
-    if (!ret.expression || !ts.isCallExpression(ret.expression)) {
-      throw new Error(`Case "${op}" return must be a function call`);
-    }
-
-    // Extract handler name: return handleX(data) or return handleX()
-    const callExpr = ret.expression;
-    let handlerName: string;
-    if (ts.isIdentifier(callExpr.expression)) {
-      handlerName = callExpr.expression.text;
-    } else {
-      throw new Error(`Case "${op}" handler call expression is not a simple identifier`);
-    }
-
-    cases.push({ op, handlerName });
   }
+  throw new Error("Could not find the writeHandlers object literal in bootstrap.ts");
+}
 
-  // Check for duplicates
-  const ops = cases.map((c) => c.op);
-  const duplicates = ops.filter((op, i) => ops.indexOf(op) !== i);
-  if (duplicates.length > 0) {
-    throw new Error(`Duplicate switch cases: ${duplicates.join(", ")}`);
-  }
-
-  return cases;
+// Extract each operation name and the handler it dispatches to
+function extractWriteHandlers(
+  table: ts.ObjectLiteralExpression,
+): { op: string; handlerName: string }[] {
+  return table.properties.map((property) => {
+    if (
+      !ts.isPropertyAssignment(property) ||
+      !ts.isIdentifier(property.name) ||
+      !ts.isIdentifier(property.initializer)
+    ) {
+      throw new Error(`writeHandlers entry is not \`operation: handlerName\`: ${property.getText()}`);
+    }
+    return { op: property.name.text, handlerName: property.initializer.text };
+  });
 }
 
 // Find the handler function and extract data.<field> reads
@@ -206,25 +166,20 @@ describe("OpenAPI contract conformance", () => {
   const config = parseConfig();
   const version = fs.readFileSync(VERSION_PATH, "utf8").trim();
 
-  const switchStmt = findRunWriteSwitch(source);
-  if (!switchStmt) {
-    throw new Error("Could not find runWrite switch statement in bootstrap.ts");
-  }
-
-  const runtimeCases = extractSwitchCases(switchStmt);
+  const runtimeCases = extractWriteHandlers(findWriteHandlers(source));
   const runtimeOps = runtimeCases.map((c) => c.op);
 
   it("runtime dispatches each operation once", () => {
     expect(new Set(runtimeOps).size).toBe(runtimeOps.length);
   });
 
-  it("switch cases match WriteRequest discriminator mapping keys", () => {
+  it("dispatch table matches WriteRequest discriminator mapping keys", () => {
     const writeReq = spec.components.schemas.WriteRequest;
     const mappingKeys = Object.keys(writeReq.discriminator.mapping);
     expect(new Set(mappingKeys)).toEqual(new Set(runtimeOps));
   });
 
-  it("switch cases match WriteRequest oneOf refs", () => {
+  it("dispatch table matches WriteRequest oneOf refs", () => {
     const writeReq = spec.components.schemas.WriteRequest;
     const oneOfRefs = writeReq.oneOf.map((s) => s.$ref.split("/").pop()!);
     expect(oneOfRefs.length).toBe(runtimeOps.length);
@@ -237,13 +192,13 @@ describe("OpenAPI contract conformance", () => {
     }
   });
 
-  it("switch cases match WriteSuccessResponse discriminator mapping keys", () => {
+  it("dispatch table matches WriteSuccessResponse discriminator mapping keys", () => {
     const writeSuccess = spec.components.schemas.WriteSuccessResponse;
     const mappingKeys = Object.keys(writeSuccess.discriminator.mapping);
     expect(new Set(mappingKeys)).toEqual(new Set(runtimeOps));
   });
 
-  it("switch cases match WriteSuccessResponse oneOf refs", () => {
+  it("dispatch table matches WriteSuccessResponse oneOf refs", () => {
     const writeSuccess = spec.components.schemas.WriteSuccessResponse;
     const oneOfRefs = writeSuccess.oneOf.map((s) => s.$ref.split("/").pop()!);
     expect(oneOfRefs.length).toBe(runtimeOps.length);
@@ -253,7 +208,7 @@ describe("OpenAPI contract conformance", () => {
     }
   });
 
-  it("request operation const values match runtime switch cases", () => {
+  it("request operation const values match runtime dispatch table", () => {
     const requestSchemas = runtimeOps.map((op) => {
       const pascal = op
         .split("_")
@@ -267,7 +222,7 @@ describe("OpenAPI contract conformance", () => {
     expect(new Set(requestSchemas)).toEqual(new Set(runtimeOps));
   });
 
-  it("success operation const values match runtime switch cases", () => {
+  it("success operation const values match runtime dispatch table", () => {
     const successSchemas = runtimeOps.map((op) => {
       const pascal = op
         .split("_")
