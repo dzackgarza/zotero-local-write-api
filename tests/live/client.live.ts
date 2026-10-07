@@ -14,9 +14,9 @@
  *
  * An unreachable Zotero fails every case.
  */
-import assert from "node:assert/strict";
 
 import { afterAll, expect, test } from "bun:test";
+import assert from "node:assert/strict";
 
 import { createZoteroLocalWriteClient } from "../../src/client";
 import { liveSetting } from "./settings";
@@ -37,7 +37,10 @@ const createdItemKeys: string[] = [];
 async function readItem(itemKey: string): Promise<{ data: Record<string, unknown> }> {
   const url = `${BASE_URL}/api/users/${LIBRARY_ID}/items/${encodeURIComponent(itemKey)}`;
   const response = await fetch(url);
-  assert(response.ok, `read-back of ${itemKey} failed: GET ${url} returned HTTP ${response.status}`);
+  assert(
+    response.ok,
+    `read-back of ${itemKey} failed: GET ${url} returned HTTP ${response.status}`,
+  );
   // Parsed from text rather than response.json(): zotero-types shadows the
   // global JSON type, so response.json() resolves to that shadowed type instead
   // of something assignable here.
