@@ -1,8 +1,14 @@
 import * as v from "valibot";
 import { ApiError, badRequest } from "./errors";
 import { requireNonEmptyString } from "./request-fields";
-import { type FetchedSource, type ServiceAnswer, SourceNotIdentifiedError, answered, serviceFailure } from "./source-results";
-import { type TranslatorItemJSON, isHttpFailure } from "./zotero-api";
+import {
+  answered,
+  type FetchedSource,
+  type ServiceAnswer,
+  SourceNotIdentifiedError,
+  serviceFailure,
+} from "./source-results";
+import { isHttpFailure, type TranslatorItemJSON } from "./zotero-api";
 
 // An external service's GET. A failure status, an unreachable host, a timeout or a
 // certificate failure is the service's answer; any other error propagates.

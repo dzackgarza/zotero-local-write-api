@@ -1,7 +1,19 @@
 import { EXTERNAL_SERVICES, identifyByService, seedFromJSON } from "./metadata-services";
-import { identifierText, identifyByIdentifier, identifyByPublishedBibTeX, translatePage, translatedWork } from "./source-methods";
-import { type Attempt, type BibliographicSeed, type Identification, type SourceMethod, recordAttempt } from "./source-results";
-import { type WebTranslatorInfo, createTranslateWeb } from "./zotero-api";
+import {
+  identifierText,
+  identifyByIdentifier,
+  identifyByPublishedBibTeX,
+  translatedWork,
+  translatePage,
+} from "./source-methods";
+import {
+  type Attempt,
+  type BibliographicSeed,
+  type Identification,
+  recordAttempt,
+  type SourceMethod,
+} from "./source-results";
+import { createTranslateWeb, type WebTranslatorInfo } from "./zotero-api";
 
 // The generic translator that reads citation_*, Dublin Core, Open Graph and
 // other embedded tags (translators/Embedded Metadata.js).

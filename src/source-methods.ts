@@ -1,7 +1,15 @@
 import { BIBTEX_TRANSLATOR_ID } from "./identifier-import";
 import { requestService, responseTextOf, runTranslation } from "./source-fetch";
 import { type Identification, type MethodResult, miss } from "./source-results";
-import { type Identifier, type TranslatorItemJSON, type WebTranslatorInfo, createImportTranslator, createTranslateSearch, createTranslateWeb, findIdentifiers } from "./zotero-api";
+import {
+  createImportTranslator,
+  createTranslateSearch,
+  createTranslateWeb,
+  findIdentifiers,
+  type Identifier,
+  type TranslatorItemJSON,
+  type WebTranslatorInfo,
+} from "./zotero-api";
 
 // Runs one web translator without saving. A translator whose detection found a
 // choice of items (a search or table-of-contents page) marks the URL as not

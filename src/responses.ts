@@ -27,11 +27,19 @@ export function log(msg: string): void {
   Zotero.debug("Local Write API: " + msg);
 }
 
-export function sendJSON(sendResponse: SendResponse, statusCode: number, payload: JsonPayload): void {
+export function sendJSON(
+  sendResponse: SendResponse,
+  statusCode: number,
+  payload: JsonPayload,
+): void {
   sendResponse(statusCode, "application/json", JSON.stringify(payload));
 }
 
-export function successResult(operation: string, details?: JsonPayload, extra?: JsonPayload): JsonPayload {
+export function successResult(
+  operation: string,
+  details?: JsonPayload,
+  extra?: JsonPayload,
+): JsonPayload {
   let payload: JsonPayload = {
     success: true,
     operation: operation,

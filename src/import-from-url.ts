@@ -7,7 +7,17 @@ import { normalizeStringList } from "./request-fields";
 import { type RequestData, successResult } from "./responses";
 import { fetchSource, requireHttpUrl } from "./source-fetch";
 import { identifierText, identifyByIdentifier } from "./source-methods";
-import { type AttachmentFailure, type Attempt, type FetchedSource, type Identification, type ImportOutcome, type SourceMethod, SourceNotIdentifiedError, recordAttempt, translatorDetails } from "./source-results";
+import {
+  type AttachmentFailure,
+  type Attempt,
+  type FetchedSource,
+  type Identification,
+  type ImportOutcome,
+  recordAttempt,
+  type SourceMethod,
+  SourceNotIdentifiedError,
+  translatorDetails,
+} from "./source-results";
 import { type ZoteroTranslateApi } from "./zotero-api";
 
 async function saveIdentification(

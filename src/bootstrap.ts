@@ -1,6 +1,14 @@
 import { handleAttachRequest } from "./attach";
-import { PUBLIC_BASE_URL_PREF, TOKEN_PREF, bearerAuthFailure } from "./auth";
-import { type EndpointConstructor, type EndpointRequest, type EndpointResult, type JsonPayload, type SendResponse, log, sendJSON } from "./responses";
+import { bearerAuthFailure, PUBLIC_BASE_URL_PREF, TOKEN_PREF } from "./auth";
+import {
+  type EndpointConstructor,
+  type EndpointRequest,
+  type EndpointResult,
+  type JsonPayload,
+  log,
+  type SendResponse,
+  sendJSON,
+} from "./responses";
 import { handleWriteRequest } from "./write";
 import { type ZoteroTranslatorsApi } from "./zotero-api";
 

@@ -1,6 +1,17 @@
 import { badRequest, conflict } from "./errors";
-import { citationKey, getUserCollectionOrThrow, getUserItemOrThrow, userLibraryID } from "./library";
-import { normalizeStringList, optionalNonEmptyString, requireNonEmptyString, requireObject, requireString } from "./request-fields";
+import {
+  citationKey,
+  getUserCollectionOrThrow,
+  getUserItemOrThrow,
+  userLibraryID,
+} from "./library";
+import {
+  normalizeStringList,
+  optionalNonEmptyString,
+  requireNonEmptyString,
+  requireObject,
+  requireString,
+} from "./request-fields";
 import { type RequestData, successResult } from "./responses";
 
 export async function handleUpdateItemFields(data: RequestData) {

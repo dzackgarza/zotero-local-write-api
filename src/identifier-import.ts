@@ -2,7 +2,12 @@ import { badRequest, notFound } from "./errors";
 import { citationKeys, getUserCollectionOrThrow, userLibraryID } from "./library";
 import { normalizeStringList, requireNonEmptyString } from "./request-fields";
 import { type RequestData, successResult } from "./responses";
-import { type Identifier, createImportTranslator, createTranslateSearch, findIdentifiers } from "./zotero-api";
+import {
+  createImportTranslator,
+  createTranslateSearch,
+  findIdentifiers,
+  type Identifier,
+} from "./zotero-api";
 
 export let BIBTEX_TRANSLATOR_ID = "9cb70025-a888-4a29-a210-93ec52da40d4";
 

@@ -1,6 +1,13 @@
 import { duplicateKeysFromItem, fileExistingItem, findExistingItem } from "./duplicates";
 import { userLibraryID } from "./library";
-import { type ImportOutcome, type MethodResult, type ServiceAnswer, answered, miss, serviceFailure } from "./source-results";
+import {
+  answered,
+  type ImportOutcome,
+  type MethodResult,
+  miss,
+  type ServiceAnswer,
+  serviceFailure,
+} from "./source-results";
 import { isHttpFailure, recognizeDocument } from "./zotero-api";
 
 // Zotero's "Retrieve Metadata for PDF": the PDF is stored as a standalone

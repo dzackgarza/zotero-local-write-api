@@ -7,7 +7,10 @@ import { type JsonPayload } from "./responses";
 // Zotero accepts `false` for Collection.parentKey to detach a collection from its
 // parent, but zotero-types models the field as `string`. This is the single owned site
 // that writes that runtime contract; callers go through it instead of casting.
-export function setCollectionParentKey(collection: Zotero.Collection, parentKey: string | false): void {
+export function setCollectionParentKey(
+  collection: Zotero.Collection,
+  parentKey: string | false,
+): void {
   (collection as { parentKey: string | false }).parentKey = parentKey;
 }
 

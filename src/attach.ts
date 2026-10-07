@@ -1,7 +1,19 @@
 import { assertNever, badRequest, isApiError, notFound } from "./errors";
 import { getUserItemOrThrow, selectedCollection, userLibraryID } from "./library";
-import { optionalNonEmptyString, requireNonEmptyString, requirePresent, requireRequestObject } from "./request-fields";
-import { type EndpointResult, type RequestData, errorResult, jsonResult, log, successResult } from "./responses";
+import {
+  optionalNonEmptyString,
+  requireNonEmptyString,
+  requirePresent,
+  requireRequestObject,
+} from "./request-fields";
+import {
+  type EndpointResult,
+  errorResult,
+  jsonResult,
+  log,
+  type RequestData,
+  successResult,
+} from "./responses";
 
 function resolveAttachFilePath(filePath: string): string {
   let file = Zotero.File.pathToFile(filePath);

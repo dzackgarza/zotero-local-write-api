@@ -3,7 +3,15 @@ import { recognizeParent } from "./pdf-recognition";
 import { type JsonPayload, type RequestData, successResult } from "./responses";
 import { fetchSource, requireHttpUrl } from "./source-fetch";
 import { identifierText, identifyByIdentifier } from "./source-methods";
-import { type Attempt, type Identification, type MethodResult, type SourceMethod, SourceNotIdentifiedError, recordAttempt, translatorDetails } from "./source-results";
+import {
+  type Attempt,
+  type Identification,
+  type MethodResult,
+  recordAttempt,
+  type SourceMethod,
+  SourceNotIdentifiedError,
+  translatorDetails,
+} from "./source-results";
 import { type TranslatorItemJSON, type WebTranslatorInfo } from "./zotero-api";
 
 // ── resolve_url ─────────────────────────────────────────────────────

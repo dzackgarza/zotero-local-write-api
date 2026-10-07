@@ -1,7 +1,21 @@
 import * as v from "valibot";
-import { parseJSONResponse, requestJSON, requestJSONResponse, requestService } from "./source-fetch";
+import {
+  parseJSONResponse,
+  requestJSON,
+  requestJSONResponse,
+  requestService,
+} from "./source-fetch";
 import { identifiedWork, identifierKey, resolveIdentifier } from "./source-methods";
-import { type BibliographicSeed, type ExternalService, type Identification, type MethodResult, type ServiceCandidate, answered, miss, serviceFailure } from "./source-results";
+import {
+  answered,
+  type BibliographicSeed,
+  type ExternalService,
+  type Identification,
+  type MethodResult,
+  miss,
+  type ServiceCandidate,
+  serviceFailure,
+} from "./source-results";
 import { type Identifier, type TranslatorItemJSON } from "./zotero-api";
 
 // Title normalization from zotero/zotero chrome/content/zotero/xpcom/duplicates.js
