@@ -180,27 +180,26 @@ function attachSource(
   return { kind: "bytes", fileName: name, bytes };
 }
 
+// A path an /attach request names must lie in one of the configured directories.
+function requireAllowedPath(filePath: string): string {
+  if (!FULLTEXT_ALLOWED_DIRS.some((dir) => filePath.startsWith(dir))) {
+    throw badRequest(
+      "File path must be within allowed directories: " + FULLTEXT_ALLOWED_DIRS.join(", "),
+    );
+  }
+  return filePath;
+}
+
 async function storeAttachmentFile(
   target: AttachTarget,
   title: string,
   source: AttachSource,
-): Promise<{ attachment: Zotero.Item; sourceMode: AttachSource["kind"] }> {
+): Promise<Zotero.Item> {
   switch (source.kind) {
     case "bytes":
-      return {
-        attachment: await importUploadedBytes(target, title, source.fileName, source.bytes),
-        sourceMode: "bytes",
-      };
+      return importUploadedBytes(target, title, source.fileName, source.bytes);
     case "path":
-      if (!FULLTEXT_ALLOWED_DIRS.some((dir) => source.filePath.startsWith(dir))) {
-        throw badRequest(
-          "File path must be within allowed directories: " + FULLTEXT_ALLOWED_DIRS.join(", "),
-        );
-      }
-      return {
-        attachment: await importStoredAttachment(target, source.filePath, title),
-        sourceMode: "path",
-      };
+      return importStoredAttachment(target, requireAllowedPath(source.filePath), title);
     default:
       return assertNever(source);
   }
@@ -262,11 +261,11 @@ async function handleFulltextAttach(data: RequestData) {
 
   let source = attachSource(filePath, fileName, fileBytesBase64);
   let placed = await placeAttachment(placement);
-  let { attachment, sourceMode } = await storeAttachmentFile(placed.target, title, source);
+  let attachment = await storeAttachmentFile(placed.target, title, source);
 
   return successResult(
     "attach_file_to_item",
-    { ...placed.details, file_path: filePath, source_mode: sourceMode, title: title },
+    { ...placed.details, file_path: filePath, source_mode: source.kind, title: title },
     {
       attachment_key: attachment.key,
       attachment_id: attachment.id,
