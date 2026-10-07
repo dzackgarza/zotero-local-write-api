@@ -33,6 +33,11 @@ let PLUGIN_CAPABILITIES = [
   "attach_standalone",
 ];
 
+// The request path of each endpoint the add-on registers.
+function endpointPaths(): string[] {
+  return [FULLTEXT_ATTACH_PATH, LOCAL_WRITE_PATH, VERSION_PATH, OPENAPI_PATH];
+}
+
 function pluginVersionPayload(): JsonPayload {
   return {
     success: true,
@@ -43,19 +48,27 @@ function pluginVersionPayload(): JsonPayload {
     addon_id: ADDON_ID,
     homepage_url: HOMEPAGE_URL,
     update_url: UPDATE_URL,
-    endpoints: {
-      attach: FULLTEXT_ATTACH_PATH,
-      write: LOCAL_WRITE_PATH,
-      version: VERSION_PATH,
-      openapi: OPENAPI_PATH,
-    },
-    compatibility: {
-      strict_min_version: STRICT_MIN_VERSION,
-      strict_max_version: STRICT_MAX_VERSION,
-      tested_zotero_version: TESTED_ZOTERO_VERSION,
-    },
+    endpoints: endpointsPayload(),
+    compatibility: compatibilityPayload(),
     capabilities: PLUGIN_CAPABILITIES.slice(),
     translators_ready: translatorsReady,
+  };
+}
+
+function endpointsPayload(): JsonPayload {
+  return {
+    attach: FULLTEXT_ATTACH_PATH,
+    write: LOCAL_WRITE_PATH,
+    version: VERSION_PATH,
+    openapi: OPENAPI_PATH,
+  };
+}
+
+function compatibilityPayload(): JsonPayload {
+  return {
+    strict_min_version: STRICT_MIN_VERSION,
+    strict_max_version: STRICT_MAX_VERSION,
+    tested_zotero_version: TESTED_ZOTERO_VERSION,
   };
 }
 
@@ -65,12 +78,35 @@ let pluginRootURI = "";
 // Whether Zotero has loaded its translators; translator-backed operations fail before then.
 let translatorsReady = false;
 
+// The spec's single server entry is the loopback URL; a set publicBaseURL pref rewrites
+// it so a schema imported by URL points at the tunnel hostname. Fail loud
+// if that exact server line is absent rather than silently serving a spec
+// that still points at loopback — the whole point of the pref is to not do
+// that.
+// A presence check plus a first-match replace cannot tell the servers entry from
+// any other line that happens to contain the same URL — it would rewrite the wrong
+// one and serve a spec still pointing at loopback while claiming to be published.
+// Requiring exactly one occurrence makes that ambiguity impossible to reach.
+function publishedSpecText(text: string, publicBaseUrl: string): string {
+  let loopbackServer = "url: http://127.0.0.1:23119";
+  let occurrences = text.split(loopbackServer).length - 1;
+  if (occurrences !== 1) {
+    throw new Error(
+      "openapi.yaml must contain exactly one '" +
+        loopbackServer +
+        "' entry to rewrite for publicBaseURL, found " +
+        String(occurrences),
+    );
+  }
+  return text.replace(loopbackServer, "url: " + publicBaseUrl.replace(/\/+$/, ""));
+}
+
+// Bundled into the XPI by build.py next to bootstrap.js. rootURI is a
+// jar:file://…!/ URI for a packaged install, and Zotero.File.getContentsFromURLAsync
+// cannot read those: it routes through Zotero.HTTP._parseURI, which reads
+// nsIURI.username and throws NS_ERROR_FAILURE on a jar: URI. fetch() reads it
+// directly in the add-on's privileged scope.
 async function openApiSpecText(): Promise<string> {
-  // Bundled into the XPI by build.py next to bootstrap.js. rootURI is a
-  // jar:file://…!/ URI for a packaged install, and Zotero.File.getContentsFromURLAsync
-  // cannot read those: it routes through Zotero.HTTP._parseURI, which reads
-  // nsIURI.username and throws NS_ERROR_FAILURE on a jar: URI. fetch() reads it
-  // directly in the add-on's privileged scope.
   let response = await fetch(pluginRootURI + "openapi.yaml");
   if (!response.ok) {
     throw new Error("bundled openapi.yaml could not be read: HTTP " + String(response.status));
@@ -78,26 +114,7 @@ async function openApiSpecText(): Promise<string> {
   let text = await response.text();
   let publicBaseUrl = Zotero.Prefs.get(PUBLIC_BASE_URL_PREF, true);
   if (typeof publicBaseUrl === "string" && publicBaseUrl !== "") {
-    // The spec's single server entry is the loopback URL; a set pref rewrites
-    // it so a schema imported by URL points at the tunnel hostname. Fail loud
-    // if that exact server line is absent rather than silently serving a spec
-    // that still points at loopback — the whole point of the pref is to not do
-    // that.
-    // A presence check plus a first-match replace cannot tell the servers entry from
-    // any other line that happens to contain the same URL — it would rewrite the wrong
-    // one and serve a spec still pointing at loopback while claiming to be published.
-    // Requiring exactly one occurrence makes that ambiguity impossible to reach.
-    let loopbackServer = "url: http://127.0.0.1:23119";
-    let occurrences = text.split(loopbackServer).length - 1;
-    if (occurrences !== 1) {
-      throw new Error(
-        "openapi.yaml must contain exactly one '" +
-          loopbackServer +
-          "' entry to rewrite for publicBaseURL, found " +
-          String(occurrences),
-      );
-    }
-    return text.replace(loopbackServer, "url: " + publicBaseUrl.replace(/\/+$/, ""));
+    return publishedSpecText(text, publicBaseUrl);
   }
   return text;
 }
@@ -214,6 +231,21 @@ function onMainWindowUnload({ window: _window }: { window: Window }): void {
   // No window modifications needed
 }
 
+// Reflect.deleteProperty is the non-syntactic form of `delete obj[key]`; the
+// endpoint registry is keyed by request path, so the key is always computed.
+function unregisterEndpoints(): void {
+  for (let path of endpointPaths()) {
+    Reflect.deleteProperty(Zotero.Server.Endpoints, path);
+  }
+  AttachEndpoint = undefined;
+  WriteEndpoint = undefined;
+  VersionEndpoint = undefined;
+  OpenApiEndpoint = undefined;
+  for (let path of endpointPaths()) {
+    log("Unregistered " + path + " endpoint");
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function shutdown(
   { id, version, rootURI }: { id: string; version: string; rootURI: string },
@@ -226,20 +258,7 @@ function shutdown(
     return;
   }
   log("Shutting down " + PLUGIN_VERSION);
-  // Reflect.deleteProperty is the non-syntactic form of `delete obj[key]`; the
-  // endpoint registry is keyed by request path, so the key is always computed.
-  Reflect.deleteProperty(Zotero.Server.Endpoints, FULLTEXT_ATTACH_PATH);
-  Reflect.deleteProperty(Zotero.Server.Endpoints, LOCAL_WRITE_PATH);
-  Reflect.deleteProperty(Zotero.Server.Endpoints, VERSION_PATH);
-  Reflect.deleteProperty(Zotero.Server.Endpoints, OPENAPI_PATH);
-  AttachEndpoint = undefined;
-  WriteEndpoint = undefined;
-  VersionEndpoint = undefined;
-  OpenApiEndpoint = undefined;
-  log("Unregistered " + FULLTEXT_ATTACH_PATH + " endpoint");
-  log("Unregistered " + LOCAL_WRITE_PATH + " endpoint");
-  log("Unregistered " + VERSION_PATH + " endpoint");
-  log("Unregistered " + OPENAPI_PATH + " endpoint");
+  unregisterEndpoints();
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
