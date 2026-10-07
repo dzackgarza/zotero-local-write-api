@@ -12,7 +12,7 @@ import {
   requireObject,
   requireString,
 } from "./request-fields";
-import { type RequestData, successResult } from "./responses";
+import { type JsonPayload, type RequestData, successResult } from "./responses";
 
 export async function handleUpdateItemFields(data: RequestData) {
   let itemKey = requireNonEmptyString(data.item_key, "item_key");
@@ -147,53 +147,62 @@ function requireItemType(itemType: string): string {
   return itemType;
 }
 
-export async function handleCreateItem(data: RequestData) {
-  let itemType = requireItemType(requireNonEmptyString(data.item_type, "item_type"));
-  let fields = Boolean(data.fields) ? requireObject(data.fields, "fields") : {};
-  let tags = Boolean(data.tags) ? normalizeStringList(data.tags, "tags") : [];
-  let collectionKeys = Boolean(data.collection_keys)
-    ? normalizeStringList(data.collection_keys, "collection_keys")
-    : [];
+// The item a create_item request describes: its type, field values, tags and collections.
+type NewItem = {
+  itemType: string;
+  fields: JsonPayload;
+  tags: string[];
+  collectionKeys: string[];
+};
 
-  for (let collectionKey of collectionKeys) {
+// Saves the new item in the user library; every named collection must exist first.
+// itemType is a user-supplied item-type name; Zotero validates it at runtime and
+// throws on an unknown type. The constructor types the name as a literal union, so
+// narrow the runtime string to that union (a no-op at runtime).
+async function saveNewItem(newItem: NewItem): Promise<Zotero.Item> {
+  for (let collectionKey of newItem.collectionKeys) {
     await getUserCollectionOrThrow(collectionKey);
   }
-
-  // itemType is a user-supplied item-type name; Zotero validates it at runtime and
-  // throws on an unknown type. The constructor types the name as a literal union, so
-  // narrow the runtime string to that union (a no-op at runtime).
   let item = new Zotero.Item(
-    itemType as _ZoteroTypes.Item.ItemTypeMapping[keyof _ZoteroTypes.Item.ItemTypeMapping],
+    newItem.itemType as _ZoteroTypes.Item.ItemTypeMapping[keyof _ZoteroTypes.Item.ItemTypeMapping],
   );
   item.libraryID = userLibraryID();
-
-  let json = item.toJSON();
-  let merged = { ...json, ...fields };
-  item.fromJSON(merged);
-
-  if (tags.length) {
-    item.setTags(tags);
+  item.fromJSON({ ...item.toJSON(), ...newItem.fields });
+  if (newItem.tags.length) {
+    item.setTags(newItem.tags);
   }
-  if (collectionKeys.length) {
-    item.setCollections(collectionKeys);
+  if (newItem.collectionKeys.length) {
+    item.setCollections(newItem.collectionKeys);
   }
-
   await item.saveTx();
+  return item;
+}
 
-  return successResult(
-    "create_item",
-    {
-      item_type: itemType,
-      field_names: Object.keys(fields).sort(),
-      tag_count: tags.length,
-      collection_count: collectionKeys.length,
-    },
-    {
-      item_key: item.key,
-      item_id: item.id,
-      citation_key: await citationKey(item),
-    },
-  );
+// The create_item response details: what the request asked the new item to carry.
+function newItemDetails(newItem: NewItem): JsonPayload {
+  return {
+    item_type: newItem.itemType,
+    field_names: Object.keys(newItem.fields).sort(),
+    tag_count: newItem.tags.length,
+    collection_count: newItem.collectionKeys.length,
+  };
+}
+
+export async function handleCreateItem(data: RequestData) {
+  let newItem: NewItem = {
+    itemType: requireItemType(requireNonEmptyString(data.item_type, "item_type")),
+    fields: Boolean(data.fields) ? requireObject(data.fields, "fields") : {},
+    tags: Boolean(data.tags) ? normalizeStringList(data.tags, "tags") : [],
+    collectionKeys: Boolean(data.collection_keys)
+      ? normalizeStringList(data.collection_keys, "collection_keys")
+      : [],
+  };
+  let item = await saveNewItem(newItem);
+  return successResult("create_item", newItemDetails(newItem), {
+    item_key: item.key,
+    item_id: item.id,
+    citation_key: await citationKey(item),
+  });
 }
 
 export async function handleRestoreItem(data: RequestData) {
