@@ -145,18 +145,20 @@ export async function identifyByIdentifier(text: string): Promise<MethodResult<I
   return identifiedWork(await resolveIdentifier(identifier), null, key);
 }
 
+function isBibTeXAlternate(link: Element): boolean {
+  let rel = link.getAttribute("rel");
+  let alternate = rel !== null && rel.split(/\s+/).includes("alternate");
+  return alternate && link.getAttribute("type") === "application/x-bibtex";
+}
+
 // The BibTeX files a page links: an alternate <link> of BibTeX type, or an <a> whose href
 // ends in .bib.
 function publishedBibTeXLinks(page: Document, finalUrl: string): Set<string> {
   let links = new Set<string>();
-  for (let link of htmlElements(page, "link")) {
-    let rel = link.getAttribute("rel");
-    let alternate = rel !== null && rel.split(/\s+/).includes("alternate");
-    if (alternate && link.getAttribute("type") === "application/x-bibtex") {
-      let href = link.getAttribute("href");
-      if (href !== null) {
-        links.add(new URL(href, finalUrl).href);
-      }
+  for (let link of htmlElements(page, "link").filter(isBibTeXAlternate)) {
+    let href = link.getAttribute("href");
+    if (href !== null) {
+      links.add(new URL(href, finalUrl).href);
     }
   }
   for (let anchor of htmlElements(page, "a")) {
