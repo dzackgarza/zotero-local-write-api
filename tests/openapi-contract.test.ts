@@ -15,23 +15,6 @@ const VERSION_PATH = path.join(REPO_ROOT, "VERSION");
 
 // ── Helpers ────────────────────────────────────────────────────
 
-// Every add-on source module that esbuild bundles into bootstrap.js. The
-// generated OpenAPI types and the ambient declarations hold no handlers.
-function parseSources(): ts.SourceFile[] {
-  return fs
-    .readdirSync(SRC_DIR)
-    .filter((name) => name.endsWith(".ts") && !name.endsWith(".d.ts"))
-    .map((name) =>
-      ts.createSourceFile(
-        name,
-        fs.readFileSync(path.join(SRC_DIR, name), "utf8"),
-        ts.ScriptTarget.Latest,
-        true,
-        ts.ScriptKind.TS,
-      ),
-    );
-}
-
 // Minimal structural view of the parts of the spec these tests navigate.
 // The YAML is dynamic, but every access below is covered by this shape.
 // Fields are declared required: this is the shape each test asserts the spec
@@ -56,6 +39,23 @@ interface OpenAPIDoc {
 
 interface ConfigDoc {
   endpoints: Record<string, string>;
+}
+
+// Every add-on source module that esbuild bundles into bootstrap.js. The
+// generated OpenAPI types and the ambient declarations hold no handlers.
+function parseSources(): ts.SourceFile[] {
+  return fs
+    .readdirSync(SRC_DIR)
+    .filter((name) => name.endsWith(".ts") && !name.endsWith(".d.ts"))
+    .map((name) =>
+      ts.createSourceFile(
+        name,
+        fs.readFileSync(path.join(SRC_DIR, name), "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TS,
+      ),
+    );
 }
 
 function parseOpenAPI(): OpenAPIDoc {
