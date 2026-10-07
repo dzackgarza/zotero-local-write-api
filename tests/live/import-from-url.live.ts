@@ -274,7 +274,10 @@ test("a page with no metadata is identified by the arXiv ID in its URL", async (
 test("a page that publishes its BibTeX is imported from that BibTeX", async () => {
   // The uid goes into the record's key and title: import deduplicates on URL and title.
   const record = await Bun.file(new URL("../fixtures/uid-record.bib", import.meta.url)).text();
-  fixtures.set(`/cite-${uid}.bib`, { body: record.replaceAll("__UID__", uid), type: "application/x-bibtex" });
+  fixtures.set(`/cite-${uid}.bib`, {
+    body: record.replaceAll("__UID__", uid),
+    type: "application/x-bibtex",
+  });
   const url = servePage(
     `/bibtex-${uid}`,
     `<title>Landing</title><link rel="alternate" type="application/x-bibtex" href="/cite-${uid}.bib">`,
