@@ -98,15 +98,48 @@ class CollectionSuccess(Ack):
     details: CollectionDetails
 
 
-class AttachDetails(TypedDict):
-    parent_item_key: str | None
-    collection_key: str | None
-    source_mode: Literal["path", "bytes", "bytes_fallback"]
+# openapi.yaml gives the /attach details two nullable keys. Together they name
+# one of three placements, and each proof step expects one placement, so each
+# placement is its own total shape with its own validator.
 
 
-class AttachSuccess(Ack):
+class ChildAttachDetails(TypedDict):
+    """The request named item_key: the attachment is a child of that item."""
+
+    parent_item_key: str
+    collection_key: None
+    source_mode: Literal["path", "bytes"]
+
+
+class CollectionAttachDetails(TypedDict):
+    """No item_key, and the pane selected a collection: standalone in that collection."""
+
+    parent_item_key: None
+    collection_key: str
+    source_mode: Literal["path", "bytes"]
+
+
+class RootAttachDetails(TypedDict):
+    """No item_key, and the pane selected no collection: standalone in the library root."""
+
+    parent_item_key: None
+    collection_key: None
+    source_mode: Literal["path", "bytes"]
+
+
+class ChildAttachSuccess(Ack):
     attachment_key: str
-    details: AttachDetails
+    details: ChildAttachDetails
+
+
+class CollectionAttachSuccess(Ack):
+    attachment_key: str
+    details: CollectionAttachDetails
+
+
+class RootAttachSuccess(Ack):
+    attachment_key: str
+    details: RootAttachDetails
 
 
 class JavascriptDetails(TypedDict, Generic[ResultT]):
@@ -178,7 +211,9 @@ ITEM_KEY = TypeAdapter(ItemKeySuccess)
 NOTE = TypeAdapter(NoteSuccess)
 COPY = TypeAdapter(CopySuccess)
 COLLECTION = TypeAdapter(CollectionSuccess)
-ATTACH = TypeAdapter(AttachSuccess)
+CHILD_ATTACH = TypeAdapter(ChildAttachSuccess)
+COLLECTION_ATTACH = TypeAdapter(CollectionAttachSuccess)
+ROOT_ATTACH = TypeAdapter(RootAttachSuccess)
 VERSION = TypeAdapter(VersionResponse)
 ITEM = TypeAdapter(Item)
 CHILDREN = TypeAdapter(list[ChildItem])
@@ -383,8 +418,11 @@ def _select_pane_row(http: httpx.Client, write_path: str, row_id: str) -> None:
     )
 
 
-def _store_standalone_pdf(http: httpx.Client, attach_path: str, title: str) -> AttachSuccess:
-    result = _post_write(
+def _store_standalone_pdf(
+    http: httpx.Client, attach_path: str, title: str, placement: TypeAdapter[ResultT]
+) -> ResultT:
+    """POST a parentless PDF; `placement` rejects a response for any other placement."""
+    return _post_write(
         http,
         attach_path,
         {
@@ -392,13 +430,22 @@ def _store_standalone_pdf(http: httpx.Client, attach_path: str, title: str) -> A
             "file_name": "live-smoke-standalone.pdf",
             "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
         },
-        ATTACH,
+        placement,
     )
+
+
+def _require_stored_standalone(
+    http: httpx.Client, library_id: str, attachment_key: str, title: str, expected_collections: list[str]
+) -> None:
+    stored = _get_item(http, library_id, attachment_key)["data"]
+    _require(stored["itemType"] == "attachment", f"standalone item is not an attachment: {stored!r}")
+    _require("parentItem" not in stored, f"standalone attachment has a parent: {stored!r}")
+    _require(stored.get("contentType") == "application/pdf", f"standalone contentType mismatch: {stored!r}")
+    _require(stored["title"] == title, f"standalone title mismatch: {stored!r}")
     _require(
-        result["details"]["parent_item_key"] is None,
-        f"standalone /attach reported a parent: {result!r}",
+        stored["collections"] == expected_collections,
+        f"standalone attachment collections {stored['collections']!r}, expected {expected_collections!r}",
     )
-    return result
 
 
 def _prove_standalone_attach(
@@ -413,7 +460,8 @@ def _prove_standalone_attach(
 
     Both targets are proved: a selected collection, and the library root. The
     user's pane selection is restored afterward. Every attachment key goes into
-    `created` as soon as it exists, so the caller trashes it on any failure.
+    `created` as soon as its response validates, so the caller trashes it on any
+    later failure.
     """
     original_row = _run_javascript(
         http,
@@ -440,29 +488,25 @@ def _prove_standalone_attach(
         user_library_id = _run_javascript(
             http, write_path, "return Zotero.Libraries.userLibraryID;", _WRITE_AUTH, JS_INT
         )
-        for row_id, expected_collections in (
-            (f"C{collection_id}", [collection_key]),
-            (f"L{user_library_id}", []),
-        ):
-            _select_pane_row(http, write_path, row_id)
-            title = f"Live Smoke Standalone {row_id} {suffix}"
-            result = _store_standalone_pdf(http, attach_path, title)
-            attachment_key = result["attachment_key"]
-            created.append(attachment_key)
-            expected_key = expected_collections[0] if expected_collections else None
-            _require(
-                result["details"]["collection_key"] == expected_key,
-                f"standalone /attach reported collection {result['details']['collection_key']!r}, expected {expected_key!r}",
-            )
-            stored = _get_item(http, library_id, attachment_key)["data"]
-            _require(stored["itemType"] == "attachment", f"standalone item is not an attachment: {stored!r}")
-            _require("parentItem" not in stored, f"standalone attachment has a parent: {stored!r}")
-            _require(stored.get("contentType") == "application/pdf", f"standalone contentType mismatch: {stored!r}")
-            _require(stored["title"] == title, f"standalone title mismatch: {stored!r}")
-            _require(
-                stored["collections"] == expected_collections,
-                f"standalone attachment collections {stored['collections']!r}, expected {expected_collections!r}",
-            )
+        collection_row = f"C{collection_id}"
+        _select_pane_row(http, write_path, collection_row)
+        in_collection_title = f"Live Smoke Standalone {collection_row} {suffix}"
+        in_collection = _store_standalone_pdf(http, attach_path, in_collection_title, COLLECTION_ATTACH)
+        created.append(in_collection["attachment_key"])
+        _require(
+            in_collection["details"]["collection_key"] == collection_key,
+            f"standalone /attach reported collection {in_collection['details']['collection_key']!r}, expected {collection_key!r}",
+        )
+        _require_stored_standalone(
+            http, library_id, in_collection["attachment_key"], in_collection_title, [collection_key]
+        )
+
+        root_row = f"L{user_library_id}"
+        _select_pane_row(http, write_path, root_row)
+        at_root_title = f"Live Smoke Standalone {root_row} {suffix}"
+        at_root = _store_standalone_pdf(http, attach_path, at_root_title, ROOT_ATTACH)
+        created.append(at_root["attachment_key"])
+        _require_stored_standalone(http, library_id, at_root["attachment_key"], at_root_title, [])
     finally:
         _select_pane_row(http, write_path, original_row)
         _post_write(
@@ -568,10 +612,14 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
                 "file_name": "live-smoke.pdf",
                 "file_bytes_base64": base64.b64encode(PDF_BYTES).decode("ascii"),
             },
-            ATTACH,
+            CHILD_ATTACH,
         )
         attachment_key = attach_result["attachment_key"]
         _require(bool(attachment_key), f"Missing attachment_key: {attach_result!r}")
+        _require(
+            attach_result["details"]["parent_item_key"] == item_key,
+            f"child /attach reported parent {attach_result['details']['parent_item_key']!r}, expected {item_key!r}",
+        )
         _require(
             attach_result["details"]["source_mode"] == "bytes",
             f"Expected bytes source_mode, got: {attach_result!r}",
