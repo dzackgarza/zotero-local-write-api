@@ -114,6 +114,19 @@ class CollectionSuccess(Ack):
     details: CollectionDetails
 
 
+class AddedTagsDetails(TypedDict):
+    added_tags: list[str]
+
+
+class AddedTagsSuccess(Ack):
+    details: AddedTagsDetails
+
+
+class ErrorStatus(TypedDict):
+    success: Literal[False]
+    error: str
+
+
 # openapi.yaml gives the /attach details two nullable keys. Together they name
 # one of three placements, and each proof step expects one placement, so each
 # placement is its own total shape with its own validator.
@@ -172,6 +185,8 @@ class JavascriptSuccess(Ack, Generic[ResultT]):
 
 class Tag(TypedDict):
     tag: str
+    # Zotero writes `type` only for an automatic tag (type 1).
+    type: NotRequired[int]
 
 
 class ChildItemData(TypedDict):
@@ -264,6 +279,8 @@ ITEM_KEY = TypeAdapter(ItemKeySuccess)
 NOTE = TypeAdapter(NoteSuccess)
 COPY = TypeAdapter(CopySuccess)
 COLLECTION = TypeAdapter(CollectionSuccess)
+ADDED_TAGS = TypeAdapter(AddedTagsSuccess)
+ERROR = TypeAdapter(ErrorStatus)
 CHILD_ATTACH = TypeAdapter(ChildAttachSuccess)
 COLLECTION_ATTACH = TypeAdapter(CollectionAttachSuccess)
 ROOT_ATTACH = TypeAdapter(RootAttachSuccess)
@@ -274,6 +291,7 @@ JS_TEXT = TypeAdapter(JavascriptSuccess[str])
 JS_INT = TypeAdapter(JavascriptSuccess[int])
 JS_TRUE = TypeAdapter(JavascriptSuccess[Literal[True]])
 JS_GATE_PREFS = TypeAdapter(JavascriptSuccess[GatePrefs])
+JS_MERGE_STATE = TypeAdapter(JavascriptSuccess[tuple[bool, str]])
 
 _READ_GATE_PREFS = (
     f"return Object.fromEntries({json.dumps([TOKEN_PREF, PUBLIC_BASE_URL_PREF])}"
@@ -665,16 +683,47 @@ def _prove_tag_operations(smoke: SmokeRun, item_key: str, keep_tag: str) -> None
     tag_b = f"live-smoke-b-{smoke.suffix}"
     tag_c = f"live-smoke-c-{smoke.suffix}"
     _prove_add_item_tags(smoke, item_key, tag_a)
+    _prove_automatic_tag_becomes_manual(smoke, item_key, f"live-smoke-auto-{smoke.suffix}")
     _prove_set_item_tags(smoke, item_key, [keep_tag, tag_a, tag_b])
     _prove_remove_item_tags(smoke, item_key, tag_b)
     _prove_rename_tag(smoke, item_key, tag_a, tag_c)
     _prove_merge_tags(smoke, item_key, tag_c, keep_tag)
 
 
+def _add_item_tags(smoke: SmokeRun, item_key: str, tag: str) -> list[str]:
+    """add_item_tags with one tag. Returns the tags it reports as added."""
+    payload: JsonObject = {"operation": "add_item_tags", "item_key": item_key, "tags": [tag]}
+    return smoke.write(payload, ADDED_TAGS)["details"]["added_tags"]
+
+
 def _prove_add_item_tags(smoke: SmokeRun, item_key: str, tag: str) -> None:
-    """add_item_tags adds the tag to the item."""
-    smoke.write({"operation": "add_item_tags", "item_key": item_key, "tags": [tag]}, ACK)
+    """add_item_tags adds the tag to the item and reports it as added; a second add
+    reports nothing, because the item already carries the manual tag."""
+    _require(_add_item_tags(smoke, item_key, tag) == [tag], "add_item_tags did not report the new tag")
     _require(tag in _tag_names(smoke.item(item_key)), "add_item_tags did not add the tag")
+    _require(_add_item_tags(smoke, item_key, tag) == [], "add_item_tags reported a tag the item already had")
+
+
+def _tag_type(smoke: SmokeRun, item_key: str, name: str) -> int:
+    """The type of the item's tag of that name: 0 manual, 1 automatic."""
+    tags = [tag for tag in smoke.item(item_key)["data"]["tags"] if tag["tag"] == name]
+    _require(len(tags) == 1, f"expected one tag {name!r} on {item_key}, got {tags!r}")
+    return tags[0].get("type", 0)
+
+
+def _prove_automatic_tag_becomes_manual(smoke: SmokeRun, item_key: str, tag: str) -> None:
+    """add_item_tags on an automatic tag of the same name makes it manual and reports it as added."""
+    code = (
+        "let item = await Zotero.Items.getByLibraryAndKeyAsync("
+        f"Zotero.Libraries.userLibraryID, {json.dumps(item_key)});\n"
+        f"item.addTag({json.dumps(tag)}, 1);\n"
+        "await item.saveTx();\n"
+        "return true;"
+    )
+    _run_javascript(smoke.http, smoke.write_path, code, JS_TRUE)
+    _require(_tag_type(smoke, item_key, tag) == 1, "the automatic tag was not stored as automatic")
+    _require(_add_item_tags(smoke, item_key, tag) == [tag], "add_item_tags did not report the automatic tag")
+    _require(_tag_type(smoke, item_key, tag) == 0, "add_item_tags left the tag automatic")
 
 
 def _prove_set_item_tags(smoke: SmokeRun, item_key: str, tags: list[str]) -> None:
@@ -846,6 +895,42 @@ def _prove_add_on_surface(http: httpx.Client, expected_version: str) -> VersionR
     return version_payload
 
 
+def _create_collection(smoke: SmokeRun, name: str, parent_key: str | None) -> str:
+    payload: JsonObject = {"operation": "create_collection", "name": f"{name}-{smoke.suffix}"}
+    if parent_key is not None:
+        payload["parent_key"] = parent_key
+    return smoke.write(payload, COLLECTION)["details"]["collection_key"]
+
+
+def _source_and_child_state(smoke: SmokeRun, source_key: str, child_key: str) -> tuple[bool, str]:
+    """Whether the source collection is trashed, and the parent key of its child."""
+    code = (
+        "let get = (key) => Zotero.Collections.getByLibraryAndKey(Zotero.Libraries.userLibraryID, key);\n"
+        f"return [get({json.dumps(source_key)}).deleted, get({json.dumps(child_key)}).parentKey];"
+    )
+    return _run_javascript(smoke.http, smoke.write_path, code, JS_MERGE_STATE)
+
+
+def _prove_merge_into_trashed_descendant(smoke: SmokeRun) -> None:
+    """merge_collections refuses with 409, before any change, a target that is a
+    trashed descendant below a direct child of the source."""
+    source_key = _create_collection(smoke, "live-smoke-merge-source", None)
+    try:
+        child_key = _create_collection(smoke, "live-smoke-merge-child", source_key)
+        grandchild_key = _create_collection(smoke, "live-smoke-merge-grandchild", child_key)
+        smoke.write({"operation": "trash_collection", "collection_key": grandchild_key}, ACK)
+        payload = {"operation": "merge_collections", "source_keys": [source_key], "target_key": grandchild_key}
+        response = smoke.http.post(smoke.write_path, json=payload)
+        _require(response.status_code == 409, f"merge into a trashed grandchild returned HTTP {response.status_code}: {response.text}")
+        ERROR.validate_json(response.content)
+        _require(
+            _source_and_child_state(smoke, source_key, child_key) == (False, source_key),
+            "the refused merge changed the source collection or its child",
+        )
+    finally:
+        smoke.write({"operation": "trash_collection", "collection_key": source_key}, ACK)
+
+
 def _prove_item_edits(smoke: SmokeRun, item_key: str, attachment_key: str, doomed_tag: str, keep_tag: str) -> None:
     """Every tag, collection, field, child and copy operation on the created item."""
     _prove_delete_tag(smoke, item_key, doomed_tag, keep_tag)
@@ -854,6 +939,7 @@ def _prove_item_edits(smoke: SmokeRun, item_key: str, attachment_key: str, doome
     _prove_item_and_child_edits(smoke, item_key, attachment_key)
     _prove_copy_lifecycle(smoke, item_key)
     _prove_collection_hierarchy(smoke, item_key, collection_key)
+    _prove_merge_into_trashed_descendant(smoke)
 
 
 def _prove_library_writes(smoke: SmokeRun, version: str) -> SmokeReport:
