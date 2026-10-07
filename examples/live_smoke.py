@@ -247,9 +247,9 @@ class SmokeArgs(argparse.Namespace):
     base_url: str
     library_id: str
     expected_version: str
-    # None when the instance is found in the open state: no token pref, so there is no
-    # credential to send. That is the add-on's documented loopback default.
-    token: BearerAuth | None
+    # The open state (no token pref, the add-on's documented loopback default) has no
+    # credential: httpx.Auth() is the base scheme, which sends each request unchanged.
+    token: httpx.Auth
 
 
 ACK = TypeAdapter(Ack)
@@ -868,7 +868,7 @@ def parse_args() -> SmokeArgs:
     parser.add_argument(
         "--token",
         type=BearerAuth,
-        default=None,
+        default=httpx.Auth(),
         help="Bearer token matching the running instance's localWriteAPI.token pref; "
         "required when that pref is set",
     )
