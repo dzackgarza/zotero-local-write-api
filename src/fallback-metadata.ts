@@ -17,6 +17,18 @@ export type FallbackMetadata = {
 // Zotero's creator JSON: an absent firstName is a creator known by surname only.
 type FallbackCreator = { firstName?: string; lastName: string };
 
+function requireFallbackCreator(creator: unknown, index: number): FallbackCreator {
+  let path = "fallback_metadata.creators[" + index + "]";
+  let entry = requireObject(creator, path);
+  let parsed: FallbackCreator = {
+    lastName: requireNonEmptyString(entry.last_name, path + ".last_name"),
+  };
+  if (entry.first_name !== undefined) {
+    parsed.firstName = requireString(entry.first_name, path + ".first_name");
+  }
+  return parsed;
+}
+
 export function requireFallbackMetadata(value: unknown): FallbackMetadata {
   let fallback = requireObject(value, "fallback_metadata");
   let title = requireNonEmptyString(fallback.title, "fallback_metadata.title");
@@ -27,49 +39,17 @@ export function requireFallbackMetadata(value: unknown): FallbackMetadata {
   if (!Array.isArray(fallback.creators) || fallback.creators.length === 0) {
     throw badRequest("fallback_metadata.creators must name at least one creator");
   }
-  let creators = fallback.creators.map((creator: unknown, index: number) => {
-    let entry = requireObject(creator, "fallback_metadata.creators[" + index + "]");
-    let parsed: FallbackCreator = {
-      lastName: requireNonEmptyString(
-        entry.last_name,
-        "fallback_metadata.creators[" + index + "].last_name",
-      ),
-    };
-    if (entry.first_name !== undefined) {
-      parsed.firstName = requireString(
-        entry.first_name,
-        "fallback_metadata.creators[" + index + "].first_name",
-      );
-    }
-    return parsed;
-  });
+  let creators = fallback.creators.map(requireFallbackCreator);
   return { title, creators, year };
 }
 
-// The source as the caller describes it. A source already saved this way
-// (equal URL and title) is returned as it is.
-export async function saveFallback(
+// A new document item with the caller's metadata and UNRESOLVED_TAG.
+async function saveFallbackItem(
   url: string,
-  source: FetchedSource | null,
   fallback: FallbackMetadata,
   collectionIDs: number[],
-): Promise<ImportOutcome> {
-  let itemType = "document" as const;
-  let existing = await findExistingItem(
-    { itemType, title: fallback.title, DOI: "", ISBN: "", url },
-    null,
-  );
-  if (existing) {
-    await fileExistingItem(existing, collectionIDs);
-    return {
-      item: existing,
-      existing: true,
-      method: "caller_metadata",
-      translator: null,
-      attachmentFailures: [],
-    };
-  }
-  let item = new Zotero.Item(itemType);
+): Promise<Zotero.Item> {
+  let item = new Zotero.Item("document");
   item.libraryID = userLibraryID();
   item.setField("title", fallback.title);
   item.setField("date", fallback.year);
@@ -82,14 +62,33 @@ export async function saveFallback(
     item.setCollections(collectionIDs);
   }
   await item.saveTx();
+  return item;
+}
+
+// The outcome for an item saved from the caller's metadata; it has no attachment failures.
+function fallbackOutcome(item: Zotero.Item, existing: boolean): ImportOutcome {
+  return { item, existing, method: "caller_metadata", translator: null, attachmentFailures: [] };
+}
+
+// The source as the caller describes it. A source already saved this way
+// (equal URL and title) is returned as it is.
+export async function saveFallback(
+  url: string,
+  source: FetchedSource | null,
+  fallback: FallbackMetadata,
+  collectionIDs: number[],
+): Promise<ImportOutcome> {
+  let existing = await findExistingItem(
+    { itemType: "document", title: fallback.title, DOI: "", ISBN: "", url },
+    null,
+  );
+  if (existing) {
+    await fileExistingItem(existing, collectionIDs);
+    return fallbackOutcome(existing, true);
+  }
+  let item = await saveFallbackItem(url, fallback, collectionIDs);
   if (source !== null && source.kind === "pdf") {
     await storePdf(source.finalUrl, item.id);
   }
-  return {
-    item,
-    existing: false,
-    method: "caller_metadata",
-    translator: null,
-    attachmentFailures: [],
-  };
+  return fallbackOutcome(item, false);
 }
