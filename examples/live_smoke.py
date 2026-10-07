@@ -401,10 +401,11 @@ def _wait_for_deleted(http: httpx.Client, library_id: str, item_key: str, *, tim
         time.sleep(interval)
 
 
-def _cleanup_item(http: httpx.Client, write_path: str, item_key: str | None) -> None:
-    if not item_key:
-        return
-    _post_write(http, write_path, {"operation": "trash_item", "item_key": item_key}, ACK)
+def _trash_created(http: httpx.Client, write_path: str, created: list[str]) -> None:
+    """Trash every top-level item this run created. Trashing is idempotent, so
+    items the run already trashed or merged away are trashed again harmlessly."""
+    for item_key in created:
+        _post_write(http, write_path, {"operation": "trash_item", "item_key": item_key}, ACK)
 
 
 def _select_pane_row(http: httpx.Client, write_path: str, row_id: str) -> None:
@@ -455,13 +456,13 @@ def _prove_standalone_attach(
     library_id: str,
     suffix: str,
     created: list[str],
-) -> None:
+) -> list[str]:
     """/attach without item_key stores a parentless PDF where the pane points.
 
     Both targets are proved: a selected collection, and the library root. The
     user's pane selection is restored afterward. Every attachment key goes into
     `created` as soon as its response validates, so the caller trashes it on any
-    later failure.
+    later failure. Returns the two attachment keys.
     """
     original_row = _run_javascript(
         http,
@@ -507,6 +508,7 @@ def _prove_standalone_attach(
         at_root = _store_standalone_pdf(http, attach_path, at_root_title, ROOT_ATTACH)
         created.append(at_root["attachment_key"])
         _require_stored_standalone(http, library_id, at_root["attachment_key"], at_root_title, [])
+        return [in_collection["attachment_key"], at_root["attachment_key"]]
     finally:
         _select_pane_row(http, write_path, original_row)
         _post_write(
@@ -521,9 +523,9 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
     suffix = uuid4().hex[:10]
     doomed_tag = f"live-smoke-delete-{suffix}"
     keep_tag = f"live-smoke-keep-{suffix}"
-    item_key: str | None = None
-    bibtex_item_key: str | None = None
-    standalone_keys: list[str] = []
+    # Keys of top-level items this run created, appended as soon as each
+    # creation response validates, so the run trashes them even after a failure.
+    created: list[str] = []
 
     version_payload = _get(http, "/version", VERSION)
     if args.expected_version:
@@ -571,6 +573,7 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
             ITEM_KEY,
         )
         item_key = create_result["item_key"]
+        created.append(item_key)
         _require(bool(item_key), f"create_item did not return item_key: {create_result!r}")
 
         created_item = _get_item(http, library_id, item_key)
@@ -596,6 +599,7 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
             ITEM_KEY,
         )
         bibtex_item_key = bibtex_result["item_key"]
+        created.append(bibtex_item_key)
         _require(bool(bibtex_item_key), f"import_bibtex did not return item_key: {bibtex_result!r}")
         bibtex_item = _get_item(http, library_id, bibtex_item_key)
         _require(
@@ -735,6 +739,7 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
 
         # Copy, then use the copy as the disposable side of merge/trash/restore.
         copy_key = _post_write(http, write_path, {"operation": "copy_item", "item_key": item_key}, COPY)["new_item_key"]
+        created.append(copy_key)
 
         _post_write(http, write_path, {"operation": "trash_item", "item_key": copy_key}, ACK)
         _post_write(http, write_path, {"operation": "restore_item", "item_key": copy_key}, ACK)
@@ -790,7 +795,7 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
 
         _post_write(http, write_path, {"operation": "trash_collection", "collection_key": parent_key}, ACK)
 
-        _prove_standalone_attach(http, write_path, attach_path, library_id, suffix, standalone_keys)
+        standalone_keys = _prove_standalone_attach(http, write_path, attach_path, library_id, suffix, created)
 
         _post_write(http, write_path, {"operation": "trash_item", "item_key": item_key}, ACK)
 
@@ -811,10 +816,7 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
             "standalone_attachment_keys": standalone_keys,
         }
     finally:
-        _cleanup_item(http, write_path, bibtex_item_key)
-        _cleanup_item(http, write_path, item_key)
-        for standalone_key in standalone_keys:
-            _cleanup_item(http, write_path, standalone_key)
+        _trash_created(http, write_path, created)
 
 
 def parse_args() -> SmokeArgs:
