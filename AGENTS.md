@@ -5,10 +5,21 @@
 [`openapi.yaml`](./openapi.yaml): single source of truth for all request/response shapes.
 README must not duplicate schemas; only link to `openapi.yaml`.
 
-Change in `src/bootstrap.ts` to the `writeHandlers` operation table, handler's required/optional fields, or response payload fields → matching `openapi.yaml` edit, same diff (new/changed operation schema, updated `mapping` + `oneOf` entries in `WriteRequest`, updated `VersionResponse`/`AttachSuccessResponse` as needed).
-No new/changed `writeHandlers` entry, or field read via `data.<field>`, without matching `openapi.yaml` update same diff.
+When you change `src/bootstrap.ts`, update `openapi.yaml` in the same diff for each of these changes:
 
-The executable enforcement is `bun run openapi:contract` (`tests/openapi-contract.test.ts`), which parses `src/bootstrap.ts` with the TypeScript compiler API and asserts the `writeHandlers` entries, handler field reads, and `successResult` calls match `openapi.yaml` 1:1. The prose rule above is a reminder; the test is the authority.
+- You add or change an entry in the `writeHandlers` operation table.
+  Add or change the operation schema.
+  Add or change its `mapping` and `oneOf` entries in `WriteRequest`.
+- You add or change a request field that a handler reads as `data.<field>`.
+  Set the field as required or optional in the operation schema.
+- You add or change a response payload field.
+  Update `VersionResponse` or `AttachSuccessResponse`.
+
+`bun run openapi:contract` runs `tests/openapi-contract.test.ts`.
+The test parses `src/bootstrap.ts` with the TypeScript compiler API.
+It asserts that `openapi.yaml` matches the `writeHandlers` entries 1:1.
+It also asserts that `openapi.yaml` matches the handler field reads and the `successResult` calls 1:1.
+The rule above is a reminder; the test is the authority.
 
 Validate before commit:
 
