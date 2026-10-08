@@ -18,6 +18,10 @@ type RecognizedPdf = { identification: Identification; attachment: Zotero.Item }
 // the work, so a second import of the same PDF finds the first one's item.
 const recognition = new Mutex();
 
+// The key of the PDF that a recognition holds. A Zotero that stops while a recognition
+// runs never erases that PDF, so the next start erases it (eraseAbandonedPdf).
+const HELD_PDF_PREF = "extensions.zotero.localWriteAPI.recognitionPdf";
+
 // Zotero's recognizer reads the text of a stored attachment, so the PDF is stored as a
 // standalone attachment while recognition runs. `use` files the work, and can move the
 // attachment under the work's item (adoptPdf); an attachment it leaves standalone is
@@ -33,6 +37,7 @@ export function withRecognizedPdf<T>(
         return stored;
       }
       let attachment = stored.value;
+      Zotero.Prefs.set(HELD_PDF_PREF, attachment.key, true);
       try {
         let work = await recognizeAttachment(attachment);
         if (work.outcome !== "identified") {
@@ -41,10 +46,33 @@ export function withRecognizedPdf<T>(
         let identification = { json: work.found, translator: null, message: workTitle(work.found) };
         return { outcome: "identified", found: await use({ identification, attachment }) };
       } finally {
-        if (attachment.parentItemID === false || attachment.parentItemID === undefined) {
-          await attachment.eraseTx();
-        }
+        await eraseIfStandalone(attachment);
+        Zotero.Prefs.clear(HELD_PDF_PREF, true);
       }
+    }),
+  );
+}
+
+async function eraseIfStandalone(attachment: Zotero.Item): Promise<void> {
+  if (attachment.isTopLevelItem()) {
+    await attachment.eraseTx();
+  }
+}
+
+// Erases the PDF that a recognition held when Zotero stopped, unless the recognition had
+// moved it under an item. Recognitions that start meanwhile wait for it.
+export function eraseAbandonedPdf(): Promise<void> {
+  return recognition.runExclusive(() =>
+    heldFromSync(async () => {
+      let key = Zotero.Prefs.get(HELD_PDF_PREF, true);
+      if (typeof key !== "string" || key === "") {
+        return;
+      }
+      let attachment = Zotero.Items.getByLibraryAndKey(userLibraryID(), key);
+      if (attachment !== false) {
+        await eraseIfStandalone(attachment);
+      }
+      Zotero.Prefs.clear(HELD_PDF_PREF, true);
     }),
   );
 }

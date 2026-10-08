@@ -1,5 +1,6 @@
 import { handleAttachRequest } from "./attach";
 import { bearerAuthFailure, PUBLIC_BASE_URL_PREF, TOKEN_PREF } from "./auth";
+import { eraseAbandonedPdf } from "./pdf-recognition";
 import {
   type EndpointConstructor,
   type EndpointRequest,
@@ -149,6 +150,9 @@ async function startup({
       log("Translator initialization failed: " + String(error));
     },
   );
+  void Zotero.initializationPromise.then(eraseAbandonedPdf).catch((error: unknown) => {
+    log("Erasing the PDF of an interrupted recognition failed: " + String(error));
+  });
 
   // Make the auth state visible in the log, so an operator can confirm the
   // write surface is gated before exposing it (or see that it is open).
