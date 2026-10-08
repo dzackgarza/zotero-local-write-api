@@ -151,7 +151,7 @@ install-live:
     v = json.load(open(probe))
     if v.get("version") != expected:
         sys.exit(1)
-    required = {"attach", "attach_bytes", "attach_standalone", "import_store_attachments", "write", "version_probe", "import_bibtex"}
+    required = {"attach", "attach_bytes", "attach_standalone", "import_store_attachments", "recognition_held_from_sync", "write", "version_probe", "import_bibtex"}
     missing = required - set(v.get("capabilities") or [])
     if missing:
         sys.exit(f"add-on is missing capabilities: {sorted(missing)}")

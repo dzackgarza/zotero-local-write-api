@@ -1,1 +1,1 @@
-GET /version added the new `import_store_attachments` enum value to the `capabilities/items/` response property for the response status `200`
+GET /version added the new `recognition_held_from_sync` enum value to the `capabilities/items/` response property for the response status `200`

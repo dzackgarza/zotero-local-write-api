@@ -15,7 +15,7 @@ import {
   type ServiceAnswer,
   serviceFailure,
 } from "./source-results";
-import { isHttpFailure, recognizeDocument } from "./zotero-api";
+import { getSyncRunner, isHttpFailure, recognizeDocument } from "./zotero-api";
 
 type RecognizedParent = { parent: Zotero.Item; pdf: Zotero.Item };
 
@@ -30,13 +30,40 @@ export function withRecognizedParent<T>(
   finalUrl: string,
   use: (recognized: RecognizedParent) => Promise<T>,
 ): Promise<MethodResult<T>> {
-  return recognition.runExclusive(async () => {
-    let recognized = await recognizeParent(finalUrl);
-    if (recognized.outcome !== "identified") {
-      return recognized;
-    }
-    return { outcome: "identified", found: await use(recognized.found) };
-  });
+  return recognition.runExclusive(() =>
+    heldFromSync(async () => {
+      let recognized = await recognizeParent(finalUrl);
+      if (recognized.outcome !== "identified") {
+        return recognized;
+      }
+      return { outcome: "identified", found: await use(recognized.found) };
+    }),
+  );
+}
+
+// A recognition stores the PDF and its parent, and its caller can erase both. A
+// sync between the save and the erase would upload them, and the erase would then
+// conflict with the uploaded copies and open Zotero's merge dialog. So no sync
+// reads the library while a recognition runs, as in Zotero's Mendeley import
+// (mendeleyImport.mjs, `Zotero.Sync.Runner.delayIndefinite()`). A sync that runs
+// already can upload items that are saved after it started, so the hold starts
+// only when no sync runs. A sync that starts later waits for the hold before it
+// reads data (syncRunner.js `_sync`: `_syncInProgress` is set, then the sync
+// waits for `_delayPromises`), and the check and the hold run in one tick.
+async function heldFromSync<T>(run: () => Promise<T>): Promise<T> {
+  let runner = getSyncRunner();
+  if (runner === null) {
+    throw new Error("Zotero.Sync.Runner is not available");
+  }
+  while (runner.syncInProgress) {
+    await Zotero.Promise.delay(500);
+  }
+  let resume = runner.delayIndefinite();
+  try {
+    return await run();
+  } finally {
+    resume();
+  }
 }
 
 export function findExistingOutsideRecognition(keys: DuplicateKeys): Promise<Zotero.Item | null> {
