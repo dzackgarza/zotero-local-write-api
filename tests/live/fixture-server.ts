@@ -2,7 +2,12 @@
  * The fixture server stands in for a publisher in the live import suites. Its
  * routes are set per test, so one URL can serve different pages over time.
  */
-type Fixture = { body: string; type: string };
+/**
+ * `chunks` and `secondsBetweenChunks`: the body is sent in that many parts, one part per
+ * interval after the headers, as a server that streams a large file slowly does.
+ */
+type Pacing = { chunks: number; secondsBetweenChunks: number };
+type Fixture = { body: string; type: string; pacing?: Pacing };
 
 export class FixtureServer {
   private readonly fixtures = new Map<string, Fixture>();
@@ -29,8 +34,12 @@ export class FixtureServer {
    * Serve a one-page PDF whose only text is `text`: no DOI, ISBN or arXiv ID,
    * so neither Zotero's recognizer nor identifier discovery can name the work.
    */
-  servePdf(path: string, text: string): string {
-    return this.serve(path, { body: pdfDocument(pdfObjects(text)), type: "application/pdf" });
+  servePdf(path: string, text: string, pacing?: Pacing): string {
+    return this.serve(path, {
+      body: pdfDocument(pdfObjects(text)),
+      type: "application/pdf",
+      ...(pacing === undefined ? {} : { pacing }),
+    });
   }
 
   stop(): void {
@@ -42,8 +51,31 @@ export class FixtureServer {
     if (fixture === undefined) {
       return new Response("not found", { status: 404 });
     }
-    return new Response(fixture.body, { headers: { "Content-Type": fixture.type } });
+    const headers = { "Content-Type": fixture.type };
+    if (fixture.pacing === undefined) {
+      return new Response(fixture.body, { headers });
+    }
+    return new Response(pacedBody(fixture.body, fixture.pacing), { headers });
   }
+}
+
+function pacedBody(
+  body: string,
+  { chunks, secondsBetweenChunks }: Pacing,
+): ReadableStream {
+  const bytes = new TextEncoder().encode(body);
+  const size = Math.ceil(bytes.length / chunks);
+  let sent = 0;
+  return new ReadableStream({
+    async pull(controller: ReadableStreamDefaultController) {
+      await Bun.sleep(secondsBetweenChunks * 1000);
+      controller.enqueue(bytes.subarray(sent, sent + size));
+      sent += size;
+      if (sent >= bytes.length) {
+        controller.close();
+      }
+    },
+  });
 }
 
 /** The head of a page that carries only Highwire `citation_*` tags. */

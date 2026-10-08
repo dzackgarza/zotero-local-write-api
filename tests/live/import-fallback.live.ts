@@ -75,6 +75,17 @@ test("an unidentified PDF with fallback_metadata is stored under the new item", 
   await expectStoredPdf(data.item_key);
 });
 
+test("a PDF whose server streams it for longer than 30 s is imported", async () => {
+  // 7 parts 5 s apart: the transfer takes 35 s, and the connection is never idle for 30 s.
+  const url = server.servePdf(`/slow-${uid}.pdf`, `lw slow fixture body ${uid}`, {
+    chunks: 7,
+    secondsBetweenChunks: 5,
+  });
+  const data = await session.importFromUrl(url, { fallback_metadata: FALLBACK_METADATA });
+  expect(data.method).toBe("caller_metadata");
+  await expectStoredPdf(data.item_key);
+});
+
 test("fallback_metadata without a year is rejected and creates nothing", async () => {
   const before = await libraryItemCount();
   const url = server.servePage(`/plain-noyear-${uid}`, "<title>Nothing here</title>");
