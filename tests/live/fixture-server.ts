@@ -59,10 +59,7 @@ export class FixtureServer {
   }
 }
 
-function pacedBody(
-  body: string,
-  { chunks, secondsBetweenChunks }: Pacing,
-): ReadableStream {
+function pacedBody(body: string, { chunks, secondsBetweenChunks }: Pacing): ReadableStream {
   const bytes = new TextEncoder().encode(body);
   const size = Math.ceil(bytes.length / chunks);
   let sent = 0;
