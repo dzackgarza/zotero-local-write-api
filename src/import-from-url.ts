@@ -122,11 +122,7 @@ async function importPdfSource(
   target: SaveTarget,
   attempts: Attempt[],
 ): Promise<ImportOutcome | null> {
-  let recognized = recordAttempt(
-    attempts,
-    "pdf_recognition",
-    await recognizePdf(finalUrl, target),
-  );
+  let recognized = recordAttempt(attempts, "pdf_recognition", await recognizePdf(finalUrl, target));
   if (recognized) {
     return { ...recognized, method: "pdf_recognition" };
   }

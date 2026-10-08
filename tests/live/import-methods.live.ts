@@ -78,7 +78,9 @@ test("a translated page with store_attachments false becomes an item with no att
   });
   expect(data.method).toBe("web_translator");
   expect(data.existing).toBe(false);
-  expect((await readItem(data.item_key)).title).toBe("Deep Residual Learning for Image Recognition");
+  expect((await readItem(data.item_key)).title).toBe(
+    "Deep Residual Learning for Image Recognition",
+  );
   expect(await attachmentChildren(data.item_key)).toEqual([]);
 });
 
