@@ -72,13 +72,17 @@ export async function libraryItemCount(): Promise<number> {
   return Number(response.headers.get("Total-Results"));
 }
 
-/** The number of attachments the library holds outside any item and outside the trash. */
-async function standaloneAttachmentCount(): Promise<number> {
-  const response = await fetch(libraryUrl("items/top?itemType=attachment&limit=1"));
-  if (!response.ok) {
-    throw new Error(`standalone attachment count failed: HTTP ${response.status}`);
-  }
-  return Number(response.headers.get("Total-Results"));
+/**
+ * The standalone attachments among the 25 top-level items added last, outside the trash.
+ * The local API ignores `/top` once `itemType` is given, so the filter runs here.
+ */
+async function recentStandaloneAttachments(): Promise<string[]> {
+  const path = "items/top?sort=dateAdded&direction=desc&limit=25";
+  const items = await readLibrary<{ key: string; data: { itemType: string } }[]>(
+    path,
+    "recently added items",
+  );
+  return items.filter((item) => item.data.itemType === "attachment").map((item) => item.key);
 }
 
 /** The keys of the top-level items outside the trash that carry this title. */
@@ -109,7 +113,7 @@ export type HeldWork = {
   entries: string[];
   children: string[];
   pdfs: string[];
-  standaloneAttachments: number;
+  recentStandaloneAttachments: string[];
 };
 
 export async function heldWork(itemKey: string): Promise<HeldWork> {
@@ -118,7 +122,7 @@ export async function heldWork(itemKey: string): Promise<HeldWork> {
     entries: await entriesTitled(title),
     children: await childKeys(itemKey),
     pdfs: await pdfKeys(itemKey),
-    standaloneAttachments: await standaloneAttachmentCount(),
+    recentStandaloneAttachments: await recentStandaloneAttachments(),
   };
 }
 
