@@ -51,7 +51,7 @@ Build-time constants and Zotero's `APP_SHUTDOWN` are ambient declarations in `sr
 | `library.ts` | User-library lookups, citation keys, attachment file copies |
 | `attach.ts` | `/attach` |
 | `write.ts` | `/write` dispatch: `writeHandlers`, `sync`, `run_javascript` |
-| `items.ts`, `item-copy-merge.ts`, `tags.ts`, `collections.ts` | Item, tag and collection operations |
+| `items.ts`, `item-copy-merge.ts`, `tags.ts`, `collections.ts` | Item, tag and collection operations, and item lookups |
 | `identifier-import.ts` | `import_bibtex`, `import_by_identifier` |
 | `import-from-url.ts`, `fallback-metadata.ts` | `import_from_url` |
 | `resolve-url.ts` | `resolve_url` |

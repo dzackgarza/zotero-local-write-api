@@ -36,6 +36,8 @@ let PLUGIN_CAPABILITIES = [
   "recognition_held_from_sync",
   "import_by_identifier_existing",
   "import_bibtex_existing",
+  "title_search",
+  "local_attachment_paths",
 ];
 
 // The request path of each endpoint the add-on registers.

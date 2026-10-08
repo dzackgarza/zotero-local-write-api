@@ -17,6 +17,8 @@ import {
   handleAttachNote,
   handleAttachURL,
   handleCreateItem,
+  handleFindItemsByTitle,
+  handleGetItemChildren,
   handleRelinkAttachmentFile,
   handleReplaceItemJSON,
   handleRestoreItem,
@@ -115,6 +117,8 @@ let writeHandlers: Record<string, WriteHandler> = {
   update_attachment_title: handleUpdateAttachmentTitle,
   import_from_url: handleImportFromUrl,
   resolve_url: handleResolveUrl,
+  find_items_by_title: handleFindItemsByTitle,
+  get_item_children: handleGetItemChildren,
 };
 
 async function runWrite(data: RequestData) {
