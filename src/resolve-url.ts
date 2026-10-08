@@ -1,10 +1,11 @@
 import { identifyPage } from "./identify-page";
 import { withRecognizedParent } from "./pdf-recognition";
 import { type JsonPayload, type RequestData, successResult } from "./responses";
-import { fetchSource, requireHttpUrl } from "./source-fetch";
+import { fetchSource, requireHttpUrl, withSourceDirectory } from "./source-fetch";
 import { identifierText, identifyByIdentifier } from "./source-methods";
 import {
   type Attempt,
+  type DownloadedPdf,
   type FetchedSource,
   type Identification,
   type MethodResult,
@@ -49,9 +50,9 @@ function resolveIdentification(
 }
 
 async function recognizeWithoutSaving(
-  finalUrl: string,
+  pdf: DownloadedPdf,
 ): Promise<MethodResult<{ csl: CslItem; itemType: string; message: string }>> {
-  return withRecognizedParent(finalUrl, async ({ parent, pdf }) => {
+  return withRecognizedParent(pdf, async ({ parent, pdf }) => {
     try {
       let csl = itemToCsl(parent);
       // The CSL id is the URI of the parent, which is erased below.
@@ -66,14 +67,10 @@ async function recognizeWithoutSaving(
 }
 
 async function resolveByRecognition(
-  finalUrl: string,
+  pdf: DownloadedPdf,
   attempts: Attempt[],
 ): Promise<Resolution | null> {
-  let recognized = recordAttempt(
-    attempts,
-    "pdf_recognition",
-    await recognizeWithoutSaving(finalUrl),
-  );
+  let recognized = recordAttempt(attempts, "pdf_recognition", await recognizeWithoutSaving(pdf));
   return recognized === null
     ? null
     : {
@@ -86,17 +83,17 @@ async function resolveByRecognition(
 
 async function resolvePdfSource(
   requestedUrl: string,
-  finalUrl: string,
+  pdf: DownloadedPdf,
   attempts: Attempt[],
 ): Promise<Resolution | null> {
-  let recognized = await resolveByRecognition(finalUrl, attempts);
+  let recognized = await resolveByRecognition(pdf, attempts);
   if (recognized) {
     return recognized;
   }
   let byIdentifier = recordAttempt(
     attempts,
     "identifier",
-    await identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
+    await identifyByIdentifier(identifierText([requestedUrl, pdf.finalUrl], null)),
   );
   return byIdentifier === null
     ? null
@@ -109,7 +106,7 @@ async function resolveSource(
   attempts: Attempt[],
 ): Promise<Resolution | null> {
   if (source.kind === "pdf") {
-    return resolvePdfSource(url, source.finalUrl, attempts);
+    return resolvePdfSource(url, source, attempts);
   }
   let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
   return identification === null ? null : resolveIdentification(identification);
@@ -118,8 +115,10 @@ async function resolveSource(
 export async function handleResolveUrl(data: RequestData) {
   let url = requireHttpUrl(data.url);
   let attempts: Attempt[] = [];
-  let source = await fetchSource(url);
-  let resolution = await resolveSource(url, source, attempts);
+  let { source, resolution } = await withSourceDirectory(async (directory) => {
+    let source = await fetchSource(url, directory);
+    return { source, resolution: await resolveSource(url, source, attempts) };
+  });
   if (resolution === null) {
     throw new SourceNotIdentifiedError("No method identified the source: " + url, attempts);
   }

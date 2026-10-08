@@ -10,11 +10,12 @@ import {
 } from "./pdf-recognition";
 import { normalizeStringList, requireBoolean } from "./request-fields";
 import { type RequestData, successResult } from "./responses";
-import { fetchSource, requireHttpUrl } from "./source-fetch";
+import { fetchSource, requireHttpUrl, withSourceDirectory } from "./source-fetch";
 import { identifierText, identifyByIdentifier } from "./source-methods";
 import {
   type AttachmentFailure,
   type Attempt,
+  type DownloadedPdf,
   existingOutcome,
   type FetchedSource,
   type Identification,
@@ -97,36 +98,36 @@ async function saveIdentification(
 // with the PDF stored under the new item when the target stores attachments.
 async function importPdfByIdentifier(
   requestedUrl: string,
-  finalUrl: string,
+  pdf: DownloadedPdf,
   target: SaveTarget,
   attempts: Attempt[],
 ): Promise<ImportOutcome | null> {
   let byIdentifier = recordAttempt(
     attempts,
     "identifier",
-    await identifyByIdentifier(identifierText([requestedUrl, finalUrl], null)),
+    await identifyByIdentifier(identifierText([requestedUrl, pdf.finalUrl], null)),
   );
   if (byIdentifier === null) {
     return null;
   }
   let outcome = await saveIdentification({ ...byIdentifier, method: "identifier" }, target);
   if (target.storeAttachments && !outcome.existing && !hasStoredPdf(outcome.item)) {
-    await storePdf(finalUrl, outcome.item.id);
+    await storePdf(pdf, outcome.item.id);
   }
   return outcome;
 }
 
 async function importPdfSource(
   requestedUrl: string,
-  finalUrl: string,
+  pdf: DownloadedPdf,
   target: SaveTarget,
   attempts: Attempt[],
 ): Promise<ImportOutcome | null> {
-  let recognized = recordAttempt(attempts, "pdf_recognition", await recognizePdf(finalUrl, target));
+  let recognized = recordAttempt(attempts, "pdf_recognition", await recognizePdf(pdf, target));
   if (recognized) {
     return { ...recognized, method: "pdf_recognition" };
   }
-  return importPdfByIdentifier(requestedUrl, finalUrl, target, attempts);
+  return importPdfByIdentifier(requestedUrl, pdf, target, attempts);
 }
 
 async function identifySource(
@@ -136,7 +137,7 @@ async function identifySource(
   attempts: Attempt[],
 ): Promise<ImportOutcome | null> {
   if (source.kind === "pdf") {
-    return importPdfSource(url, source.finalUrl, target, attempts);
+    return importPdfSource(url, source, target, attempts);
   }
   let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
   return identification === null ? null : saveIdentification(identification, target);
@@ -148,13 +149,14 @@ async function identifySource(
 // every other failure stands.
 async function fetchAndIdentify(
   url: string,
+  directory: string,
   fallback: FallbackMetadata | null,
   target: SaveTarget,
   attempts: Attempt[],
 ): Promise<{ source: FetchedSource | null; outcome: ImportOutcome | null }> {
   let source: FetchedSource | null = null;
   try {
-    source = await fetchSource(url);
+    source = await fetchSource(url, directory);
     return {
       source,
       outcome: await identifySource(url, source, target, attempts),
@@ -171,11 +173,12 @@ async function fetchAndIdentify(
 // the fallback metadata when the request gives it.
 async function importSource(
   url: string,
+  directory: string,
   fallback: FallbackMetadata | null,
   target: SaveTarget,
   attempts: Attempt[],
 ): Promise<{ source: FetchedSource | null; outcome: ImportOutcome }> {
-  let { source, outcome } = await fetchAndIdentify(url, fallback, target, attempts);
+  let { source, outcome } = await fetchAndIdentify(url, directory, fallback, target, attempts);
   if (outcome !== null) {
     return { source, outcome };
   }
@@ -210,7 +213,9 @@ export async function handleImportFromUrl(data: RequestData) {
   let target = await saveTarget(data, collectionKeys);
 
   let attempts: Attempt[] = [];
-  let { source, outcome } = await importSource(url, fallback, target, attempts);
+  let { source, outcome } = await withSourceDirectory((directory) =>
+    importSource(url, directory, fallback, target, attempts),
+  );
 
   return successResult(
     "import_from_url",

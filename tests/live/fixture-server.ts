@@ -8,9 +8,11 @@
  */
 type Pacing = { chunks: number; secondsBetweenChunks: number };
 type Fixture = { body: string; type: string; pacing?: Pacing };
+/** A fixture the server serves, and the number of requests it has answered with it. */
+type Served = { fixture: Fixture; requests: number };
 
 export class FixtureServer {
-  private readonly fixtures = new Map<string, Fixture>();
+  private readonly served = new Map<string, Served>();
   private readonly server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -19,7 +21,7 @@ export class FixtureServer {
 
   /** Serve `fixture` at `path` and return its absolute URL. */
   serve(path: string, fixture: Fixture): string {
-    this.fixtures.set(path, fixture);
+    this.served.set(path, { fixture, requests: 0 });
     return `http://127.0.0.1:${this.server.port}${path}`;
   }
 
@@ -42,15 +44,27 @@ export class FixtureServer {
     });
   }
 
+  /** The number of requests the server has answered with the fixture served at `path`. */
+  requestCount(path: string): number {
+    const served = this.served.get(path);
+    if (served === undefined) {
+      throw new Error(`the fixture server serves nothing at ${path}`);
+    }
+    return served.requests;
+  }
+
   stop(): void {
     this.server.stop(true);
   }
 
   private answer(request: Request): Response {
-    const fixture = this.fixtures.get(new URL(request.url).pathname);
-    if (fixture === undefined) {
+    const path = new URL(request.url).pathname;
+    const served = this.served.get(path);
+    if (served === undefined) {
       return new Response("not found", { status: 404 });
     }
+    served.requests += 1;
+    const { fixture } = served;
     const headers = { "Content-Type": fixture.type };
     if (fixture.pacing === undefined) {
       return new Response(fixture.body, { headers });

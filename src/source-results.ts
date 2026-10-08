@@ -88,8 +88,11 @@ export type ImportOutcome = {
 };
 // Where a new item goes, and whether it stores the full text Zotero gets for the source.
 export type SaveTarget = { collectionIDs: number[]; storeAttachments: boolean };
+// A PDF source: the URL that answered, and the downloaded file that recognition and
+// storage read.
+export type DownloadedPdf = { finalUrl: string; file: string };
 export type FetchedSource =
-  | { kind: "pdf"; finalUrl: string }
+  | ({ kind: "pdf" } & DownloadedPdf)
   | { kind: "html"; finalUrl: string; document: Document };
 export type BibliographicSeed = { title: string; surname: string; year: string | null };
 export type ServiceCandidate = {

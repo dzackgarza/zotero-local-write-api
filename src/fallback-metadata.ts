@@ -96,7 +96,7 @@ export async function saveFallback(
   }
   let item = await saveFallbackItem(url, fallback, target.collectionIDs);
   if (target.storeAttachments && source !== null && source.kind === "pdf") {
-    await storePdf(source.finalUrl, item.id);
+    await storePdf(source, item.id);
   }
   return fallbackOutcome(item, false);
 }

@@ -79,3 +79,13 @@ test("resolve_url on a URL that no method identifies returns the typed error", a
   expect(error.operation).toBe("resolve_url");
   expect(error.stage).toBe("identify_source");
 });
+
+test("resolve_url downloads a PDF source once", async () => {
+  const path = `/resolve-once-${uid}.pdf`;
+  const url = server.servePdf(path, `lw resolve once fixture body ${uid}`);
+  const { response } = await client.POST("/write", {
+    body: { operation: "resolve_url", url },
+  });
+  expect(response.status).toBe(422);
+  expect(server.requestCount(path)).toBe(1);
+});
