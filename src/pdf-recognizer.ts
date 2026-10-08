@@ -14,7 +14,7 @@
 // the title branch builds the JSON that `_recognizePDF` sets field by field.
 import * as v from "valibot";
 
-import { responseTextOf } from "./source-fetch";
+import { parseJSONResponse, serviceAnswerOf } from "./source-fetch";
 import { identifierKey, resolveIdentifier } from "./source-methods";
 import {
   answered,
@@ -26,7 +26,6 @@ import {
 import {
   getSyncRunner,
   type Identifier,
-  isHttpFailure,
   pdfWorker,
   type RecognizerData,
   type TranslatorItemJSON,
@@ -100,33 +99,27 @@ function withTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : url + "/";
 }
 
-// _query. A failure status or an unreachable service is the service's answer; any other
-// error propagates.
+// _query. A failure status, an unreachable service or a body that is not the answer's
+// shape is the service's answer; any other error propagates.
 async function queryRecognizer(data: RecognizerData): Promise<ServiceAnswer<RecognizerAnswer>> {
   let runner = getSyncRunner();
   if (runner === null) {
     throw new Error("Zotero.Sync.Runner is not available");
   }
   let url = recognizerServiceUrl();
-  let xhr: XMLHttpRequest;
-  try {
-    xhr = await runner.getAPIClient().makeRequest("POST", url, {
+  let xhr = await serviceAnswerOf(
+    runner.getAPIClient().makeRequest("POST", url, {
       successCodes: [200],
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
       noAPIKey: true,
-    });
-  } catch (error) {
-    if (!isHttpFailure(error)) {
-      throw error;
-    }
-    return serviceFailure(error.message);
+      responseType: "json",
+    }),
+  );
+  if (xhr.outcome === "failed") {
+    return xhr;
   }
-  let parsed = v.safeParse(RecognizerAnswer, JSON.parse(responseTextOf(xhr, url)));
-  if (!parsed.success) {
-    return serviceFailure(url + " answered an unexpected body: " + v.summarize(parsed.issues));
-  }
-  return answered(parsed.output);
+  return parseJSONResponse(xhr.value, url, RecognizerAnswer);
 }
 
 // _recognizePDF after the query: the arXiv ID, then the DOI, then the ISBN, each resolved
@@ -134,16 +127,7 @@ async function queryRecognizer(data: RecognizerData): Promise<ServiceAnswer<Reco
 // next. Without an identifier that resolves, the answer's own title and authors are the
 // work.
 async function workFromAnswer(answer: RecognizerAnswer): Promise<MethodResult<TranslatorItemJSON>> {
-  let identifiers: Identifier[] = [];
-  if (answer.arxiv !== undefined) {
-    identifiers.push({ arXiv: answer.arxiv });
-  }
-  if (answer.doi !== undefined) {
-    identifiers.push({ DOI: answer.doi });
-  }
-  if (answer.isbn !== undefined) {
-    identifiers.push({ ISBN: answer.isbn });
-  }
+  let identifiers = answerIdentifiers(answer);
   for (let identifier of identifiers) {
     let item = await resolveIdentifier(identifier);
     if (item.outcome === "identified") {
@@ -154,6 +138,21 @@ async function workFromAnswer(answer: RecognizerAnswer): Promise<MethodResult<Tr
     return { outcome: "identified", found: workFromTitle(answer.title, answer.authors, answer) };
   }
   return miss("no_match", noMatchMessage(identifiers));
+}
+
+// The identifiers the answer names, in the order _recognizePDF tries them.
+function answerIdentifiers(answer: RecognizerAnswer): Identifier[] {
+  let identifiers: Identifier[] = [];
+  if (answer.arxiv !== undefined) {
+    identifiers.push({ arXiv: answer.arxiv });
+  }
+  if (answer.doi !== undefined) {
+    identifiers.push({ DOI: answer.doi });
+  }
+  if (answer.isbn !== undefined) {
+    identifiers.push({ ISBN: answer.isbn });
+  }
+  return identifiers;
 }
 
 function noMatchMessage(identifiers: Identifier[]): string {
@@ -181,7 +180,24 @@ function workFromTitle(
   authors: { firstName: string; lastName: string }[],
   answer: RecognizerAnswer,
 ): TranslatorItemJSON {
-  let itemType = answer.type === "book-chapter" ? "bookSection" : "journalArticle";
+  let itemType: TitleItemType = answer.type === "book-chapter" ? "bookSection" : "journalArticle";
+  return {
+    itemType,
+    title,
+    creators: authors.map(({ firstName, lastName }) => ({
+      firstName,
+      lastName,
+      creatorType: "author",
+    })),
+    ...answerFields(itemType, answer),
+    libraryCatalog: "Zotero",
+  };
+}
+
+type TitleItemType = "bookSection" | "journalArticle";
+
+// The bibliographic fields the answer gives, as fields of an item of itemType.
+function answerFields(itemType: TitleItemType, answer: RecognizerAnswer): Record<string, string> {
   let containerFields =
     itemType === "bookSection"
       ? { bookTitle: answer.container, publisher: answer.publisher }
@@ -196,15 +212,5 @@ function workFromTitle(
     ...containerFields,
   };
   let present = Object.entries(fields).filter(([, value]) => value !== undefined);
-  return {
-    itemType,
-    title,
-    creators: authors.map(({ firstName, lastName }) => ({
-      firstName,
-      lastName,
-      creatorType: "author",
-    })),
-    ...Object.fromEntries(present.map(([field, value]) => [field, String(value)])),
-    libraryCatalog: "Zotero",
-  };
+  return Object.fromEntries(present.map(([field, value]) => [field, String(value)]));
 }

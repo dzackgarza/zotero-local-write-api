@@ -189,6 +189,7 @@ type ZoteroAPIClient = {
       headers: Record<string, string>;
       body: string;
       noAPIKey: boolean;
+      responseType: "json";
     },
   ): Promise<XMLHttpRequest>;
 };
