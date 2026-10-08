@@ -55,9 +55,8 @@ async function handleSync(data: RequestData) {
     throw new Error("Zotero.Sync.Runner.sync is unavailable");
   }
   // Foreground sync so the call resolves once the sync engine has run.
-  let result: unknown = await runner.sync({ background: false });
-  let serialized: unknown = JSON.parse(JSON.stringify(result));
-  return successResult("sync", { triggered: true, result: serialized });
+  let result = await runner.sync({ background: false });
+  return successResult("sync", { triggered: true, completed: result !== false });
 }
 
 async function handleRunJavascript(data: RequestData) {

@@ -953,11 +953,13 @@ components:
               type: object
               required:
                 - triggered
-                - result
+                - completed
               properties:
                 triggered:
                   const: true
-                result: {}
+                completed:
+                  type: boolean
+                  description: 'false when Zotero cancelled the sync before it ran. Zotero reports the errors of a sync that ran in its sync status, not here.'
       unevaluatedProperties: false
     RunJavascriptSuccess:
       allOf:

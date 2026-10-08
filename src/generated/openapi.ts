@@ -553,7 +553,8 @@ export interface components {
       details?: {
         /** @constant */
         triggered: true;
-        result: unknown;
+        /** @description false when Zotero cancelled the sync before it ran. Zotero reports the errors of a sync that ran in its sync status, not here. */
+        completed: boolean;
       };
     } & {
       /**
