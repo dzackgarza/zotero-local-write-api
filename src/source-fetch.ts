@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { ApiError, badRequest } from "./errors";
+import { ApiError, assertNever, badRequest } from "./errors";
 import { requireNonEmptyString } from "./request-fields";
 import {
   answered,
@@ -8,7 +8,7 @@ import {
   SourceNotIdentifiedError,
   serviceFailure,
 } from "./source-results";
-import { isHttpFailure, type TranslatorItemJSON, zoteroHttpDownload } from "./zotero-api";
+import { isHttpFailure, type TranslatorItemJSON } from "./zotero-api";
 
 // An external service's GET. A failure status, an unreachable host, a timeout or a
 // certificate failure is the service's answer; any other error propagates.
@@ -75,35 +75,62 @@ async function fetchFollowingMetaRefresh(
   let path = sourceTempPath();
   try {
     let response = await downloadSource(url, path);
-    let finalUrl = finalResponseUrl(response, url);
-    let contentType = response.headers.get("Content-Type");
-    if (isPdfResponse(contentType, finalUrl)) {
-      return { kind: "pdf", finalUrl };
-    }
-    if (!isHtmlResponse(contentType)) {
-      throw new SourceNotIdentifiedError(
-        "Source is neither an HTML page nor a PDF (Content-Type: " + String(contentType) + ")",
-        [],
-      );
-    }
-    // zotero-types declares blobToHTMLDocument as answering a Document, but the function
-    // is async (utilities_internal.js), so its answer is awaited as a promise.
-    let page = await Promise.resolve(
-      Zotero.Utilities.Internal.blobToHTMLDocument(new Blob([await IOUtils.read(path)]), finalUrl),
-    );
-    let refreshUrl = zoteroHttpDownload().getHTMLMetaRefreshURL(page, finalUrl);
-    if (refreshUrl !== false && metaRedirects < 3) {
-      return fetchFollowingMetaRefresh(refreshUrl, metaRedirects + 1);
-    }
-    return { kind: "html", finalUrl, document: page };
+    return await downloadedSource(response, url, path, metaRedirects);
   } finally {
     await IOUtils.remove(path, { ignoreAbsent: true });
   }
 }
 
+// The source a download answered, its body read from `path`.
+async function downloadedSource(
+  response: Response,
+  url: string,
+  path: string,
+  metaRedirects: number,
+): Promise<FetchedSource> {
+  let finalUrl = finalResponseUrl(response, url);
+  let contentType = response.headers.get("Content-Type");
+  let body = sourceBody(contentType, finalUrl);
+  switch (body) {
+    case "pdf":
+      return { kind: "pdf", finalUrl };
+    case "html":
+      return htmlSource(path, finalUrl, metaRedirects);
+    case "unidentified":
+      throw sourceNotIdentified(contentType);
+    default:
+      return assertNever(body);
+  }
+}
+
+function sourceNotIdentified(contentType: string | null): SourceNotIdentifiedError {
+  return new SourceNotIdentifiedError(
+    "Source is neither an HTML page nor a PDF (Content-Type: " + String(contentType) + ")",
+    [],
+  );
+}
+
+// An HTML page, or the source its meta refresh names while fewer than 3 were followed.
+async function htmlSource(
+  path: string,
+  finalUrl: string,
+  metaRedirects: number,
+): Promise<FetchedSource> {
+  // zotero-types declares blobToHTMLDocument as answering a Document, but the function
+  // is async (utilities_internal.js), so its answer is awaited as a promise.
+  let page = await Promise.resolve(
+    Zotero.Utilities.Internal.blobToHTMLDocument(new Blob([await IOUtils.read(path)]), finalUrl),
+  );
+  let refreshUrl = Zotero.HTTP.getHTMLMetaRefreshURL(page, finalUrl);
+  if (refreshUrl !== false && metaRedirects < 3) {
+    return fetchFollowingMetaRefresh(refreshUrl, metaRedirects + 1);
+  }
+  return { kind: "html", finalUrl, document: page };
+}
+
 async function downloadSource(url: string, path: string): Promise<Response> {
   try {
-    return await zoteroHttpDownload().download(url, path);
+    return await Zotero.HTTP.download(url, path);
   } catch (error) {
     if (!isHttpFailure(error)) {
       throw error;
@@ -134,17 +161,26 @@ function finalResponseUrl(response: Response, url: string): string {
   return response.url;
 }
 
-function isHtmlResponse(contentType: string | null): boolean {
-  return contentType !== null && /^(text\/html|application\/xhtml\+xml)/i.test(contentType);
-}
+// What a downloaded source's body is.
+type SourceBody = "pdf" | "html" | "unidentified";
 
-// A response is a PDF when it declares the PDF type, or when it is not an HTML page
-// and its final path names a PDF file.
-function isPdfResponse(contentType: string | null, finalUrl: string): boolean {
-  if (contentType !== null && /application\/pdf/i.test(contentType)) {
-    return true;
+// The body a Content-Type declares, in order: the PDF type anywhere in it declares a PDF,
+// and an HTML media type declares an HTML page.
+const DECLARED_BODIES: readonly (readonly [RegExp, "pdf" | "html"])[] = [
+  [/application\/pdf/i, "pdf"],
+  [/^(text\/html|application\/xhtml\+xml)/i, "html"],
+];
+
+// The declared body, or, when the Content-Type declares neither, a PDF when the final
+// path names a PDF file.
+function sourceBody(contentType: string | null, finalUrl: string): SourceBody {
+  let declared = DECLARED_BODIES.find(
+    ([mediaType]) => contentType !== null && mediaType.test(contentType),
+  );
+  if (declared !== undefined) {
+    return declared[1];
   }
-  return !isHtmlResponse(contentType) && new URL(finalUrl).pathname.toLowerCase().endsWith(".pdf");
+  return new URL(finalUrl).pathname.toLowerCase().endsWith(".pdf") ? "pdf" : "unidentified";
 }
 // A text request that succeeded always has a body; a null body is a fault.
 export function responseTextOf(xhr: XMLHttpRequest, url: string): string {
