@@ -1,4 +1,5 @@
 import { badRequest, conflict } from "./errors";
+import type { components } from "./generated/openapi";
 import {
   citationKey,
   getUserCollectionOrThrow,
@@ -237,6 +238,21 @@ export async function handleUpdateAttachmentTitle(data: RequestData) {
   });
 }
 
+type TitleMatch = components["schemas"]["TitleMatch"];
+type AttachmentChild = components["schemas"]["AttachmentChild"];
+type AttachmentFile = components["schemas"]["AttachmentFile"];
+type NoteChild = components["schemas"]["NoteChild"];
+
+function titleMatch(item: Zotero.Item): TitleMatch {
+  return {
+    item_key: item.key,
+    item_id: item.id,
+    item_type: item.itemType,
+    title: item.getField("title"),
+    date: item.getField("date"),
+  };
+}
+
 // Zotero's "title" condition also matches attachments and notes, whose title
 // fields carry the same text; only the works themselves are answers.
 export async function handleFindItemsByTitle(data: RequestData) {
@@ -249,19 +265,24 @@ export async function handleFindItemsByTitle(data: RequestData) {
   return successResult("find_items_by_title", {
     query: title,
     match_count: items.length,
-    items: items.map((item) => ({
-      item_key: item.key,
-      item_id: item.id,
-      item_type: item.itemType,
-      title: item.getField("title"),
-      date: item.getField("date"),
-    })),
+    items: items.map(titleMatch),
   });
 }
 
-async function attachmentChild(attachment: Zotero.Item): Promise<JsonPayload> {
-  // getFilePathAsync answers false for a linked URL and for a file that is missing.
-  let filePath = await attachment.getFilePathAsync();
+// A linked URL has no file by design. Every other link mode names a file, and
+// getFilePathAsync answers its path only when the file exists on disk.
+async function attachmentFile(attachment: Zotero.Item): Promise<AttachmentFile> {
+  if (attachment.attachmentLinkMode === Zotero.Attachments.LINK_MODE_LINKED_URL) {
+    return { state: "linked_url" };
+  }
+  let path = await attachment.getFilePathAsync();
+  if (path === false) {
+    return { state: "missing" };
+  }
+  return { state: "on_disk", path };
+}
+
+async function attachmentChild(attachment: Zotero.Item): Promise<AttachmentChild> {
   return {
     item_key: attachment.key,
     item_id: attachment.id,
@@ -269,7 +290,16 @@ async function attachmentChild(attachment: Zotero.Item): Promise<JsonPayload> {
     child_type: "attachment",
     content_type: attachment.attachmentContentType,
     link_mode: attachment.attachmentLinkMode,
-    local_path: filePath === false ? null : filePath,
+    file: await attachmentFile(attachment),
+  };
+}
+
+function noteChild(note: Zotero.Item): NoteChild {
+  return {
+    item_key: note.key,
+    item_id: note.id,
+    title: note.getField("title"),
+    child_type: "note",
   };
 }
 
@@ -279,18 +309,11 @@ export async function handleGetItemChildren(data: RequestData) {
   if (!parent.isRegularItem()) {
     throw conflict("Item cannot own attachments or notes: " + itemKey);
   }
-  let children: JsonPayload[] = [];
-  for (let attachment of Zotero.Items.get(parent.getAttachments())) {
-    children.push(await attachmentChild(attachment));
-  }
-  for (let note of Zotero.Items.get(parent.getNotes())) {
-    children.push({
-      item_key: note.key,
-      item_id: note.id,
-      title: note.getField("title"),
-      child_type: "note",
-    });
-  }
+  let attachments = await Promise.all(
+    Zotero.Items.get(parent.getAttachments()).map(attachmentChild),
+  );
+  let notes = Zotero.Items.get(parent.getNotes()).map(noteChild);
+  let children: (AttachmentChild | NoteChild)[] = [...attachments, ...notes];
   return successResult("get_item_children", {
     parent_item_key: itemKey,
     child_count: children.length,

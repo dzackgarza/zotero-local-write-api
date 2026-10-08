@@ -185,11 +185,24 @@ class FindItemsByTitleSuccess(Ack):
     details: TitleMatches
 
 
+class FileOnDisk(TypedDict):
+    state: Literal["on_disk"]
+    path: str
+
+
+class FileMissing(TypedDict):
+    state: Literal["missing"]
+
+
+class FileOfLinkedUrl(TypedDict):
+    state: Literal["linked_url"]
+
+
 class AttachmentChild(TypedDict):
     item_key: str
     child_type: Literal["attachment"]
     content_type: str
-    local_path: str | None
+    file: FileOnDisk | FileMissing | FileOfLinkedUrl
 
 
 class NoteChild(TypedDict):
@@ -682,10 +695,10 @@ def _prove_get_item_children(smoke: SmokeRun, item_key: str, attachment_key: str
     children = result["details"]["children"]
     pdfs = [child for child in children if child["item_key"] == attachment_key and child["child_type"] == "attachment"]
     _require(len(pdfs) == 1, f"get_item_children did not answer the PDF {attachment_key} once: {children!r}")
-    local_path = pdfs[0]["local_path"]
+    file = pdfs[0]["file"]
     _require(
-        local_path is not None and Path(local_path).is_absolute(),
-        f"get_item_children answered no absolute path for the stored PDF: {pdfs[0]!r}",
+        file["state"] == "on_disk" and Path(file["path"]).is_absolute(),
+        f"get_item_children answered no absolute path on disk for the stored PDF: {pdfs[0]!r}",
     )
 
 
