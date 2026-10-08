@@ -10,7 +10,7 @@ import { expect, test } from "bun:test";
 
 import { citationHead } from "./fixture-server";
 import { client, openImportSession } from "./import-session";
-import { libraryItemCount, readItem } from "./library";
+import { childKeys, expectStoredPdf, libraryItemCount, readItem } from "./library";
 
 const session = openImportSession();
 const { uid, server } = session;
@@ -64,6 +64,23 @@ test("resolve_url and import_from_url of one PDF at once: the import's item exis
   expect((await readItem(imported.item_key)).title).toBe(String(resolved.csl.title));
   expect(imported.existing).toBe(false);
   expect(await libraryItemCount()).toBe(before + 1);
+});
+
+// A duplicate-merge add-on (Zoplicate, "keep" action) merges a library item
+// into a newly saved duplicate. Recognition must not save a parent that such an
+// add-on can merge the library's own item into. Zoplicate waits up to 5 s for a
+// new item's attachments before it merges.
+test("resolve_url of a PDF the library holds leaves the library's item and its children in place", async () => {
+  const url = "https://arxiv.org/pdf/1105.0002";
+  const imported = await session.importFromUrl(url);
+  expect(imported.existing).toBe(false);
+  await expectStoredPdf(imported.item_key);
+  const children = await childKeys(imported.item_key);
+  const resolved = await resolveUrl(url);
+  expect(resolved.method).toBe("pdf_recognition");
+  await Bun.sleep(10_000);
+  expect((await readItem(imported.item_key)).deleted).toBeUndefined();
+  expect(await childKeys(imported.item_key)).toEqual(children);
 });
 
 test("resolve_url on a URL that no method identifies returns the typed error", async () => {

@@ -13,6 +13,7 @@ export type ItemData = {
   creators: { creatorType?: string; firstName?: string; lastName?: string }[];
   collections: string[];
   tags: { tag: string }[];
+  deleted?: boolean;
 };
 
 type ChildData = { itemType: string; contentType?: string; linkMode?: string };
@@ -36,6 +37,13 @@ async function readLibrary<T>(path: string, what: string): Promise<T> {
 export async function readItem(itemKey: string): Promise<ItemData> {
   const path = `items/${encodeURIComponent(itemKey)}`;
   return (await readLibrary<{ data: ItemData }>(path, `read-back of ${itemKey}`)).data;
+}
+
+/** The keys of an item's children: attachments and notes. */
+export async function childKeys(itemKey: string): Promise<string[]> {
+  const path = `items/${encodeURIComponent(itemKey)}/children`;
+  const children = await readLibrary<{ key: string }[]>(path, `children of ${itemKey}`);
+  return children.map((child) => child.key).sort();
 }
 
 /** The attachments under an item, stored files and links alike. */
