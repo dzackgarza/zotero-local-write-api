@@ -101,9 +101,13 @@ export function createTranslateSearch(): ZoteroTranslateSearchApi {
 
 // Zotero.Sync.Runner is under-modeled for the foreground sync call. sync() answers false
 // when it cancels the sync before it runs, and undefined otherwise; it reports sync errors
-// in Zotero's sync status, not to the caller (syncRunner.js `_sync`).
+// in Zotero's sync status, not to the caller (syncRunner.js `_sync`). delayIndefinite()
+// makes every sync that starts wait before it reads or writes data, until the returned
+// function is called; syncInProgress is true from the start of a sync to its end.
 type ZoteroSyncRunnerApi = {
   sync(options: { background: boolean }): Promise<false | undefined>;
+  readonly syncInProgress: boolean;
+  delayIndefinite(): () => void;
 };
 // zotero-types declares Zotero.Translators as `any`; same reason as ZoteroTranslateApi.
 // Models zotero/zotero chrome/content/zotero/xpcom/translation/translators.js: init()

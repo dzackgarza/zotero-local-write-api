@@ -154,6 +154,7 @@ export interface components {
         | "resolve_url"
         | "attach_standalone"
         | "import_store_attachments"
+        | "recognition_held_from_sync"
       )[];
       /** @description Whether Zotero has loaded its translators. Imports, URL resolution and identifier lookups fail until it is true; a client that has just started Zotero waits for it. */
       translators_ready: boolean;
@@ -1043,7 +1044,7 @@ export interface components {
       collection_keys?: components["schemas"]["NormalizedStringArray"];
       fallback_metadata?: components["schemas"]["FallbackMetadata"];
       /**
-       * @description false: the call stores no attachments. A new item gets no translator attachment, no open-access PDF and no PDF of the source, so the caller can attach its own copy. An existing item is not changed. Servers that support this field list import_store_attachments in /version capabilities.
+       * @description false: the call stores no attachments. A new item gets no translator attachment, no open-access PDF and no PDF of the source, so the caller can attach its own copy. An existing item is not changed. Servers that support this field list import_store_attachments in /version capabilities. With false and a PDF URL, Zotero PDF recognition stores the PDF for the time of the call and then erases it. No Zotero sync runs while it exists, so it never reaches the Zotero server; servers that hold syncs this way list recognition_held_from_sync in /version capabilities.
        * @default true
        */
       store_attachments?: boolean;
@@ -1098,7 +1099,7 @@ export interface components {
        */
       operation: "import_from_url";
     };
-    /** @description Identify a source URL exactly as import_from_url does, with the same methods in the same order, and return the metadata of the one work it identifies without saving anything to the library. The metadata is Zotero's CSL-JSON rendering of the item import_from_url would create. */
+    /** @description Identify a source URL exactly as import_from_url does, with the same methods in the same order, and return the metadata of the one work it identifies without keeping anything in the library. The metadata is Zotero's CSL-JSON rendering of the item import_from_url would create. When the URL is a PDF, Zotero PDF recognition stores the PDF and the item it creates for the time of the call and then erases both. No Zotero sync runs while they exist, so they never reach the Zotero server. Servers that hold syncs this way list recognition_held_from_sync in /version capabilities. */
     ResolveUrlRequest: {
       /**
        * @description discriminator enum property added by openapi-typescript

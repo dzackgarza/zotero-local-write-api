@@ -540,7 +540,7 @@ def _prove_version(http: httpx.Client, expected_version: str) -> VersionResponse
     _require(endpoints["attach"].startswith("/"), f"Invalid attach endpoint: {endpoints['attach']!r}")
     _require(endpoints["write"].startswith("/"), f"Invalid write endpoint: {endpoints['write']!r}")
     capabilities = version_payload["capabilities"]
-    for capability in ("attach", "attach_bytes", "attach_standalone", "import_store_attachments", "write", "version_probe", "import_bibtex"):
+    for capability in ("attach", "attach_bytes", "attach_standalone", "import_store_attachments", "recognition_held_from_sync", "write", "version_probe", "import_bibtex"):
         _require(capability in capabilities, f"Missing required capability {capability!r}: {capabilities!r}")
     _require(version_payload["translators_ready"] is True, f"Zotero has not loaded its translators: {version_payload!r}")
     return version_payload
