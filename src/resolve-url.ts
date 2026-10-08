@@ -70,11 +70,7 @@ async function resolveByRecognition(
   pdf: DownloadedPdf,
   attempts: Attempt[],
 ): Promise<Resolution | null> {
-  let recognized = recordAttempt(
-    attempts,
-    "pdf_recognition",
-    await recognizeWithoutSaving(pdf),
-  );
+  let recognized = recordAttempt(attempts, "pdf_recognition", await recognizeWithoutSaving(pdf));
   return recognized === null
     ? null
     : {
