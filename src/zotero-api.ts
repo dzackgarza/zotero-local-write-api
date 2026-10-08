@@ -177,6 +177,18 @@ type ZoteroHttpFailureApi = {
   TimeoutException: new (...args: never[]) => Error;
   SecurityException: new (...args: never[]) => Error;
 };
+// zotero-types omits Zotero.HTTP.download and getHTMLMetaRefreshURL. Models zotero/zotero
+// chrome/content/zotero/xpcom/http.js: download() streams a GET to `path` and answers the
+// fetch Response; its timeout covers connecting and inactivity, not the whole transfer.
+// getHTMLMetaRefreshURL() answers the resolved target of a meta refresh, or false.
+type ZoteroHttpDownloadApi = {
+  download(url: string, path: string): Promise<Response>;
+  getHTMLMetaRefreshURL(doc: Document, url: string): string | false;
+};
+export function zoteroHttpDownload(): ZoteroHttpDownloadApi {
+  return Zotero.HTTP as typeof Zotero.HTTP & ZoteroHttpDownloadApi;
+}
+
 export function isHttpFailure(error: unknown): error is Error {
   let http = Zotero.HTTP as typeof Zotero.HTTP & ZoteroHttpFailureApi;
   return (
