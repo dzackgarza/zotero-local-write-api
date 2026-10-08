@@ -17,7 +17,7 @@ import { expect, test } from "bun:test";
 
 import { citationHead } from "./fixture-server";
 import { client, openImportSession } from "./import-session";
-import { expectStoredPdf, readItem } from "./library";
+import { attachmentChildren, expectStoredPdf, readItem } from "./library";
 
 const session = openImportSession();
 const { uid, server } = session;
@@ -61,6 +61,27 @@ test("a direct PDF URL is recognized from the identifier inside the PDF", async 
   expect(item.itemType).toBe("journalArticle");
   expect(item.DOI?.toLowerCase()).toBe("10.1371/journal.pone.0000308");
   await expectStoredPdf(data.item_key);
+});
+
+test("a direct PDF URL with store_attachments false becomes an item with no attachment", async () => {
+  const data = await session.importFromUrl("https://arxiv.org/pdf/1105.0001", {
+    store_attachments: false,
+  });
+  expect(data.method).toBe("pdf_recognition");
+  expect(data.existing).toBe(false);
+  expect(await attachmentChildren(data.item_key)).toEqual([]);
+});
+
+test("a translated page with store_attachments false becomes an item with no attachment", async () => {
+  const data = await session.importFromUrl("https://arxiv.org/abs/1512.03385", {
+    store_attachments: false,
+  });
+  expect(data.method).toBe("web_translator");
+  expect(data.existing).toBe(false);
+  expect((await readItem(data.item_key)).title).toBe(
+    "Deep Residual Learning for Image Recognition",
+  );
+  expect(await attachmentChildren(data.item_key)).toEqual([]);
 });
 
 test("a page with only citation_* tags becomes a journal article in the requested collection", async () => {

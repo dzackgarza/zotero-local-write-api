@@ -89,7 +89,10 @@ export type ZoteroTranslateApi = {
   Search: new () => ZoteroTranslateSearchApi;
   Import: new () => ImportTranslator;
   Web: new () => ZoteroTranslateWebApi;
-  ItemSaver: ZoteroItemSaverConstructor & { ATTACHMENT_MODE_DOWNLOAD: number };
+  ItemSaver: ZoteroItemSaverConstructor & {
+    ATTACHMENT_MODE_IGNORE: number;
+    ATTACHMENT_MODE_DOWNLOAD: number;
+  };
 };
 export function createTranslateSearch(): ZoteroTranslateSearchApi {
   let TranslateSearch = (Zotero.Translate as ZoteroTranslateApi).Search;

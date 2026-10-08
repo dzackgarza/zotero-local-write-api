@@ -86,6 +86,8 @@ export type ImportOutcome = {
   translator: WebTranslatorInfo | null;
   attachmentFailures: AttachmentFailure[];
 };
+// Where a new item goes, and whether it stores the full text Zotero gets for the source.
+export type SaveTarget = { collectionIDs: number[]; storeAttachments: boolean };
 export type FetchedSource =
   | { kind: "pdf"; finalUrl: string }
   | { kind: "html"; finalUrl: string; document: Document };

@@ -1026,7 +1026,7 @@ export interface components {
        */
       operation: "update_attachment_title";
     };
-    /** @description Create one Zotero item from a source URL. Methods are tried in order until one identifies the source as exactly one work: web translators, the page embedded metadata (for a PDF: Zotero PDF recognition), identifier discovery (DOI, ISBN, arXiv ID), BibTeX the page links, and external services (Crossref, zbMATH Open, arXiv, Open Library). When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. The item stores the full text Zotero gets for the source: the translator's attachments, an open-access PDF when the translator gives none, and the PDF itself when the URL is a PDF. When no method identifies the source, the 422 names alternative sources in details.remediation; a second request with fallback_metadata then saves the source as the caller describes it. */
+    /** @description Create one Zotero item from a source URL. Methods are tried in order until one identifies the source as exactly one work: web translators, the page embedded metadata (for a PDF: Zotero PDF recognition), identifier discovery (DOI, ISBN, arXiv ID), BibTeX the page links, and external services (Crossref, zbMATH Open, arXiv, Open Library). When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. The item stores the full text Zotero gets for the source: the translator's attachments, an open-access PDF when the translator gives none, and the PDF itself when the URL is a PDF. With store_attachments false, a new item stores none of these. When no method identifies the source, the 422 names alternative sources in details.remediation; a second request with fallback_metadata then saves the source as the caller describes it. */
     ImportFromUrlRequest: {
       /**
        * @description discriminator enum property added by openapi-typescript
@@ -1040,6 +1040,11 @@ export interface components {
       url: components["schemas"]["NonBlankString"];
       collection_keys?: components["schemas"]["NormalizedStringArray"];
       fallback_metadata?: components["schemas"]["FallbackMetadata"];
+      /**
+       * @description false: the call stores no attachments. A new item gets no translator attachment, no open-access PDF and no PDF of the source, so the caller can attach its own copy. An existing item is not changed.
+       * @default true
+       */
+      store_attachments?: boolean;
     };
     ImportFromUrlAttempt: {
       method: components["schemas"]["ImportFromUrlMethod"];

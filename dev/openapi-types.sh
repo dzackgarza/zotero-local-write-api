@@ -25,7 +25,7 @@ check)
 	fi
 	;;
 *)
-	echo "usage: openapi-typescript openapi.yaml | $0 write|check" >&2
+	echo "usage: openapi-typescript openapi.yaml --default-non-nullable=false | $0 write|check" >&2
 	exit 2
 	;;
 esac

@@ -11,6 +11,7 @@ import {
   type ImportOutcome,
   type MethodResult,
   miss,
+  type SaveTarget,
   type ServiceAnswer,
   serviceFailure,
 } from "./source-results";
@@ -99,26 +100,30 @@ type RecognizedImport = Omit<ImportOutcome, "method"> & { message: string };
 
 export async function recognizePdf(
   finalUrl: string,
-  collectionIDs: number[],
+  target: SaveTarget,
 ): Promise<MethodResult<RecognizedImport>> {
-  return withRecognizedParent(finalUrl, (recognized) => fileRecognized(recognized, collectionIDs));
+  return withRecognizedParent(finalUrl, (recognized) => fileRecognized(recognized, target));
 }
 
 // An existing item is the library's own: the recognized copy and its PDF are
-// erased, and the existing item only gains the requested collections.
+// erased, and the existing item only gains the requested collections. A new item keeps
+// the PDF only when the target stores attachments.
 async function fileRecognized(
   { parent, pdf }: RecognizedParent,
-  collectionIDs: number[],
+  target: SaveTarget,
 ): Promise<RecognizedImport> {
   let existing = await findExistingItem(duplicateKeysFromItem(parent), parent.id);
   if (existing) {
     await pdf.eraseTx();
     await parent.eraseTx();
-    await fileExistingItem(existing, collectionIDs);
+    await fileExistingItem(existing, target.collectionIDs);
     return recognizedImport(existing, true);
   }
-  if (collectionIDs.length) {
-    parent.setCollections(collectionIDs);
+  if (!target.storeAttachments) {
+    await pdf.eraseTx();
+  }
+  if (target.collectionIDs.length) {
+    parent.setCollections(target.collectionIDs);
     await parent.saveTx();
   }
   return recognizedImport(parent, false);
