@@ -1,1 +1,0 @@
-POST /write removed the required property `oneOf[#/components/schemas/SyncSuccess]/allOf[subschema #2]/details/result` from the response with the `200` status
