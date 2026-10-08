@@ -77,11 +77,16 @@ function fallbackOutcome(item: Zotero.Item, existing: boolean): ImportOutcome {
 
 // The duplicate keys of the item saveFallbackItem makes: it has no DOI and no ISBN.
 function fallbackDuplicateKeys(url: string, fallback: FallbackMetadata): DuplicateKeys {
-  return { itemType: "document", title: fallback.title, DOI: "", ISBN: "", url };
+  return {
+    itemType: "document",
+    title: fallback.title,
+    url,
+    date: fallback.year,
+    creators: fallback.creators,
+  };
 }
 
-// The source as the caller describes it. A source already saved this way
-// (equal URL and title) is returned as it is. A PDF source is stored under a new item
+// The source as the caller describes it. A work the library holds is returned as it is. A PDF source is stored under a new item
 // when the target stores attachments.
 export async function saveFallback(
   url: string,

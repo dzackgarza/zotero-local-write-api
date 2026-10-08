@@ -16,7 +16,7 @@ import {
   type ServiceCandidate,
   serviceFailure,
 } from "./source-results";
-import { type Identifier, type TranslatorItemJSON } from "./zotero-api";
+import { type CreatorJSON, type Identifier, type TranslatorItemJSON } from "./zotero-api";
 
 // Title normalization from zotero/zotero chrome/content/zotero/xpcom/duplicates.js
 // `normalizeString`: strip diacritics, ASCII punctuation to spaces, lowercase.
@@ -40,12 +40,26 @@ function yearOf(date: string | undefined): string | null {
 // year of the page's own metadata, when the page describes only itself.
 export function seedFromJSON(json: TranslatorItemJSON): BibliographicSeed | null {
   let title = json.title?.trim();
-  let creator = json.creators?.[0];
-  let surname = creator?.lastName ?? creator?.name?.trim().split(/\s+/).pop();
-  if (title === undefined || title === "" || surname === undefined || surname === "") {
+  if (title === undefined || title === "" || json.creators === undefined) {
+    return null;
+  }
+  if (json.creators.length === 0) {
+    return null;
+  }
+  let surname = surnameOf(json.creators[0]);
+  if (surname === "") {
     return null;
   }
   return { title, surname, year: yearOf(json.date) };
+}
+
+// The surname of a creator: its last name, or the last word of a single-field name.
+function surnameOf(creator: CreatorJSON): string {
+  if ("name" in creator) {
+    let words = creator.name.trim().split(/\s+/);
+    return words[words.length - 1];
+  }
+  return creator.lastName;
 }
 
 // A candidate is the seed's work when the normalized titles are equal, the

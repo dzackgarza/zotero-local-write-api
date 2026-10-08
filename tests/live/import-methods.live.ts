@@ -231,6 +231,37 @@ test("import_bibtex of an entry the library holds answers its one entry", async 
   expect(await heldWork(first.item_key, `held-${uid}`)).toEqual(held);
 });
 
+// A work with no DOI, ISBN or URL is known by its title, creators and year, as in Zotero's
+// Duplicate Items view.
+async function titledRecord(author: string, year: string): Promise<string> {
+  const record = await Bun.file(new URL("../fixtures/titled-record.bib", import.meta.url)).text();
+  return record
+    .replaceAll("__UID__", uid)
+    .replaceAll("__AUTHOR__", author)
+    .replaceAll("__YEAR__", year);
+}
+
+test("import_bibtex of a held work with no identifier answers its one entry", async () => {
+  const bibtex = await titledRecord("Fixture, Ada", "2020");
+  const first = await session.importBibtex(bibtex);
+  expect(first.existing).toEqual([false]);
+  const held = await heldWork(first.item_key, `titled-${uid}`);
+  expect(held.entries).toEqual([first.item_key]);
+  const second = await session.importBibtex(bibtex);
+  expect(second.item_keys).toEqual([first.item_key]);
+  expect(second.existing).toEqual([true]);
+  expect(await heldWork(first.item_key, `titled-${uid}`)).toEqual(held);
+});
+
+test("import_bibtex of a work with a held title but other creators or another year is a new entry", async () => {
+  const held = await session.importBibtex(await titledRecord("Fixture, Ada", "2020"));
+  const otherCreator = await session.importBibtex(await titledRecord("Otherauthor, Bea", "2020"));
+  const otherYear = await session.importBibtex(await titledRecord("Fixture, Ada", "2023"));
+  expect(otherCreator.existing).toEqual([false]);
+  expect(otherYear.existing).toEqual([false]);
+  expect(new Set([held.item_key, otherCreator.item_key, otherYear.item_key]).size).toBe(3);
+});
+
 test("import_bibtex stores the PDF that the entry's file field names", async () => {
   const pdfUrl = server.servePdf(`/bibtex-file-${uid}.pdf`, `lw bibtex file ${uid}`);
   const pdfPath = join(tmpdir(), `lw-bibtex-file-${uid}.pdf`);
