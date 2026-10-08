@@ -62,7 +62,9 @@ class ImportSession {
       throw new Error(`import_by_identifier ${identifier} failed: ${error.stage}: ${error.error}`);
     }
     if (data === undefined || data.operation !== "import_by_identifier") {
-      throw new Error(`import_by_identifier ${identifier} returned no import_by_identifier success`);
+      throw new Error(
+        `import_by_identifier ${identifier} returned no import_by_identifier success`,
+      );
     }
     this.track(data.item_keys);
     return data;
