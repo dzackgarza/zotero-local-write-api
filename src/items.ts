@@ -1,4 +1,5 @@
 import { badRequest, conflict } from "./errors";
+import type { components } from "./generated/openapi";
 import {
   citationKey,
   getUserCollectionOrThrow,
@@ -234,5 +235,88 @@ export async function handleUpdateAttachmentTitle(data: RequestData) {
   return successResult("update_attachment_title", {
     attachment_key: attachmentKey,
     new_title: newTitle,
+  });
+}
+
+type TitleMatch = components["schemas"]["TitleMatch"];
+type AttachmentChild = components["schemas"]["AttachmentChild"];
+type AttachmentFile = components["schemas"]["AttachmentFile"];
+type NoteChild = components["schemas"]["NoteChild"];
+
+function titleMatch(item: Zotero.Item): TitleMatch {
+  return {
+    item_key: item.key,
+    item_id: item.id,
+    item_type: item.itemType,
+    title: item.getField("title"),
+    date: item.getField("date"),
+  };
+}
+
+// Zotero's "title" condition also matches attachments and notes, whose title
+// fields carry the same text; only the works themselves are answers.
+export async function handleFindItemsByTitle(data: RequestData) {
+  let title = requireNonEmptyString(data.title, "title");
+  let search = new Zotero.Search({ libraryID: userLibraryID() });
+  search.addCondition("title", "contains", title);
+  let items = Zotero.Items.get(await search.search()).filter(
+    (item) => item.isRegularItem() && item.isTopLevelItem() && !item.deleted,
+  );
+  return successResult("find_items_by_title", {
+    query: title,
+    match_count: items.length,
+    items: items.map(titleMatch),
+  });
+}
+
+// A linked URL has no file by design. Every other link mode names a file, and
+// getFilePathAsync answers its path only when the file exists on disk.
+async function attachmentFile(attachment: Zotero.Item): Promise<AttachmentFile> {
+  if (attachment.attachmentLinkMode === Zotero.Attachments.LINK_MODE_LINKED_URL) {
+    return { state: "linked_url" };
+  }
+  let path = await attachment.getFilePathAsync();
+  if (path === false) {
+    return { state: "missing" };
+  }
+  return { state: "on_disk", path };
+}
+
+async function attachmentChild(attachment: Zotero.Item): Promise<AttachmentChild> {
+  return {
+    item_key: attachment.key,
+    item_id: attachment.id,
+    title: attachment.getField("title"),
+    child_type: "attachment",
+    content_type: attachment.attachmentContentType,
+    link_mode: attachment.attachmentLinkMode,
+    file: await attachmentFile(attachment),
+  };
+}
+
+function noteChild(note: Zotero.Item): NoteChild {
+  return {
+    item_key: note.key,
+    item_id: note.id,
+    title: note.getField("title"),
+    child_type: "note",
+  };
+}
+
+export async function handleGetItemChildren(data: RequestData) {
+  let itemKey = requireNonEmptyString(data.item_key, "item_key");
+  let parent = await getUserItemOrThrow(itemKey);
+  if (!parent.isRegularItem()) {
+    throw conflict("Item cannot own attachments or notes: " + itemKey);
+  }
+  let attachments = await Promise.all(
+    Zotero.Items.get(parent.getAttachments()).map(attachmentChild),
+  );
+  let notes = Zotero.Items.get(parent.getNotes()).map(noteChild);
+  let children: (AttachmentChild | NoteChild)[] = [...attachments, ...notes];
+  return successResult("get_item_children", {
+    parent_item_key: itemKey,
+    child_count: children.length,
+    children: children,
   });
 }

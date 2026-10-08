@@ -15,6 +15,7 @@ This script exercises the add-on against a real running Zotero instance:
 - create_item
 - import_bibtex
 - byte-backed PDF attach
+- find_items_by_title and get_item_children, with the stored PDF's absolute path
 - standalone PDF attach into the selected collection and the library root
 - delete_tag
 - trash_item
@@ -171,6 +172,53 @@ class RootAttachSuccess(Ack):
     details: RootAttachDetails
 
 
+class TitleMatch(TypedDict):
+    item_key: str
+    title: str
+
+
+class TitleMatches(TypedDict):
+    items: list[TitleMatch]
+
+
+class FindItemsByTitleSuccess(Ack):
+    details: TitleMatches
+
+
+class FileOnDisk(TypedDict):
+    state: Literal["on_disk"]
+    path: str
+
+
+class FileMissing(TypedDict):
+    state: Literal["missing"]
+
+
+class FileOfLinkedUrl(TypedDict):
+    state: Literal["linked_url"]
+
+
+class AttachmentChild(TypedDict):
+    item_key: str
+    child_type: Literal["attachment"]
+    content_type: str
+    file: FileOnDisk | FileMissing | FileOfLinkedUrl
+
+
+class NoteChild(TypedDict):
+    item_key: str
+    child_type: Literal["note"]
+
+
+class ItemChildren(TypedDict):
+    parent_item_key: str
+    children: list[AttachmentChild | NoteChild]
+
+
+class GetItemChildrenSuccess(Ack):
+    details: ItemChildren
+
+
 class JavascriptDetails(TypedDict, Generic[ResultT]):
     result: ResultT
 
@@ -284,6 +332,8 @@ ERROR = TypeAdapter(ErrorStatus)
 CHILD_ATTACH = TypeAdapter(ChildAttachSuccess)
 COLLECTION_ATTACH = TypeAdapter(CollectionAttachSuccess)
 ROOT_ATTACH = TypeAdapter(RootAttachSuccess)
+TITLE_MATCHES = TypeAdapter(FindItemsByTitleSuccess)
+ITEM_CHILDREN = TypeAdapter(GetItemChildrenSuccess)
 VERSION = TypeAdapter(VersionResponse)
 ITEM = TypeAdapter(Item)
 CHILDREN = TypeAdapter(list[ChildItem])
@@ -540,7 +590,7 @@ def _prove_version(http: httpx.Client, expected_version: str) -> VersionResponse
     _require(endpoints["attach"].startswith("/"), f"Invalid attach endpoint: {endpoints['attach']!r}")
     _require(endpoints["write"].startswith("/"), f"Invalid write endpoint: {endpoints['write']!r}")
     capabilities = version_payload["capabilities"]
-    for capability in ("attach", "attach_bytes", "attach_standalone", "import_store_attachments", "recognition_held_from_sync", "write", "version_probe", "import_bibtex"):
+    for capability in ("attach", "attach_bytes", "attach_standalone", "import_store_attachments", "recognition_held_from_sync", "write", "version_probe", "import_bibtex", "title_search", "local_attachment_paths"):
         _require(capability in capabilities, f"Missing required capability {capability!r}: {capabilities!r}")
     _require(version_payload["translators_ready"] is True, f"Zotero has not loaded its translators: {version_payload!r}")
     return version_payload
@@ -630,6 +680,26 @@ def _prove_child_attach(smoke: SmokeRun, item_key: str) -> str:
         f"Attachment title mismatch: {matching_attachment!r}",
     )
     return attachment_key
+
+
+def _prove_find_items_by_title(smoke: SmokeRun, item_key: str) -> None:
+    """find_items_by_title answers the created item for a query inside its title."""
+    result = smoke.write({"operation": "find_items_by_title", "title": f"smoke-item-{smoke.suffix}"}, TITLE_MATCHES)
+    matches = [match["item_key"] for match in result["details"]["items"]]
+    _require(matches == [item_key], f"find_items_by_title answered {matches!r}, expected [{item_key!r}]")
+
+
+def _prove_get_item_children(smoke: SmokeRun, item_key: str, attachment_key: str) -> None:
+    """get_item_children answers the stored PDF child with a file path that is absolute."""
+    result = smoke.write({"operation": "get_item_children", "item_key": item_key}, ITEM_CHILDREN)
+    children = result["details"]["children"]
+    pdfs = [child for child in children if child["item_key"] == attachment_key and child["child_type"] == "attachment"]
+    _require(len(pdfs) == 1, f"get_item_children did not answer the PDF {attachment_key} once: {children!r}")
+    file = pdfs[0]["file"]
+    _require(
+        file["state"] == "on_disk" and Path(file["path"]).is_absolute(),
+        f"get_item_children answered no absolute path on disk for the stored PDF: {pdfs[0]!r}",
+    )
 
 
 def _prove_delete_tag(smoke: SmokeRun, item_key: str, doomed_tag: str, keep_tag: str) -> None:
@@ -944,6 +1014,8 @@ def _prove_library_writes(smoke: SmokeRun, version: str) -> SmokeReport:
     item_key = _prove_create_item(smoke, [doomed_tag, keep_tag])
     bibtex_item_key = _prove_import_bibtex(smoke)
     attachment_key = _prove_child_attach(smoke, item_key)
+    _prove_find_items_by_title(smoke, item_key)
+    _prove_get_item_children(smoke, item_key, attachment_key)
     _prove_item_edits(smoke, item_key, attachment_key, doomed_tag, keep_tag)
     standalone_keys = _prove_standalone_attach(smoke)
     _prove_trash_item(smoke, item_key)

@@ -157,6 +157,8 @@ export interface components {
         | "recognition_held_from_sync"
         | "import_by_identifier_existing"
         | "import_bibtex_existing"
+        | "title_search"
+        | "local_attachment_paths"
       )[];
       /** @description Whether Zotero has loaded its translators. Imports, URL resolution and identifier lookups fail until it is true; a client that has just started Zotero waits for it. */
       translators_ready: boolean;
@@ -224,7 +226,9 @@ export interface components {
       | components["schemas"]["RestoreItemRequest"]
       | components["schemas"]["UpdateAttachmentTitleRequest"]
       | components["schemas"]["ImportFromUrlRequest"]
-      | components["schemas"]["ResolveUrlRequest"];
+      | components["schemas"]["ResolveUrlRequest"]
+      | components["schemas"]["FindItemsByTitleRequest"]
+      | components["schemas"]["GetItemChildrenRequest"];
     SyncRequest: {
       /**
        * @description discriminator enum property added by openapi-typescript
@@ -551,7 +555,9 @@ export interface components {
       | components["schemas"]["RestoreItemSuccess"]
       | components["schemas"]["UpdateAttachmentTitleSuccess"]
       | components["schemas"]["ImportFromUrlSuccess"]
-      | components["schemas"]["ResolveUrlSuccess"];
+      | components["schemas"]["ResolveUrlSuccess"]
+      | components["schemas"]["FindItemsByTitleSuccess"]
+      | components["schemas"]["GetItemChildrenSuccess"];
     SyncSuccess: components["schemas"]["SuccessEnvelope"] & {
       /** @constant */
       operation?: "sync";
@@ -1191,6 +1197,116 @@ export interface components {
         attempts: components["schemas"]["ImportFromUrlAttempt"][];
         remediation: components["schemas"]["SourceRemediation"];
       };
+    };
+    /** @description Find the top-level regular items in the user library whose title contains title. Trashed items, attachments and notes are not answers. Servers that support this operation list title_search in /version capabilities. */
+    FindItemsByTitleRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "find_items_by_title";
+      title: components["schemas"]["NonBlankString"];
+    };
+    /** @description List the attachments and notes of a regular item. Each attachment carries the state of its file: the absolute path of a file on the machine that runs Zotero, a file that is missing, or a linked URL that has no file. Servers that support this operation list local_attachment_paths in /version capabilities. */
+    GetItemChildrenRequest: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "get_item_children";
+      item_key: components["schemas"]["ItemKey"];
+    };
+    FindItemsByTitleSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "find_items_by_title";
+      details?: {
+        query: string;
+        match_count: number;
+        items: components["schemas"]["TitleMatch"][];
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "find_items_by_title";
+    };
+    AttachmentChild: {
+      item_key: components["schemas"]["ItemKey"];
+      item_id: number;
+      title: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      child_type: "attachment";
+      content_type: string;
+      /** @description Zotero.Attachments.LINK_MODE_*: 0 imported file, 1 imported URL, 2 linked file, 3 linked URL, 4 embedded image. */
+      link_mode: number;
+      file: components["schemas"]["AttachmentFile"];
+    };
+    NoteChild: {
+      item_key: components["schemas"]["ItemKey"];
+      item_id: number;
+      title: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      child_type: "note";
+    };
+    GetItemChildrenSuccess: components["schemas"]["SuccessEnvelope"] & {
+      /** @constant */
+      operation?: "get_item_children";
+      details?: {
+        parent_item_key: components["schemas"]["ItemKey"];
+        child_count: number;
+        children: (components["schemas"]["AttachmentChild"] | components["schemas"]["NoteChild"])[];
+      };
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      operation: "get_item_children";
+    };
+    /** @description The attachment file exists on the machine that runs Zotero. */
+    AttachmentFileOnDisk: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      state: "on_disk";
+      /** @description The absolute path of the file on the machine that runs Zotero. */
+      path: string;
+    };
+    /** @description The attachment is a file attachment, but its file is not on disk. */
+    AttachmentFileMissing: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      state: "missing";
+    };
+    /** @description The attachment is a linked URL (link_mode 3), which has no file. */
+    AttachmentFileLinkedUrl: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      state: "linked_url";
+    };
+    /** @description Where the file of an attachment is, as one of three states. */
+    AttachmentFile:
+      | components["schemas"]["AttachmentFileOnDisk"]
+      | components["schemas"]["AttachmentFileMissing"]
+      | components["schemas"]["AttachmentFileLinkedUrl"];
+    TitleMatch: {
+      item_key: components["schemas"]["ItemKey"];
+      item_id: number;
+      item_type: string;
+      title: string;
+      date: string;
     };
   };
   responses: never;

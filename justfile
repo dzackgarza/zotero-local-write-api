@@ -321,6 +321,15 @@ import-from-url-live:
     ZOTERO_LIBRARY_ID="${ZOTERO_LIBRARY_ID:-0}" \
     bun run import-from-url:live
 
+# Live proof of find_items_by_title and get_item_children: a stored PDF child's
+# answered path exists on this machine's disk. MUTATING; the book it creates is
+# trashed afterwards.
+[doc("Live proof of find_items_by_title and get_item_children (MUTATING)")]
+item-lookup-live:
+    ZOTERO_LOCAL_BASE_URL="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}" \
+    ZOTERO_LIBRARY_ID="${ZOTERO_LIBRARY_ID:-0}" \
+    bun run item-lookup:live
+
 # Stateful create/note/collection/tag/merge/restore/trash proof with Zotero
 # read-back. Safe against a real library: unique-prefixed objects, cleanup in
 # teardown. An unreachable Zotero fails the suite.
@@ -328,8 +337,8 @@ import-from-url-live:
 schemathesis-stateful-live:
     uv run pytest tests/schemathesis/test_stateful.py -q
 
-# Full live API proof: generic fuzz, stateful workflow, client wrapper, smoke.
-api-live: schemathesis-fuzz-live schemathesis-stateful-live client-live smoke-live
+# Full live API proof: generic fuzz, stateful workflow, client wrapper, lookups, smoke.
+api-live: schemathesis-fuzz-live schemathesis-stateful-live client-live item-lookup-live smoke-live
 
 # Run all checks (typecheck + lint)
 check: typecheck lint

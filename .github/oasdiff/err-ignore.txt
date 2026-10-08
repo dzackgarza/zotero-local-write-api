@@ -1,0 +1,1 @@
+POST /write added `#/components/schemas/FindItemsByTitleSuccess, #/components/schemas/GetItemChildrenSuccess` to the response body `oneOf` list for the response status `200`

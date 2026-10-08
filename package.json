@@ -21,7 +21,8 @@
     "openapi:contract": "bun test tests/openapi-contract.test.ts",
     "openapi:check": "bun run openapi:lint && bun run openapi:check-generated && bun run openapi:contract",
     "client:live": "bun test ./tests/live/client.live.ts",
-    "import-from-url:live": "bun test --timeout 180000 ./tests/live/import-methods.live.ts ./tests/live/import-fallback.live.ts ./tests/live/resolve-url.live.ts ./tests/live/sync-hold.live.ts"
+    "import-from-url:live": "bun test --timeout 180000 ./tests/live/import-methods.live.ts ./tests/live/import-fallback.live.ts ./tests/live/resolve-url.live.ts ./tests/live/sync-hold.live.ts",
+    "item-lookup:live": "bun test ./tests/live/item-lookup.live.ts"
   },
   "type": "module",
   "dependencies": {
