@@ -2102,7 +2102,7 @@ components:
         local_path:
           type:
             - string
-            - "null"
+            - 'null'
           description: The absolute path of the attachment's file on the machine that runs Zotero; null for a linked URL and for a file that is missing.
     NoteChild:
       type: object
