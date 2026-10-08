@@ -85,9 +85,12 @@ async function strayPdfs(source: string): Promise<string[]> {
     "recently added items",
   );
   return items
-    .filter((item) => item.data.itemType === "attachment" &&
+    .filter(
+      (item) =>
+        item.data.itemType === "attachment" &&
         item.data.url !== undefined &&
-        item.data.url.includes(source))
+        item.data.url.includes(source),
+    )
     .map((item) => item.key);
 }
 
