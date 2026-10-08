@@ -218,15 +218,8 @@ test("import_by_identifier of an arXiv ID the library holds answers its one entr
 // knows a work by its DOI, its ISBN, or its URL with its title; 10.5555 is the DOI test
 // prefix.
 test("import_bibtex of an entry the library holds answers its one entry", async () => {
-  const bibtex = [
-    `@article{held${uid},`,
-    `  title = {bibtex-held-${uid}},`,
-    `  author = {Fixture, Ada},`,
-    `  journal = {Journal of Fixtures},`,
-    `  year = {2020},`,
-    `  doi = {10.5555/lw-held-${uid}}`,
-    `}`,
-  ].join("\n");
+  const record = await Bun.file(new URL("../fixtures/held-record.bib", import.meta.url)).text();
+  const bibtex = record.replaceAll("__UID__", uid);
   const first = await session.importBibtex(bibtex);
   expect(first.item_keys).toEqual([first.item_key]);
   expect(first.existing).toEqual([false]);
@@ -243,15 +236,9 @@ test("import_bibtex stores the PDF that the entry's file field names", async () 
   const pdfPath = join(tmpdir(), `lw-bibtex-file-${uid}.pdf`);
   await Bun.write(pdfPath, await (await fetch(pdfUrl)).arrayBuffer());
   try {
+    const record = await Bun.file(new URL("../fixtures/file-record.bib", import.meta.url)).text();
     const data = await session.importBibtex(
-      [
-        `@article{file${uid},`,
-        `  title = {bibtex-file-${uid}},`,
-        `  author = {Fixture, Ada},`,
-        `  year = {2020},`,
-        `  file = {Fixture PDF:${pdfPath}:application/pdf}`,
-        `}`,
-      ].join("\n"),
+      record.replaceAll("__UID__", uid).replaceAll("__PDF_PATH__", pdfPath),
     );
     expect(data.existing).toEqual([false]);
     expect(data.details.attachment_failures).toEqual([]);
