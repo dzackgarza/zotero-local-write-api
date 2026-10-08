@@ -1,10 +1,6 @@
 import { userLibraryID } from "./library";
 import { normalizeText } from "./metadata-services";
-import { type ItemFieldsApi, type TranslatorItemJSON } from "./zotero-api";
-
-// A creator as Zotero's duplicate finder compares it; an absent firstName is a creator
-// known by one name.
-type DuplicateCreator = { lastName: string; firstName?: string };
+import { type CreatorJSON, type ItemFieldsApi, type TranslatorItemJSON } from "./zotero-api";
 
 // The fields Zotero's duplicate finder compares; undefined is a field the item lacks.
 export type DuplicateKeys = {
@@ -14,7 +10,7 @@ export type DuplicateKeys = {
   ISBN?: string;
   url?: string;
   date?: string;
-  creators: DuplicateCreator[];
+  creators?: CreatorJSON[];
 };
 type ItemValueRow = { itemID: number; value: string };
 
@@ -26,10 +22,7 @@ export function duplicateKeysFromJSON(json: TranslatorItemJSON): DuplicateKeys {
     ISBN: json.ISBN,
     url: json.url,
     date: json.date,
-    creators: (json.creators ?? []).map((creator) => ({
-      lastName: creator.lastName ?? creator.name ?? "",
-      firstName: creator.firstName,
-    })),
+    creators: json.creators,
   };
 }
 
@@ -121,58 +114,107 @@ async function urlAndTitleMatches(keys: DuplicateKeys): Promise<number[]> {
   return matches;
 }
 
+// A creator as the title rule compares it: the normalized last name, and the first
+// initial, which is "" for a single-field creator, as in `_findDuplicates`.
+type TitleRuleCreator = { lastName: string; firstInitial: string };
+
 // What the title rule of Zotero's duplicate finder compares of one item, read as
 // `_findDuplicates` reads it: a DOI only when it starts "10.", an ISBN only of a book, and
 // the year as the first four characters of the stored multipart date, unless "0000".
+// Null is a value the item lacks, which the rule does not compare; creators are null
+// for an item with no creators.
 type TitleRuleKeys = {
   DOI: string | null;
   ISBN: string | null;
   year: number | null;
-  creators: { lastName: string; firstInitial: string }[];
+  creators: TitleRuleCreator[] | null;
 };
 
-function titleRuleKeys(
-  itemType: string,
-  doi: string,
-  isbn: string,
-  multipartDate: string,
-  creators: DuplicateCreator[],
-): TitleRuleKeys {
+// Zotero stores an empty field as "", and item JSON omits it; both are a missing value.
+function titleRuleDOI(doi: string | undefined): string | null {
+  if (doi === undefined) {
+    return null;
+  }
   let cleanDOI = doi.trim().toUpperCase();
-  let cleanISBN = itemType === "book" ? Zotero.Utilities.cleanISBN(isbn) : false;
+  return cleanDOI.startsWith("10.") ? cleanDOI : null;
+}
+
+function titleRuleISBN(itemType: string, isbn: string | undefined): string | null {
+  if (itemType !== "book" || isbn === undefined) {
+    return null;
+  }
+  let cleanISBN = Zotero.Utilities.cleanISBN(isbn);
+  return cleanISBN === false || cleanISBN === "" ? null : cleanISBN;
+}
+
+function titleRuleYear(multipartDate: string | undefined): number | null {
+  if (multipartDate === undefined) {
+    return null;
+  }
   let year = multipartDate.slice(0, 4);
-  return {
-    DOI: cleanDOI.startsWith("10.") ? cleanDOI : null,
-    ISBN: cleanISBN === false || cleanISBN === "" ? null : cleanISBN,
-    year: year === "" || year === "0000" ? null : Number(year),
-    creators: creators.map((creator) => ({
-      lastName: normalizeText(creator.lastName),
-      firstInitial: normalizeText(creator.firstName ?? "").charAt(0),
-    })),
-  };
+  return year === "" || year === "0000" ? null : Number(year);
+}
+
+function titleRuleCreator(creator: CreatorJSON): TitleRuleCreator {
+  if ("name" in creator) {
+    return { lastName: normalizeText(creator.name), firstInitial: "" };
+  }
+  let firstInitial =
+    creator.firstName === undefined ? "" : normalizeText(creator.firstName).charAt(0);
+  return { lastName: normalizeText(creator.lastName), firstInitial };
+}
+
+function titleRuleCreators(creators: CreatorJSON[] | undefined): TitleRuleCreator[] | null {
+  if (creators === undefined || creators.length === 0) {
+    return null;
+  }
+  return creators.map(titleRuleCreator);
 }
 
 function keysTitleRuleKeys(keys: DuplicateKeys): TitleRuleKeys {
-  return titleRuleKeys(
-    keys.itemType,
-    keys.DOI ?? "",
-    keys.ISBN ?? "",
-    keys.date === undefined ? "" : Zotero.Date.strToMultipart(keys.date),
-    keys.creators,
-  );
+  return {
+    DOI: titleRuleDOI(keys.DOI),
+    ISBN: titleRuleISBN(keys.itemType, keys.ISBN),
+    year: titleRuleYear(
+      keys.date === undefined ? undefined : Zotero.Date.strToMultipart(keys.date),
+    ),
+    creators: titleRuleCreators(keys.creators),
+  };
+}
+
+// A stored creator in fieldMode 1 is a single-field name held as its lastName.
+function itemCreatorJSON(creator: _ZoteroTypes.Item.Creator): CreatorJSON {
+  if (creator.fieldMode === 0) {
+    return { firstName: creator.firstName, lastName: creator.lastName };
+  }
+  return { name: creator.lastName };
 }
 
 function itemTitleRuleKeys(item: Zotero.Item): TitleRuleKeys {
-  return titleRuleKeys(
-    item.itemType,
-    item.getField("DOI"),
-    item.getField("ISBN"),
-    item.getField("date", true, true),
-    item.getCreators().map((creator) => ({
-      lastName: creator.lastName,
-      firstName: creator.fieldMode === 0 ? creator.firstName : undefined,
-    })),
-  );
+  return {
+    DOI: titleRuleDOI(item.getField("DOI")),
+    ISBN: titleRuleISBN(item.itemType, item.getField("ISBN")),
+    year: titleRuleYear(item.getField("date", true, true)),
+    creators: titleRuleCreators(item.getCreators().map(itemCreatorJSON)),
+  };
+}
+
+// Whether both items have the value and the values differ.
+function bothPresentAndDifferent(a: string | null, b: string | null): boolean {
+  return a !== null && b !== null && a !== b;
+}
+
+// Whether both items have a year and the years are more than one apart.
+function yearsApart(a: number | null, b: number | null): boolean {
+  return a !== null && b !== null && Math.abs(a - b) > 1;
+}
+
+// Whether both items have no creators, or share one by last name and first initial.
+function creatorsAgree(a: TitleRuleCreator[] | null, b: TitleRuleCreator[] | null): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  return a.some((ac) => b.some((bc) => ac.lastName === bc.lastName && ac.firstInitial === bc.firstInitial));
 }
 
 // Two items with equal normalized titles are one work unless both have DOIs that differ,
@@ -182,27 +224,29 @@ function itemTitleRuleKeys(item: Zotero.Item): TitleRuleKeys {
 // (chrome/content/zotero/xpcom/duplicates.js), which compares only items already in a
 // library and so cannot be called for one unsaved item.
 function sameWorkByTitle(a: TitleRuleKeys, b: TitleRuleKeys): boolean {
-  if (a.DOI !== null && b.DOI !== null && a.DOI !== b.DOI) {
+  if (
+    bothPresentAndDifferent(a.DOI, b.DOI) ||
+    bothPresentAndDifferent(a.ISBN, b.ISBN) ||
+    yearsApart(a.year, b.year)
+  ) {
     return false;
   }
-  if (a.ISBN !== null && b.ISBN !== null && a.ISBN !== b.ISBN) {
-    return false;
+  return creatorsAgree(a.creators, b.creators);
+}
+
+// The fields of every item type that map to the base field. Zotero maps item type fields
+// to "title", so false, which says no field maps to it, is a broken Zotero schema.
+function requireMappedFieldIDs(baseField: string): number[] {
+  let fieldIDs = (Zotero.ItemFields as ItemFieldsApi).getTypeFieldsFromBase(baseField);
+  if (fieldIDs === false) {
+    throw new Error("Zotero maps no item type field to " + baseField);
   }
-  if (a.year !== null && b.year !== null && Math.abs(a.year - b.year) > 1) {
-    return false;
-  }
-  if (a.creators.length === 0 || b.creators.length === 0) {
-    return a.creators.length === b.creators.length;
-  }
-  return a.creators.some((ac) =>
-    b.creators.some((bc) => ac.lastName === bc.lastName && ac.firstInitial === bc.firstInitial),
-  );
+  return fieldIDs;
 }
 
 // The title, and every field mapped to it, of each live regular item of the user library.
 async function titleRows(): Promise<ItemValueRow[]> {
-  let mappedIDs = (Zotero.ItemFields as ItemFieldsApi).getTypeFieldsFromBase("title");
-  let titleIDs = [requireFieldID("title"), ...(mappedIDs === false ? [] : mappedIDs)];
+  let titleIDs = [requireFieldID("title"), ...requireMappedFieldIDs("title")];
   let sql =
     "SELECT itemID, value FROM items JOIN itemData USING (itemID) " +
     "JOIN itemDataValues USING (valueID) " +
@@ -223,11 +267,19 @@ async function titleRows(): Promise<ItemValueRow[]> {
 }
 
 async function titleCreatorYearMatches(keys: DuplicateKeys): Promise<number[]> {
-  let title = normalizeText(keys.title ?? "");
+  // A work with no title, or one that normalizes to nothing, has no title to compare.
+  if (keys.title === undefined) {
+    return [];
+  }
+  let title = normalizeText(keys.title);
   if (title === "") {
     return [];
   }
-  let wanted = keysTitleRuleKeys(keys);
+  return sameWorkTitleMatches(title, keysTitleRuleKeys(keys));
+}
+
+// The items whose normalized title is the given one and that are the wanted work.
+async function sameWorkTitleMatches(title: string, wanted: TitleRuleKeys): Promise<number[]> {
   let matches: number[] = [];
   for (let row of await titleRows()) {
     if (normalizeText(String(row.value)) !== title) {

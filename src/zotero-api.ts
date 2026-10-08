@@ -52,8 +52,11 @@ export type TranslatorItemJSON = JsonPayload & {
   url?: string;
   DOI?: string;
   ISBN?: string;
-  creators?: { firstName?: string; lastName?: string; name?: string }[];
+  creators?: CreatorJSON[];
 };
+// A creator of Zotero's item JSON: a two-field name, whose absent firstName is a
+// surname only, or a single-field name (creators.js `cleanData`).
+export type CreatorJSON = { firstName?: string; lastName: string } | { name: string };
 // A detected web translator, as Zotero.Translate.Web#getTranslators resolves it.
 // itemType is detectWeb's answer: an item type, or "multiple" for a choice of
 // items (translate.js `complete`, detect state).

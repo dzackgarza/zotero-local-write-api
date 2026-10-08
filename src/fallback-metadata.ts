@@ -80,8 +80,6 @@ function fallbackDuplicateKeys(url: string, fallback: FallbackMetadata): Duplica
   return {
     itemType: "document",
     title: fallback.title,
-    DOI: "",
-    ISBN: "",
     url,
     date: fallback.year,
     creators: fallback.creators,
