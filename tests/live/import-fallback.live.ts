@@ -18,11 +18,14 @@ import { liveSetting } from "./settings";
 const session = openImportSession();
 const { uid, server } = session;
 
-const FALLBACK_METADATA = {
-  title: `lw-fallback-${uid}`,
-  creators: [{ first_name: "Ada", last_name: "Fallbackauthor" }],
-  year: "2019",
-};
+// One title per case: a library's duplicate-merge add-on merges items that share a title.
+function fallbackMetadata(name: string) {
+  return {
+    title: `lw-fallback-${name}-${uid}`,
+    creators: [{ first_name: "Ada", last_name: "Fallbackauthor" }],
+    year: "2019",
+  };
+}
 
 type Remediation = {
   message: string;
@@ -49,11 +52,12 @@ test("a URL that no method identifies returns the typed error and creates nothin
 
 test("an unidentified page with fallback_metadata becomes a citable item tagged for review", async () => {
   const url = server.servePage(`/plain-fallback-${uid}`, "<title>Nothing here</title>");
-  const data = await session.importFromUrl(url, { fallback_metadata: FALLBACK_METADATA });
+  const metadata = fallbackMetadata("page");
+  const data = await session.importFromUrl(url, { fallback_metadata: metadata });
   expect(data.method).toBe("caller_metadata");
   expect(data.existing).toBe(false);
   const item = await readItem(data.item_key);
-  expect(item.title).toBe(FALLBACK_METADATA.title);
+  expect(item.title).toBe(metadata.title);
   expect(item.creators).toEqual([
     { creatorType: "author", firstName: "Ada", lastName: "Fallbackauthor" },
   ]);
@@ -63,14 +67,16 @@ test("an unidentified page with fallback_metadata becomes a citable item tagged 
   expect(data.citation_key).toBe(item.citationKey);
   expect(data.citation_key).not.toBe("");
 
-  const again = await session.importFromUrl(url, { fallback_metadata: FALLBACK_METADATA });
+  const again = await session.importFromUrl(url, { fallback_metadata: metadata });
   expect(again.existing).toBe(true);
   expect(again.item_key).toBe(data.item_key);
 });
 
 test("an unidentified PDF with fallback_metadata is stored under the new item", async () => {
   const url = server.servePdf(`/unidentified-${uid}.pdf`, `lw fixture body ${uid}`);
-  const data = await session.importFromUrl(url, { fallback_metadata: FALLBACK_METADATA });
+  const data = await session.importFromUrl(url, {
+    fallback_metadata: fallbackMetadata("unidentified"),
+  });
   expect(data.method).toBe("caller_metadata");
   await expectStoredPdf(data.item_key);
 });
@@ -81,7 +87,7 @@ test("a PDF whose server streams it for longer than 30 s is imported", async () 
     chunks: 7,
     secondsBetweenChunks: 5,
   });
-  const data = await session.importFromUrl(url, { fallback_metadata: FALLBACK_METADATA });
+  const data = await session.importFromUrl(url, { fallback_metadata: fallbackMetadata("slow") });
   expect(data.method).toBe("caller_metadata");
   await expectStoredPdf(data.item_key);
 });
@@ -89,7 +95,7 @@ test("a PDF whose server streams it for longer than 30 s is imported", async () 
 test("a PDF source is downloaded once, for recognition and storage together", async () => {
   const path = `/once-${uid}.pdf`;
   const url = server.servePdf(path, `lw once fixture body ${uid}`);
-  const data = await session.importFromUrl(url, { fallback_metadata: FALLBACK_METADATA });
+  const data = await session.importFromUrl(url, { fallback_metadata: fallbackMetadata("once") });
   expect(data.method).toBe("caller_metadata");
   await expectStoredPdf(data.item_key);
   expect(server.requestCount(path)).toBe(1);
@@ -98,7 +104,7 @@ test("a PDF source is downloaded once, for recognition and storage together", as
 test("fallback_metadata without a year is rejected and creates nothing", async () => {
   const before = await libraryItemCount();
   const url = server.servePage(`/plain-noyear-${uid}`, "<title>Nothing here</title>");
-  const { title, creators } = FALLBACK_METADATA;
+  const { title, creators } = fallbackMetadata("noyear");
   // Sent as raw JSON: the typed client would refuse the missing year at compile time.
   const response = await fetch(`${liveSetting("ZOTERO_LOCAL_BASE_URL")}/write`, {
     method: "POST",
