@@ -225,6 +225,14 @@ export function renamableAttachment(attachment: Zotero.Item): RenamableAttachmen
   return attachment as Zotero.Item & RenamableAttachment;
 }
 
+// Gecko writes preferences to prefs.js only at a clean quit or on request, so a pref set
+// before a process stop is lost. savePrefFile(null) writes the profile's prefs.js
+// (modules/libpref/nsIPrefService.idl); the generated Gecko types omit the null.
+type PrefFileWriter = { savePrefFile(file: null): void };
+export function savePrefFile(): void {
+  (Services.prefs as typeof Services.prefs & PrefFileWriter).savePrefFile(null);
+}
+
 // zotero-types omits the Zotero.HTTP exception constructors. Models zotero/zotero
 // chrome/content/zotero/xpcom/http.js: request() rejects with one of these when the source
 // answers with a failure status, cannot be reached, times out, or fails a certificate check.
