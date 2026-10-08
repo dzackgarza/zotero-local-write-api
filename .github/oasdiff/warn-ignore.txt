@@ -1,3 +1,2 @@
 GET /version added the new `title_search` enum value to the `capabilities/items/` response property for the response status `200`
 GET /version added the new `local_attachment_paths` enum value to the `capabilities/items/` response property for the response status `200`
-POST /write added `#/components/schemas/FindItemsByTitleSuccess, #/components/schemas/GetItemChildrenSuccess` to the response body `oneOf` list for the response status `200`
