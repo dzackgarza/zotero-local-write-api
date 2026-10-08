@@ -108,6 +108,7 @@ type ZoteroSyncRunnerApi = {
   sync(options: { background: boolean }): Promise<false | undefined>;
   readonly syncInProgress: boolean;
   delayIndefinite(): () => void;
+  getAPIClient(): ZoteroAPIClient;
 };
 // zotero-types declares Zotero.Translators as `any`; same reason as ZoteroTranslateApi.
 // Models zotero/zotero chrome/content/zotero/xpcom/translation/translators.js: init()
@@ -159,13 +160,68 @@ export function createImportTranslator(): ImportTranslator {
 // zotero-types declares Zotero.ItemFields as `any`.
 // Models zotero/zotero chrome/content/zotero/xpcom/data/itemFields.js.
 export type ItemFieldsApi = { getID(field: string): number | false };
-// zotero-types does not declare Zotero.RecognizeDocument.
-// Models zotero/zotero chrome/content/zotero/xpcom/recognizeDocument.js.
-type RecognizeDocumentApi = {
-  recognizeItems(items: Zotero.Item[]): Promise<void>;
+// The text of a PDF as Zotero's PDF worker extracts it for the recognizer service
+// (pdfWorker/manager.js `getRecognizerData`). Each page is its width, its height and its
+// content, nested arrays of words and positions that only the service reads.
+type RecognizerPageContent = readonly JsonPayload[keyof JsonPayload][];
+export type RecognizerData = JsonPayload & {
+  pages: [number, number, RecognizerPageContent][];
+  fileName?: string;
 };
-export function recognizeDocument(): RecognizeDocumentApi {
-  return (Zotero as typeof Zotero & { RecognizeDocument: RecognizeDocumentApi }).RecognizeDocument;
+// zotero-types declares Zotero.PDFWorker as `any`.
+// Models zotero/zotero chrome/content/zotero/xpcom/pdfWorker/manager.js.
+type PDFWorkerApi = {
+  getRecognizerData(itemID: number, isPriority: boolean): Promise<RecognizerData>;
+};
+export function pdfWorker(): PDFWorkerApi {
+  return Zotero.PDFWorker as PDFWorkerApi;
+}
+
+// The client of Zotero's own web services (sync/syncAPIClient.js `makeRequest`): it
+// rejects with a Zotero.HTTP exception when the service answers with a status outside
+// successCodes or cannot be reached.
+type ZoteroAPIClient = {
+  makeRequest(
+    method: "POST",
+    url: string,
+    options: {
+      successCodes: number[];
+      headers: Record<string, string>;
+      body: string;
+      noAPIKey: boolean;
+    },
+  ): Promise<XMLHttpRequest>;
+};
+
+// The base URL of Zotero's web services, from chrome/content/zotero/config.mjs.
+// ChromeUtils.importESModule is typed `any`; this is its one use.
+export function zoteroServicesUrl(): string {
+  let config = ChromeUtils.importESModule("resource://zotero/config.mjs") as {
+    ZOTERO_CONFIG: { SERVICES_URL: string };
+  };
+  return config.ZOTERO_CONFIG.SERVICES_URL;
+}
+
+// zotero-types models the attachment rename calls with the signatures of Zotero 6, and
+// omits the rest. Models zotero/zotero chrome/content/zotero/xpcom/attachments.js and
+// data/item.js as of Zotero 8.
+type AttachmentRenameApi = {
+  shouldAutoRenameAttachment(attachment: Zotero.Item): boolean;
+  getFileBaseNameFromItem(item: Zotero.Item, options: { attachmentTitle: string }): string;
+  getCorrectFileExtension(attachment: Zotero.Item): string;
+};
+type RenamableAttachment = {
+  renameAttachmentFile(
+    newName: string,
+    options: { overwrite: boolean; unique: boolean },
+  ): Promise<boolean | -1 | -2>;
+  setAutoAttachmentTitle(): void;
+};
+export function attachmentRenaming(): AttachmentRenameApi {
+  return Zotero.Attachments as typeof Zotero.Attachments & AttachmentRenameApi;
+}
+export function renamableAttachment(attachment: Zotero.Item): RenamableAttachment {
+  return attachment as Zotero.Item & RenamableAttachment;
 }
 
 // zotero-types omits the Zotero.HTTP exception constructors. Models zotero/zotero

@@ -22,25 +22,6 @@ export function duplicateKeysFromJSON(json: TranslatorItemJSON): DuplicateKeys {
   };
 }
 
-// Zotero stores a field an item lacks as "".
-function storedField(
-  item: Zotero.Item,
-  field: "title" | "DOI" | "ISBN" | "url",
-): string | undefined {
-  let value = item.getField(field);
-  return value === "" ? undefined : value;
-}
-
-export function duplicateKeysFromItem(item: Zotero.Item): DuplicateKeys {
-  return {
-    itemType: item.itemType,
-    title: storedField(item, "title"),
-    DOI: storedField(item, "DOI"),
-    ISBN: storedField(item, "ISBN"),
-    url: storedField(item, "url"),
-  };
-}
-
 function requireFieldID(field: string): number {
   let fieldID = (Zotero.ItemFields as ItemFieldsApi).getID(field);
   if (fieldID === false) {
@@ -133,19 +114,13 @@ async function urlAndTitleMatches(keys: DuplicateKeys): Promise<number[]> {
 // duplicate finder (chrome/content/zotero/xpcom/duplicates.js): equal DOI, or
 // equal ISBN between books. A URL counts only together with an equal title,
 // because one landing URL can serve different papers over time.
-export async function findExistingItem(
-  keys: DuplicateKeys,
-  excludeID: number | null,
-): Promise<Zotero.Item | null> {
+export async function findExistingItem(keys: DuplicateKeys): Promise<Zotero.Item | null> {
   let matchIDs = [
     ...(await doiMatches(keys)),
     ...(await isbnMatches(keys)),
     ...(await urlAndTitleMatches(keys)),
   ];
   for (let itemID of [...new Set(matchIDs)].sort((a, b) => a - b)) {
-    if (itemID === excludeID) {
-      continue;
-    }
     let item = await Zotero.Items.getAsync(itemID);
     if (item !== false && item.isRegularItem()) {
       return item;

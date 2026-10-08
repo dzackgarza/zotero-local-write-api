@@ -1,5 +1,5 @@
 import { identifyPage } from "./identify-page";
-import { withRecognizedParent } from "./pdf-recognition";
+import { withRecognizedPdf } from "./pdf-recognition";
 import { type JsonPayload, type RequestData, successResult } from "./responses";
 import { fetchSource, requireHttpUrl, withSourceDirectory } from "./source-fetch";
 import { identifierText, identifyByIdentifier } from "./source-methods";
@@ -8,7 +8,6 @@ import {
   type DownloadedPdf,
   type FetchedSource,
   type Identification,
-  type MethodResult,
   recordAttempt,
   type SourceMethod,
   SourceNotIdentifiedError,
@@ -18,14 +17,12 @@ import { type TranslatorItemJSON, type WebTranslatorInfo } from "./zotero-api";
 
 // ── resolve_url ─────────────────────────────────────────────────────
 // import_from_url without the save: the same fetch and the same methods in the
-// same order, answered with the identified work as CSL-JSON. The recognizer
-// can only save, so its parent item is converted and then erased.
+// same order, answered with the identified work as CSL-JSON.
 
-// Zotero.Utilities.Item.itemToCSLJSON accepts a Zotero.Item or translator item
-// JSON; zotero-types does not declare it.
+// Zotero.Utilities.Item.itemToCSLJSON accepts translator item JSON; zotero-types does not declare it.
 // Models zotero/utilities utilities_item.js `itemToCSLJSON`.
 type CslItem = JsonPayload & { type: string };
-type ItemUtilitiesApi = { itemToCSLJSON(item: Zotero.Item | TranslatorItemJSON): CslItem };
+type ItemUtilitiesApi = { itemToCSLJSON(item: TranslatorItemJSON): CslItem };
 type Resolution = {
   csl: CslItem;
   itemType: string;
@@ -33,7 +30,7 @@ type Resolution = {
   translator: WebTranslatorInfo | null;
 };
 
-function itemToCsl(item: Zotero.Item | TranslatorItemJSON): CslItem {
+function itemToCsl(item: TranslatorItemJSON): CslItem {
   let utilities = Zotero.Utilities as typeof Zotero.Utilities & { Item: ItemUtilitiesApi };
   return utilities.Item.itemToCSLJSON(item);
 }
@@ -49,36 +46,18 @@ function resolveIdentification(
   };
 }
 
-async function recognizeWithoutSaving(
-  pdf: DownloadedPdf,
-): Promise<MethodResult<{ csl: CslItem; itemType: string; message: string }>> {
-  return withRecognizedParent(pdf, async ({ parent, pdf }) => {
-    try {
-      let csl = itemToCsl(parent);
-      // The CSL id is the URI of the parent, which is erased below.
-      delete csl.id;
-      let message = parent.getField("title");
-      return { csl, itemType: parent.itemType, message };
-    } finally {
-      await pdf.eraseTx();
-      await parent.eraseTx();
-    }
-  });
-}
-
 async function resolveByRecognition(
   pdf: DownloadedPdf,
   attempts: Attempt[],
 ): Promise<Resolution | null> {
-  let recognized = recordAttempt(attempts, "pdf_recognition", await recognizeWithoutSaving(pdf));
+  let recognized = recordAttempt(
+    attempts,
+    "pdf_recognition",
+    await withRecognizedPdf(pdf, async ({ identification }) => identification),
+  );
   return recognized === null
     ? null
-    : {
-        csl: recognized.csl,
-        itemType: recognized.itemType,
-        method: "pdf_recognition",
-        translator: null,
-      };
+    : resolveIdentification({ ...recognized, method: "pdf_recognition" });
 }
 
 async function resolvePdfSource(
