@@ -8,6 +8,7 @@ import {
 import { userLibraryID } from "./library";
 import {
   answered,
+  type DownloadedPdf,
   type ImportOutcome,
   type MethodResult,
   miss,
@@ -15,7 +16,7 @@ import {
   type ServiceAnswer,
   serviceFailure,
 } from "./source-results";
-import { getSyncRunner, isHttpFailure, recognizeDocument } from "./zotero-api";
+import { getSyncRunner, recognizeDocument } from "./zotero-api";
 
 type RecognizedParent = { parent: Zotero.Item; pdf: Zotero.Item };
 
@@ -27,12 +28,12 @@ type RecognizedParent = { parent: Zotero.Item; pdf: Zotero.Item };
 const recognition = new Mutex();
 
 export function withRecognizedParent<T>(
-  finalUrl: string,
+  pdf: DownloadedPdf,
   use: (recognized: RecognizedParent) => Promise<T>,
 ): Promise<MethodResult<T>> {
   return recognition.runExclusive(() =>
     heldFromSync(async () => {
-      let recognized = await recognizeParent(finalUrl);
+      let recognized = await recognizeParent(pdf);
       if (recognized.outcome !== "identified") {
         return recognized;
       }
@@ -75,8 +76,8 @@ export function findExistingOutsideRecognition(keys: DuplicateKeys): Promise<Zot
 // in the text, or from Zotero's recognizer service, and moves the PDF under it.
 // The recognizer logs its own errors instead of throwing, so a missing parent
 // is the only failure signal; the parentless PDF is then erased.
-async function recognizeParent(finalUrl: string): Promise<MethodResult<RecognizedParent>> {
-  let pdf = await downloadSourcePdf(finalUrl);
+async function recognizeParent(source: DownloadedPdf): Promise<MethodResult<RecognizedParent>> {
+  let pdf = await storeSourcePdf(source);
   if (pdf.outcome === "failed") {
     return pdf;
   }
@@ -93,28 +94,54 @@ async function recognizeParent(finalUrl: string): Promise<MethodResult<Recognize
   return { outcome: "identified", found: { parent, pdf: pdf.value } };
 }
 
-// The source's server answers the download with a failure, or with a file that is
-// not a PDF (attachments.js `downloadFile`, `_enforceFileType`); any other error propagates.
-async function downloadSourcePdf(finalUrl: string): Promise<ServiceAnswer<Zotero.Item>> {
+// The downloaded file is not a PDF (attachments.js `_enforceFileType`); any other error
+// propagates.
+async function storeSourcePdf(pdf: DownloadedPdf): Promise<ServiceAnswer<Zotero.Item>> {
   try {
-    return answered(await storePdf(finalUrl, null));
+    return answered(await storePdf(pdf, null));
   } catch (error) {
-    if (!isHttpFailure(error) && !(error instanceof Zotero.Attachments.InvalidPDFException)) {
+    if (!(error instanceof Zotero.Attachments.InvalidPDFException)) {
       throw error;
     }
     return serviceFailure(error.message);
   }
 }
 
-// Zotero downloads the URL and stores the file in the library, as the
-// Connector does for a PDF it saves.
-export async function storePdf(url: string, parentItemID: number | null): Promise<Zotero.Item> {
-  return Zotero.Attachments.importFromURL({
-    libraryID: userLibraryID(),
-    url,
-    contentType: "application/pdf",
-    ...(parentItemID === null ? {} : { parentItemID }),
-  });
+// The downloaded PDF is stored as Zotero stores a PDF that it downloads itself
+// (attachments.js `importFromURL`, `externalHandlerImport`): the file must be a PDF
+// (`_enforceFileType`), it is copied under the URL's file name into a temporary storage
+// directory, and that directory becomes the storage directory of an imported-URL
+// attachment (`createURLAttachmentFromTemporaryStorageDirectory`).
+export async function storePdf(
+  pdf: DownloadedPdf,
+  parentItemID: number | null,
+): Promise<Zotero.Item> {
+  await requirePdfFile(pdf.file);
+  let filename = Zotero.Attachments._getFileNameFromURL(pdf.finalUrl, "application/pdf");
+  let directory = (await Zotero.Attachments.createTemporaryStorageDirectory()).path;
+  try {
+    await IOUtils.copy(pdf.file, PathUtils.join(directory, filename));
+    return await Zotero.Attachments.createURLAttachmentFromTemporaryStorageDirectory({
+      directory,
+      libraryID: userLibraryID(),
+      filename,
+      url: pdf.finalUrl,
+      contentType: "application/pdf",
+      ...(parentItemID === null ? {} : { parentItemID }),
+    });
+  } catch (error) {
+    await IOUtils.remove(directory, { recursive: true, ignoreAbsent: true });
+    throw error;
+  }
+}
+
+// attachments.js `_enforceFileType`: the first 1000 bytes of the file sniff as a PDF.
+// Latin-1 maps each byte to one character, as the sniffer's byte signatures expect.
+async function requirePdfFile(file: string): Promise<void> {
+  let sample = new TextDecoder("latin1").decode(await IOUtils.read(file, { maxBytes: 1000 }));
+  if (Zotero.MIME.sniffForMIMEType(sample) !== "application/pdf") {
+    throw new Zotero.Attachments.InvalidPDFException();
+  }
 }
 
 export function hasStoredPdf(item: Zotero.Item): boolean {
@@ -126,10 +153,10 @@ export function hasStoredPdf(item: Zotero.Item): boolean {
 type RecognizedImport = Omit<ImportOutcome, "method"> & { message: string };
 
 export async function recognizePdf(
-  finalUrl: string,
+  pdf: DownloadedPdf,
   target: SaveTarget,
 ): Promise<MethodResult<RecognizedImport>> {
-  return withRecognizedParent(finalUrl, (recognized) => fileRecognized(recognized, target));
+  return withRecognizedParent(pdf, (recognized) => fileRecognized(recognized, target));
 }
 
 // An existing item is the library's own: the recognized copy and its PDF are

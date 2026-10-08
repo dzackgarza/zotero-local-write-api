@@ -63,43 +63,55 @@ export function requireHttpUrl(value: unknown): string {
 // of a new PDF) succeeds; Zotero.HTTP.request limits the whole transfer to 30 s. An HTML page
 // is parsed and its meta refresh followed as Zotero.HTTP.request does for a document
 // (http.js `_requestInternal`: at most 3 meta redirects; utilities_internal.js
-// `blobToHTMLDocument`).
-export function fetchSource(url: string): Promise<FetchedSource> {
-  return fetchFollowingMetaRefresh(url, 0);
+// `blobToHTMLDocument`). The body is saved in `directory`, where a PDF source's file stays
+// for recognition and storage; see withSourceDirectory.
+export function fetchSource(url: string, directory: string): Promise<FetchedSource> {
+  return fetchFollowingMetaRefresh(url, directory, 0);
+}
+
+// A new directory in Zotero's temp directory for the sources that `use` fetches. It is
+// removed with their files when `use` ends.
+export async function withSourceDirectory<T>(use: (directory: string) => Promise<T>): Promise<T> {
+  let directory = await IOUtils.createUniqueDirectory(
+    Zotero.getTempDirectory().path,
+    "local-write-api-source",
+  );
+  try {
+    return await use(directory);
+  } finally {
+    await IOUtils.remove(directory, { recursive: true, ignoreAbsent: true });
+  }
 }
 
 async function fetchFollowingMetaRefresh(
   url: string,
+  directory: string,
   metaRedirects: number,
 ): Promise<FetchedSource> {
-  let path = await sourceTempPath();
-  try {
-    let response = await downloadSource(url, path);
-    return await downloadedSource(response, url, path, metaRedirects);
-  } finally {
-    await IOUtils.remove(path, { ignoreAbsent: true });
-  }
+  let path = await IOUtils.createUniqueFile(directory, "body");
+  let response = await downloadSource(url, path);
+  return downloadedSource(response, url, { directory, path }, metaRedirects);
 }
 
-// The source a download answered, its body read from `path`.
+// The source a download answered, its body saved at `body.path`.
 async function downloadedSource(
   response: Response,
   url: string,
-  path: string,
+  body: { directory: string; path: string },
   metaRedirects: number,
 ): Promise<FetchedSource> {
   let finalUrl = finalResponseUrl(response, url);
   let contentType = response.headers.get("Content-Type");
-  let body = sourceBody(contentType, finalUrl);
-  switch (body) {
+  let kind = sourceBody(contentType, finalUrl);
+  switch (kind) {
     case "pdf":
-      return { kind: "pdf", finalUrl };
+      return { kind: "pdf", finalUrl, file: body.path };
     case "html":
-      return htmlSource(path, finalUrl, metaRedirects);
+      return htmlSource(body, finalUrl, metaRedirects);
     case "unidentified":
       throw sourceNotIdentified(contentType);
     default:
-      return assertNever(body);
+      return assertNever(kind);
   }
 }
 
@@ -112,18 +124,21 @@ function sourceNotIdentified(contentType: string | null): SourceNotIdentifiedErr
 
 // An HTML page, or the source its meta refresh names while fewer than 3 were followed.
 async function htmlSource(
-  path: string,
+  body: { directory: string; path: string },
   finalUrl: string,
   metaRedirects: number,
 ): Promise<FetchedSource> {
   // zotero-types declares blobToHTMLDocument as answering a Document, but the function
   // is async (utilities_internal.js), so its answer is awaited as a promise.
   let page = await Promise.resolve(
-    Zotero.Utilities.Internal.blobToHTMLDocument(new Blob([await IOUtils.read(path)]), finalUrl),
+    Zotero.Utilities.Internal.blobToHTMLDocument(
+      new Blob([await IOUtils.read(body.path)]),
+      finalUrl,
+    ),
   );
   let refreshUrl = Zotero.HTTP.getHTMLMetaRefreshURL(page, finalUrl);
   if (refreshUrl !== false && metaRedirects < 3) {
-    return fetchFollowingMetaRefresh(refreshUrl, metaRedirects + 1);
+    return fetchFollowingMetaRefresh(refreshUrl, body.directory, metaRedirects + 1);
   }
   return { kind: "html", finalUrl, document: page };
 }
@@ -137,12 +152,6 @@ async function downloadSource(url: string, path: string): Promise<Response> {
     }
     throw new ApiError(502, "Source could not be fetched: " + error.message);
   }
-}
-
-// A new empty file in Zotero's temp directory for the source's body; IOUtils.createUniqueFile
-// picks a name that no other file has.
-function sourceTempPath(): Promise<string> {
-  return IOUtils.createUniqueFile(Zotero.getTempDirectory().path, "local-write-api-source");
 }
 
 // Final URL of a completed download, after redirects. Zotero.HTTP.download answers the
