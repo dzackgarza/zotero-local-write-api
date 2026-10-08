@@ -9,7 +9,7 @@ import {
   type ServiceAnswer,
   serviceFailure,
 } from "./source-results";
-import { attachmentRenaming, getSyncRunner, renamableAttachment } from "./zotero-api";
+import { attachmentRenaming, getSyncRunner, renamableAttachment, savePrefFile } from "./zotero-api";
 
 // What recognition found: the work, not yet saved, and the stored PDF it was read from.
 type RecognizedPdf = { identification: Identification; attachment: Zotero.Item };
@@ -38,6 +38,7 @@ export function withRecognizedPdf<T>(
       }
       let attachment = stored.value;
       Zotero.Prefs.set(HELD_PDF_PREF, attachment.key, true);
+      savePrefFile();
       try {
         let work = await recognizeAttachment(attachment);
         if (work.outcome !== "identified") {
