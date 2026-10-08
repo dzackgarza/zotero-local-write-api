@@ -80,7 +80,7 @@ class ImportSession {
     if (data === undefined || data.operation !== "import_bibtex") {
       throw new Error("import_bibtex returned no import_bibtex success");
     }
-    this.track(data.item_keys);
+    this.track(data.item_keys.filter((_, index) => !data.existing[index]));
     return data;
   }
 

@@ -226,9 +226,11 @@ test("import_bibtex of an entry the library holds answers its one entry", async 
   ].join("\n");
   const first = await session.importBibtex(bibtex);
   expect(first.item_keys).toEqual([first.item_key]);
+  expect(first.existing).toEqual([false]);
   const held = await heldWork(first.item_key, `held-${uid}`);
   expect(held.entries).toEqual([first.item_key]);
   const second = await session.importBibtex(bibtex);
   expect(second.item_keys).toEqual([first.item_key]);
+  expect(second.existing).toEqual([true]);
   expect(await heldWork(first.item_key, `held-${uid}`)).toEqual(held);
 });

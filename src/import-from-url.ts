@@ -20,7 +20,11 @@ import {
   SourceNotIdentifiedError,
   translatorDetails,
 } from "./source-results";
-import { type TranslatorItemJSON, type ZoteroTranslateApi } from "./zotero-api";
+import {
+  type TranslatorItemJSON,
+  type ZoteroItemSaverApi,
+  type ZoteroTranslateApi,
+} from "./zotero-api";
 
 // The Zotero Connector's save mode: the translator's attachments are stored, and an
 // open-access PDF is looked up when the translator gives none. A target that stores no
@@ -54,44 +58,53 @@ function attachmentFailure(
   };
 }
 
-// Saves one translated item, and records each attachment that Zotero could not store.
-async function saveTranslatedItem(
+type SavedWork = Pick<ImportOutcome, "item" | "attachmentFailures">;
+export type FiledWork = SavedWork & Pick<ImportOutcome, "existing">;
+
+// Saves one item with a Zotero ItemSaver, and records each attachment that Zotero could
+// not store.
+export async function saveWithItemSaver(
+  saver: ZoteroItemSaverApi,
   json: TranslatorItemJSON,
-  target: SaveTarget,
-): Promise<{ item: Zotero.Item; attachmentFailures: AttachmentFailure[] }> {
+): Promise<SavedWork> {
   let attachmentFailures: AttachmentFailure[] = [];
-  let items = await connectorItemSaver(target).saveItems(
-    [itemToSave(json, target)],
-    (attachment, progress, error) => {
-      if (progress === false) {
-        attachmentFailures.push(attachmentFailure(attachment, error));
-      }
-    },
-  );
+  let items = await saver.saveItems([json], (attachment, progress, error) => {
+    if (progress === false) {
+      attachmentFailures.push(attachmentFailure(attachment, error));
+    }
+  });
   if (items.length !== 1) {
-    throw new Error("import_from_url saved " + items.length + " items instead of one");
+    throw new Error("Zotero's ItemSaver saved " + items.length + " items instead of one");
   }
   return { item: items[0], attachmentFailures };
 }
 
-export type FiledWork = Pick<ImportOutcome, "item" | "existing" | "attachmentFailures">;
+// Saves a work through the connector's ItemSaver, as the target asks.
+export function saveForTarget(target: SaveTarget) {
+  return (json: TranslatorItemJSON): Promise<SavedWork> =>
+    saveWithItemSaver(connectorItemSaver(target), itemToSave(json, target));
+}
 
 // The library holds each work as one entry. A work it holds is answered with that entry,
-// which gains the target's collections; any other work is saved as a new item.
-export async function fileWork(json: TranslatorItemJSON, target: SaveTarget): Promise<FiledWork> {
+// which gains the collections; `save` saves any other work as a new item.
+export async function fileWork(
+  json: TranslatorItemJSON,
+  collectionIDs: number[],
+  save: (json: TranslatorItemJSON) => Promise<SavedWork>,
+): Promise<FiledWork> {
   let existing = await findExistingItem(duplicateKeysFromJSON(json));
   if (existing) {
-    await fileExistingItem(existing, target.collectionIDs);
+    await fileExistingItem(existing, collectionIDs);
     return { item: existing, existing: true, attachmentFailures: [] };
   }
-  return { ...(await saveTranslatedItem(json, target)), existing: false };
+  return { ...(await save(json)), existing: false };
 }
 
 async function saveIdentification(
   identification: Identification & { method: SourceMethod },
   target: SaveTarget,
 ): Promise<ImportOutcome> {
-  let filed = await fileWork(identification.json, target);
+  let filed = await fileWork(identification.json, target.collectionIDs, saveForTarget(target));
   return { ...filed, method: identification.method, translator: identification.translator };
 }
 

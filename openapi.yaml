@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Zotero Local Write API
-  version: '3.9.1'
+  version: '3.10.0'
   description: >
     Zotero add-on that registers local HTTP write endpoints on Zotero's existing server. Zotero's built-in local API is read-only; this add-on adds item, note, attachment, collection, and tag mutations for the user library. Zotero must be running with its local HTTP server enabled. On loopback with no token configured, no API key is required. Setting the publicBaseURL pref publishes the surface beyond loopback, and in that state the write operations require the bearer token declared on them.
 
@@ -315,6 +315,7 @@ components:
               - import_store_attachments
               - recognition_held_from_sync
               - import_by_identifier_existing
+              - import_bibtex_existing
         translators_ready:
           type: boolean
           description: Whether Zotero has loaded its translators. Imports, URL resolution and identifier lookups fail until it is true; a client that has just started Zotero waits for it.
@@ -827,6 +828,7 @@ components:
           $ref: '#/components/schemas/NonBlankString'
         collection_keys:
           $ref: '#/components/schemas/NormalizedStringArray'
+      description: Create one Zotero item from one BibTeX entry, through Zotero's BibTeX import translator, with the file attachments the entry names. When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes.
     ImportByIdentifierRequest:
       type: object
       required:
@@ -1512,6 +1514,7 @@ components:
             - item_ids
             - titles
             - citation_keys
+            - existing
           properties:
             operation:
               const: import_bibtex
@@ -1537,6 +1540,7 @@ components:
                 - item_count
                 - collection_keys
                 - translator_id
+                - attachment_failures
               properties:
                 item_count:
                   type: integer
@@ -1546,11 +1550,39 @@ components:
                     type: string
                 translator_id:
                   type: string
+                attachment_failures:
+                  type: array
+                  description: Attachments the translator named that Zotero could not store. The item is saved without them.
+                  items:
+                    type: object
+                    required:
+                      - title
+                      - url
+                      - error
+                    properties:
+                      title:
+                        type:
+                          - string
+                          - 'null'
+                        description: Null when the translator named no title.
+                      url:
+                        type:
+                          - string
+                          - 'null'
+                        description: Null when the translator named no URL.
+                      error:
+                        type: string
+                    additionalProperties: false
             citation_keys:
               type: array
               items:
                 type: string
               description: The Better BibTeX citation key of each item, in item_keys order.
+            existing:
+              type: array
+              items:
+                type: boolean
+              description: For the item in item_keys, true when the work was already in the library and that item is returned; it gains the requested collections, and nothing else about it changes. Servers that answer this field list import_bibtex_existing in /version capabilities.
       unevaluatedProperties: false
     ImportByIdentifierSuccess:
       allOf:
