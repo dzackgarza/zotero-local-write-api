@@ -71,3 +71,56 @@ export async function libraryItemCount(): Promise<number> {
   }
   return Number(response.headers.get("Total-Results"));
 }
+
+/** The number of attachments the library holds outside any item and outside the trash. */
+async function standaloneAttachmentCount(): Promise<number> {
+  const response = await fetch(libraryUrl("items/top?itemType=attachment&limit=1"));
+  if (!response.ok) {
+    throw new Error(`standalone attachment count failed: HTTP ${response.status}`);
+  }
+  return Number(response.headers.get("Total-Results"));
+}
+
+/** The keys of the top-level items outside the trash that carry this title. */
+async function entriesTitled(title: string): Promise<string[]> {
+  const path = `items/top?q=${encodeURIComponent(title)}&limit=100`;
+  const items = await readLibrary<{ key: string; data: ItemData }[]>(path, `items titled ${title}`);
+  return items
+    .filter((item) => item.data.title === title && item.data.deleted !== true)
+    .map((item) => item.key)
+    .sort();
+}
+
+/** The keys of the PDFs stored under an item. */
+async function pdfKeys(itemKey: string): Promise<string[]> {
+  const path = `items/${encodeURIComponent(itemKey)}/children`;
+  const children = await readLibrary<{ key: string; data: ChildData }[]>(path, `PDFs of ${itemKey}`);
+  return children
+    .filter((child) => child.data.contentType === "application/pdf")
+    .map((child) => child.key)
+    .sort();
+}
+
+/** How the library holds the work of one item. */
+export type HeldWork = {
+  entries: string[];
+  children: string[];
+  pdfs: string[];
+  standaloneAttachments: number;
+};
+
+export async function heldWork(itemKey: string): Promise<HeldWork> {
+  const { title } = await readItem(itemKey);
+  return {
+    entries: await entriesTitled(title),
+    children: await childKeys(itemKey),
+    pdfs: await pdfKeys(itemKey),
+    standaloneAttachments: await standaloneAttachmentCount(),
+  };
+}
+
+/** The library holds the work as one entry, this item, with one PDF. */
+export function expectOneEntryWithOnePdf(held: HeldWork, itemKey: string): void {
+  expect(held.entries).toEqual([itemKey]);
+  expect(held.pdfs).toHaveLength(1);
+}

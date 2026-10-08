@@ -10,7 +10,7 @@ import { expect, test } from "bun:test";
 
 import { citationHead } from "./fixture-server";
 import { client, openImportSession } from "./import-session";
-import { childKeys, expectStoredPdf, libraryItemCount, readItem } from "./library";
+import { expectOneEntryWithOnePdf, heldWork, libraryItemCount, readItem } from "./library";
 
 const session = openImportSession();
 const { uid, server } = session;
@@ -52,9 +52,7 @@ test("resolve_url recognizes a direct PDF URL and leaves no item behind", async 
   expect(await libraryItemCount()).toBe(before);
 });
 
-// Both operations recognize the PDF through a parent item that Zotero saves.
-// resolve_url erases its parent afterwards, so import_from_url must not answer
-// with that parent as the library's existing item.
+// Both operations recognize the PDF at once; the import files the one entry.
 test("resolve_url and import_from_url of one PDF at once: the import's item exists", async () => {
   const url = "https://arxiv.org/pdf/1105.0001";
   const before = await libraryItemCount();
@@ -64,23 +62,23 @@ test("resolve_url and import_from_url of one PDF at once: the import's item exis
   expect((await readItem(imported.item_key)).title).toBe(String(resolved.csl.title));
   expect(imported.existing).toBe(false);
   expect(await libraryItemCount()).toBe(before + 1);
+  expectOneEntryWithOnePdf(await heldWork(imported.item_key), imported.item_key);
 });
 
-// A duplicate-merge add-on (Zoplicate, "keep" action) merges a library item
-// into a newly saved duplicate. Recognition must not save a parent that such an
-// add-on can merge the library's own item into. Zoplicate waits up to 5 s for a
-// new item's attachments before it merges.
-test("resolve_url of a PDF the library holds leaves the library's item and its children in place", async () => {
+// A duplicate-merge add-on (Zoplicate, "keep" action) merges a library item into a newly
+// saved duplicate, so a call that saves a second entry for a held work, even for a moment,
+// can move or trash the library's own. Zoplicate waits up to 5 s for a new item's
+// attachments before it merges.
+test("resolve_url of a PDF the library holds leaves its one entry with its one PDF", async () => {
   const url = "https://arxiv.org/pdf/1105.0002";
   const imported = await session.importFromUrl(url);
   expect(imported.existing).toBe(false);
-  await expectStoredPdf(imported.item_key);
-  const children = await childKeys(imported.item_key);
+  const held = await heldWork(imported.item_key);
+  expectOneEntryWithOnePdf(held, imported.item_key);
   const resolved = await resolveUrl(url);
   expect(resolved.method).toBe("pdf_recognition");
   await Bun.sleep(10_000);
-  expect((await readItem(imported.item_key)).deleted).toBeUndefined();
-  expect(await childKeys(imported.item_key)).toEqual(children);
+  expect(await heldWork(imported.item_key)).toEqual(held);
 });
 
 test("resolve_url on a URL that no method identifies returns the typed error", async () => {
