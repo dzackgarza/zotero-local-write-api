@@ -74,7 +74,9 @@ test("an unidentified page with fallback_metadata becomes a citable item tagged 
 
 test("an unidentified PDF with fallback_metadata is stored under the new item", async () => {
   const url = server.servePdf(`/unidentified-${uid}.pdf`, `lw fixture body ${uid}`);
-  const data = await session.importFromUrl(url, { fallback_metadata: fallbackMetadata("unidentified") });
+  const data = await session.importFromUrl(url, {
+    fallback_metadata: fallbackMetadata("unidentified"),
+  });
   expect(data.method).toBe("caller_metadata");
   await expectStoredPdf(data.item_key);
 });
