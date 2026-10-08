@@ -177,6 +177,7 @@ type ZoteroHttpFailureApi = {
   TimeoutException: new (...args: never[]) => Error;
   SecurityException: new (...args: never[]) => Error;
 };
+
 export function isHttpFailure(error: unknown): error is Error {
   let http = Zotero.HTTP as typeof Zotero.HTTP & ZoteroHttpFailureApi;
   return (

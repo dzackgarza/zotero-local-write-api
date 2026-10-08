@@ -21,3 +21,15 @@ declare const UPDATE_URL: string;
 declare const STRICT_MIN_VERSION: string;
 declare const STRICT_MAX_VERSION: string;
 declare const TESTED_ZOTERO_VERSION: string;
+
+// zotero-types declares Zotero.HTTP as the interface _ZoteroTypes.HTTP and omits two of its
+// members; these declarations merge into that interface. Models zotero/zotero
+// chrome/content/zotero/xpcom/http.js: download() streams a GET to `path` and answers the
+// fetch Response; its timeout covers connecting and inactivity, not the whole transfer.
+// getHTMLMetaRefreshURL() answers the resolved target of a meta refresh, or false.
+declare namespace _ZoteroTypes {
+  interface HTTP {
+    download(url: string, path: string): Promise<Response>;
+    getHTMLMetaRefreshURL(doc: Document, url: string): string | false;
+  }
+}
