@@ -72,7 +72,7 @@ async function fetchFollowingMetaRefresh(
   url: string,
   metaRedirects: number,
 ): Promise<FetchedSource> {
-  let path = sourceTempPath();
+  let path = await sourceTempPath();
   try {
     let response = await downloadSource(url, path);
     return await downloadedSource(response, url, path, metaRedirects);
@@ -139,11 +139,10 @@ async function downloadSource(url: string, path: string): Promise<Response> {
   }
 }
 
-// A new path in Zotero's temp directory for the source's body.
-function sourceTempPath(): string {
-  let file = Zotero.getTempDirectory();
-  file.append(`local-write-api-source-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-  return file.path;
+// A new empty file in Zotero's temp directory for the source's body; IOUtils.createUniqueFile
+// picks a name that no other file has.
+function sourceTempPath(): Promise<string> {
+  return IOUtils.createUniqueFile(Zotero.getTempDirectory().path, "local-write-api-source");
 }
 
 // Final URL of a completed download, after redirects. Zotero.HTTP.download answers the
