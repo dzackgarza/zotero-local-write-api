@@ -1099,7 +1099,7 @@ export interface components {
        */
       operation: "import_from_url";
     };
-    /** @description Identify a source URL exactly as import_from_url does, with the same methods in the same order, and return the metadata of the one work it identifies without keeping anything in the library. The metadata is Zotero's CSL-JSON rendering of the item import_from_url would create. When the URL is a PDF, Zotero PDF recognition stores the PDF and the item it creates for the time of the call and then erases both. No Zotero sync runs while they exist, so they never reach the Zotero server. Servers that hold syncs this way list recognition_held_from_sync in /version capabilities. */
+    /** @description Identify a source URL exactly as import_from_url does, with the same methods in the same order, and return the metadata of the one work it identifies without keeping anything in the library. The metadata is Zotero's CSL-JSON rendering of the item import_from_url would create. When the URL is a PDF, Zotero PDF recognition stores the PDF for the time of the call and then erases it; it saves no item. No Zotero sync runs while the PDF exists, so it never reaches the Zotero server. Servers that hold syncs this way list recognition_held_from_sync in /version capabilities. */
     ResolveUrlRequest: {
       /**
        * @description discriminator enum property added by openapi-typescript

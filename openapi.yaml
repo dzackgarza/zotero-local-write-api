@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Zotero Local Write API
-  version: '3.8.3'
+  version: '3.8.4'
   description: >
     Zotero add-on that registers local HTTP write endpoints on Zotero's existing server. Zotero's built-in local API is read-only; this add-on adds item, note, attachment, collection, and tag mutations for the user library. Zotero must be running with its local HTTP server enabled. On loopback with no token configured, no API key is required. Setting the publicBaseURL pref publishes the surface beyond loopback, and in that state the write operations require the bearer token declared on them.
 
@@ -1794,7 +1794,7 @@ components:
       unevaluatedProperties: false
     ResolveUrlRequest:
       type: object
-      description: Identify a source URL exactly as import_from_url does, with the same methods in the same order, and return the metadata of the one work it identifies without keeping anything in the library. The metadata is Zotero's CSL-JSON rendering of the item import_from_url would create. When the URL is a PDF, Zotero PDF recognition stores the PDF and the item it creates for the time of the call and then erases both. No Zotero sync runs while they exist, so they never reach the Zotero server. Servers that hold syncs this way list recognition_held_from_sync in /version capabilities.
+      description: Identify a source URL exactly as import_from_url does, with the same methods in the same order, and return the metadata of the one work it identifies without keeping anything in the library. The metadata is Zotero's CSL-JSON rendering of the item import_from_url would create. When the URL is a PDF, Zotero PDF recognition stores the PDF for the time of the call and then erases it; it saves no item. No Zotero sync runs while the PDF exists, so it never reaches the Zotero server. Servers that hold syncs this way list recognition_held_from_sync in /version capabilities.
       required:
         - operation
         - url

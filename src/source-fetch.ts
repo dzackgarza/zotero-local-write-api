@@ -10,9 +10,23 @@ import {
 } from "./source-results";
 import { isHttpFailure, type TranslatorItemJSON } from "./zotero-api";
 
-// An external service's GET. A failure status, an unreachable host, a timeout or a
+// A request to an external service. A failure status, an unreachable host, a timeout or a
 // certificate failure is the service's answer; any other error propagates.
-export async function requestService(
+export async function serviceAnswerOf(
+  request: Promise<XMLHttpRequest>,
+): Promise<ServiceAnswer<XMLHttpRequest>> {
+  try {
+    return answered(await request);
+  } catch (error) {
+    if (!isHttpFailure(error)) {
+      throw error;
+    }
+    return serviceFailure(error.message);
+  }
+}
+
+// An external service's GET.
+export function requestService(
   url: string,
   options: {
     responseType: "text" | "document" | "json";
@@ -20,14 +34,7 @@ export async function requestService(
     headers?: Record<string, string>;
   },
 ): Promise<ServiceAnswer<XMLHttpRequest>> {
-  try {
-    return answered(await Zotero.HTTP.request("GET", url, options));
-  } catch (error) {
-    if (!isHttpFailure(error)) {
-      throw error;
-    }
-    return serviceFailure(error.message);
-  }
+  return serviceAnswerOf(Zotero.HTTP.request("GET", url, options));
 }
 
 // A translation that saves nothing. translate() rejects with the error that ended the

@@ -17,7 +17,13 @@ import { expect, test } from "bun:test";
 
 import { citationHead } from "./fixture-server";
 import { client, openImportSession } from "./import-session";
-import { attachmentChildren, expectStoredPdf, readItem } from "./library";
+import {
+  attachmentChildren,
+  expectOneEntryWithOnePdf,
+  expectStoredPdf,
+  heldWork,
+  readItem,
+} from "./library";
 
 const session = openImportSession();
 const { uid, server } = session;
@@ -61,6 +67,24 @@ test("a direct PDF URL is recognized from the identifier inside the PDF", async 
   expect(item.itemType).toBe("journalArticle");
   expect(item.DOI?.toLowerCase()).toBe("10.1371/journal.pone.0000308");
   await expectStoredPdf(data.item_key);
+});
+
+// A duplicate-merge add-on (Zoplicate, "keep" action) merges a library item into a newly
+// saved duplicate, so a call that saves a second entry for a held work, even for a moment,
+// can move or trash the library's own. Zoplicate waits up to 5 s for a new item's
+// attachments before it merges.
+test("a second import of a PDF the library holds answers its one entry with its one PDF", async () => {
+  const url = "https://arxiv.org/pdf/1105.0003";
+  const first = await session.importFromUrl(url);
+  expect(first.existing).toBe(false);
+  const held = await heldWork(first.item_key);
+  expectOneEntryWithOnePdf(held, first.item_key);
+  const second = await session.importFromUrl(url);
+  expect(second.method).toBe("pdf_recognition");
+  expect(second.existing).toBe(true);
+  expect(second.item_key).toBe(first.item_key);
+  await Bun.sleep(10_000);
+  expect(await heldWork(first.item_key)).toEqual(held);
 });
 
 test("a direct PDF URL with store_attachments false becomes an item with no attachment", async () => {

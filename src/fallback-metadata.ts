@@ -1,7 +1,7 @@
-import { type DuplicateKeys, fileExistingItem } from "./duplicates";
+import { type DuplicateKeys, fileExistingItem, findExistingItem } from "./duplicates";
 import { badRequest } from "./errors";
 import { userLibraryID } from "./library";
-import { findExistingOutsideRecognition, storePdf } from "./pdf-recognition";
+import { storePdf } from "./pdf-recognition";
 import { requireNonEmptyString, requireObject, requireString } from "./request-fields";
 import {
   type FetchedSource,
@@ -89,7 +89,7 @@ export async function saveFallback(
   fallback: FallbackMetadata,
   target: SaveTarget,
 ): Promise<ImportOutcome> {
-  let existing = await findExistingOutsideRecognition(fallbackDuplicateKeys(url, fallback));
+  let existing = await findExistingItem(fallbackDuplicateKeys(url, fallback));
   if (existing) {
     await fileExistingItem(existing, target.collectionIDs);
     return fallbackOutcome(existing, true);

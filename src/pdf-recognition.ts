@@ -1,50 +1,86 @@
 import { Mutex } from "async-mutex";
-import {
-  type DuplicateKeys,
-  duplicateKeysFromItem,
-  fileExistingItem,
-  findExistingItem,
-} from "./duplicates";
 import { userLibraryID } from "./library";
+import { recognizeAttachment } from "./pdf-recognizer";
 import {
   answered,
   type DownloadedPdf,
-  type ImportOutcome,
+  type Identification,
   type MethodResult,
-  miss,
-  type SaveTarget,
   type ServiceAnswer,
   serviceFailure,
 } from "./source-results";
-import { getSyncRunner, recognizeDocument } from "./zotero-api";
+import { attachmentRenaming, getSyncRunner, renamableAttachment } from "./zotero-api";
 
-type RecognizedParent = { parent: Zotero.Item; pdf: Zotero.Item };
+// What recognition found: the work, not yet saved, and the stored PDF it was read from.
+type RecognizedPdf = { identification: Identification; attachment: Zotero.Item };
 
-// The recognizer saves the parent item it creates, and resolve_url erases that
-// parent again. One recognition runs at a time, from the download until its
-// caller has kept or erased the parent, and a duplicate lookup outside a
-// recognition waits for the running one. So no lookup answers with a parent
-// that is about to be erased.
+// One recognition runs at a time, from storing its PDF until its caller has filed
+// the work, so a second import of the same PDF finds the first one's item.
 const recognition = new Mutex();
 
-export function withRecognizedParent<T>(
+// Zotero's recognizer reads the text of a stored attachment, so the PDF is stored as a
+// standalone attachment while recognition runs. `use` files the work, and can move the
+// attachment under the work's item (adoptPdf); an attachment it leaves standalone is
+// erased.
+export function withRecognizedPdf<T>(
   pdf: DownloadedPdf,
-  use: (recognized: RecognizedParent) => Promise<T>,
+  use: (recognized: RecognizedPdf) => Promise<T>,
 ): Promise<MethodResult<T>> {
   return recognition.runExclusive(() =>
     heldFromSync(async () => {
-      let recognized = await recognizeParent(pdf);
-      if (recognized.outcome !== "identified") {
-        return recognized;
+      let stored = await storeSourcePdf(pdf);
+      if (stored.outcome === "failed") {
+        return stored;
       }
-      return { outcome: "identified", found: await use(recognized.found) };
+      let attachment = stored.value;
+      try {
+        let work = await recognizeAttachment(attachment);
+        if (work.outcome !== "identified") {
+          return work;
+        }
+        let identification = { json: work.found, translator: null, message: workTitle(work.found) };
+        return { outcome: "identified", found: await use({ identification, attachment }) };
+      } finally {
+        if (attachment.parentItemID === false || attachment.parentItemID === undefined) {
+          await attachment.eraseTx();
+        }
+      }
     }),
   );
 }
 
-// A recognition stores the PDF and its parent, and its caller can erase both. A
-// sync between the save and the erase would upload them, and the erase would then
-// conflict with the uploaded copies and open Zotero's merge dialog. So no sync
+function workTitle(json: Identification["json"]): string {
+  if (json.title === undefined) {
+    throw new Error("the recognized work has no title");
+  }
+  return json.title;
+}
+
+// recognizeDocument.js `_processItem`: the PDF becomes the child of the recognized work's
+// item, and its file is renamed after that item where the user's settings rename files.
+export async function adoptPdf(attachment: Zotero.Item, parent: Zotero.Item): Promise<void> {
+  let originalTitle = attachment.getField("title");
+  attachment.parentID = parent.id;
+  await attachment.saveTx();
+  let renaming = attachmentRenaming();
+  if (!renaming.shouldAutoRenameAttachment(attachment)) {
+    return;
+  }
+  let fileBaseName = renaming.getFileBaseNameFromItem(parent, { attachmentTitle: originalTitle });
+  let extension = renaming.getCorrectFileExtension(attachment);
+  let newName = fileBaseName + (extension ? "." + extension : "");
+  let renamable = renamableAttachment(attachment);
+  let result = await renamable.renameAttachmentFile(newName, { overwrite: false, unique: true });
+  if (result !== true) {
+    throw new Error("renaming the PDF to " + newName + " failed: " + String(result));
+  }
+  renamable.setAutoAttachmentTitle();
+  await attachment.saveTx();
+}
+
+// The stored PDF is temporary until its caller files it. A
+// sync between the save and the erase would upload it, and the erase would then
+// conflict with the uploaded copy and open Zotero's merge dialog. So no sync
 // reads the library while a recognition runs, as in Zotero's Mendeley import
 // (mendeleyImport.mjs, `Zotero.Sync.Runner.delayIndefinite()`). A sync that runs
 // already can upload items that are saved after it started, so the hold starts
@@ -65,33 +101,6 @@ async function heldFromSync<T>(run: () => Promise<T>): Promise<T> {
   } finally {
     resume();
   }
-}
-
-export function findExistingOutsideRecognition(keys: DuplicateKeys): Promise<Zotero.Item | null> {
-  return recognition.runExclusive(() => findExistingItem(keys, null));
-}
-
-// Zotero's "Retrieve Metadata for PDF": the PDF is stored as a standalone
-// attachment, and the recognizer creates its parent item from the DOI or ISBN
-// in the text, or from Zotero's recognizer service, and moves the PDF under it.
-// The recognizer logs its own errors instead of throwing, so a missing parent
-// is the only failure signal; the parentless PDF is then erased.
-async function recognizeParent(source: DownloadedPdf): Promise<MethodResult<RecognizedParent>> {
-  let pdf = await storeSourcePdf(source);
-  if (pdf.outcome === "failed") {
-    return pdf;
-  }
-  await recognizeDocument().recognizeItems([pdf.value]);
-  let parentID = pdf.value.parentItemID;
-  if (parentID === undefined || parentID === false) {
-    await pdf.value.eraseTx();
-    return miss("no_match", "the recognizer produced no parent item (see the Zotero debug log)");
-  }
-  let parent = await Zotero.Items.getAsync(parentID);
-  if (parent === false) {
-    throw new Error("recognized parent item " + parentID + " is missing");
-  }
-  return { outcome: "identified", found: { parent, pdf: pdf.value } };
 }
 
 // The downloaded file is not a PDF (attachments.js `_enforceFileType`); any other error
@@ -148,43 +157,4 @@ export function hasStoredPdf(item: Zotero.Item): boolean {
   return Zotero.Items.get(item.getAttachments(false)).some(
     (attachment) => attachment.attachmentContentType === "application/pdf",
   );
-}
-
-type RecognizedImport = Omit<ImportOutcome, "method"> & { message: string };
-
-export async function recognizePdf(
-  pdf: DownloadedPdf,
-  target: SaveTarget,
-): Promise<MethodResult<RecognizedImport>> {
-  return withRecognizedParent(pdf, (recognized) => fileRecognized(recognized, target));
-}
-
-// An existing item is the library's own: the recognized copy and its PDF are
-// erased, and the existing item only gains the requested collections. A new item keeps
-// the PDF only when the target stores attachments.
-async function fileRecognized(
-  { parent, pdf }: RecognizedParent,
-  target: SaveTarget,
-): Promise<RecognizedImport> {
-  let existing = await findExistingItem(duplicateKeysFromItem(parent), parent.id);
-  if (existing) {
-    await pdf.eraseTx();
-    await parent.eraseTx();
-    await fileExistingItem(existing, target.collectionIDs);
-    return recognizedImport(existing, true);
-  }
-  if (!target.storeAttachments) {
-    await pdf.eraseTx();
-  }
-  if (target.collectionIDs.length) {
-    parent.setCollections(target.collectionIDs);
-    await parent.saveTx();
-  }
-  return recognizedImport(parent, false);
-}
-
-// The recognizer saves no attachment of its own, so it has no attachment failures.
-function recognizedImport(item: Zotero.Item, existing: boolean): RecognizedImport {
-  let message = item.getField("title");
-  return { item, existing, translator: null, attachmentFailures: [], message };
 }

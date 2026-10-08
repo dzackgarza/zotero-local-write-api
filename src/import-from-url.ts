@@ -1,13 +1,8 @@
-import { duplicateKeysFromJSON, fileExistingItem } from "./duplicates";
+import { duplicateKeysFromJSON, fileExistingItem, findExistingItem } from "./duplicates";
 import { type FallbackMetadata, requireFallbackMetadata, saveFallback } from "./fallback-metadata";
 import { identifyPage } from "./identify-page";
 import { citationKey, userCollectionIDs, userLibraryID } from "./library";
-import {
-  findExistingOutsideRecognition,
-  hasStoredPdf,
-  recognizePdf,
-  storePdf,
-} from "./pdf-recognition";
+import { adoptPdf, hasStoredPdf, storePdf, withRecognizedPdf } from "./pdf-recognition";
 import { normalizeStringList, requireBoolean } from "./request-fields";
 import { type RequestData, successResult } from "./responses";
 import { fetchSource, requireHttpUrl, withSourceDirectory } from "./source-fetch";
@@ -85,7 +80,7 @@ async function saveIdentification(
   target: SaveTarget,
 ): Promise<ImportOutcome> {
   let { method, translator } = identification;
-  let existing = await findExistingOutsideRecognition(duplicateKeysFromJSON(identification.json));
+  let existing = await findExistingItem(duplicateKeysFromJSON(identification.json));
   if (existing) {
     await fileExistingItem(existing, target.collectionIDs);
     return existingOutcome(existing, method, translator);
@@ -123,9 +118,22 @@ async function importPdfSource(
   target: SaveTarget,
   attempts: Attempt[],
 ): Promise<ImportOutcome | null> {
-  let recognized = recordAttempt(attempts, "pdf_recognition", await recognizePdf(pdf, target));
+  let recognized = recordAttempt(
+    attempts,
+    "pdf_recognition",
+    await withRecognizedPdf(pdf, async ({ identification, attachment }) => {
+      let outcome = await saveIdentification(
+        { ...identification, method: "pdf_recognition" },
+        { ...target, storeAttachments: false },
+      );
+      if (target.storeAttachments && !outcome.existing) {
+        await adoptPdf(attachment, outcome.item);
+      }
+      return { ...outcome, message: identification.message };
+    }),
+  );
   if (recognized) {
-    return { ...recognized, method: "pdf_recognition" };
+    return recognized;
   }
   return importPdfByIdentifier(requestedUrl, pdf, target, attempts);
 }
