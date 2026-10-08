@@ -23,7 +23,7 @@ export const client = createZoteroLocalWriteClient(liveSetting("ZOTERO_LOCAL_BAS
 class ImportSession {
   readonly uid = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
   readonly server = new FixtureServer();
-  private readonly createdItemKeys: string[] = [];
+  private readonly createdItemKeys = new Set<string>();
   private scratchCollection = "";
 
   /** The key of the scratch collection; set once `beforeAll` has run. */
@@ -33,7 +33,9 @@ class ImportSession {
 
   /** Record items the suite created, so `afterAll` trashes them. */
   track(itemKeys: string[]): void {
-    this.createdItemKeys.push(...itemKeys);
+    for (const itemKey of itemKeys) {
+      this.createdItemKeys.add(itemKey);
+    }
   }
 
   async importFromUrl(url: string, options: ImportOptions = {}) {
@@ -49,6 +51,22 @@ class ImportSession {
     if (!data.existing) {
       this.track([data.item_key]);
     }
+    return data;
+  }
+
+  async importByIdentifier(identifier: string) {
+    const { data, error } = await client.POST("/write", {
+      body: { operation: "import_by_identifier", identifier },
+    });
+    if (error !== undefined) {
+      throw new Error(`import_by_identifier ${identifier} failed: ${error.stage}: ${error.error}`);
+    }
+    if (data === undefined || data.operation !== "import_by_identifier") {
+      throw new Error(
+        `import_by_identifier ${identifier} returned no import_by_identifier success`,
+      );
+    }
+    this.track(data.item_keys.filter((_, index) => !data.existing[index]));
     return data;
   }
 

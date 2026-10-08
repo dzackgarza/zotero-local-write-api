@@ -11,7 +11,6 @@ import {
   type AttachmentFailure,
   type Attempt,
   type DownloadedPdf,
-  existingOutcome,
   type FetchedSource,
   type Identification,
   type ImportOutcome,
@@ -75,18 +74,25 @@ async function saveTranslatedItem(
   return { item: items[0], attachmentFailures };
 }
 
+export type FiledWork = Pick<ImportOutcome, "item" | "existing" | "attachmentFailures">;
+
+// The library holds each work as one entry. A work it holds is answered with that entry,
+// which gains the target's collections; any other work is saved as a new item.
+export async function fileWork(json: TranslatorItemJSON, target: SaveTarget): Promise<FiledWork> {
+  let existing = await findExistingItem(duplicateKeysFromJSON(json));
+  if (existing) {
+    await fileExistingItem(existing, target.collectionIDs);
+    return { item: existing, existing: true, attachmentFailures: [] };
+  }
+  return { ...(await saveTranslatedItem(json, target)), existing: false };
+}
+
 async function saveIdentification(
   identification: Identification & { method: SourceMethod },
   target: SaveTarget,
 ): Promise<ImportOutcome> {
-  let { method, translator } = identification;
-  let existing = await findExistingItem(duplicateKeysFromJSON(identification.json));
-  if (existing) {
-    await fileExistingItem(existing, target.collectionIDs);
-    return existingOutcome(existing, method, translator);
-  }
-  let saved = await saveTranslatedItem(identification.json, target);
-  return { ...saved, existing: false, method, translator };
+  let filed = await fileWork(identification.json, target);
+  return { ...filed, method: identification.method, translator: identification.translator };
 }
 
 // A PDF that Zotero's recognizer does not identify is saved from an identifier in its URLs,

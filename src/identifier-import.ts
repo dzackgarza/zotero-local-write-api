@@ -1,4 +1,5 @@
 import { badRequest, notFound } from "./errors";
+import { type FiledWork, fileWork } from "./import-from-url";
 import { citationKeys, userCollectionIDs, userLibraryID } from "./library";
 import { normalizeStringList, requireNonEmptyString } from "./request-fields";
 import { type RequestData, successResult } from "./responses";
@@ -7,6 +8,7 @@ import {
   createTranslateSearch,
   findIdentifiers,
   type Identifier,
+  type TranslatorItemJSON,
   type ZoteroTranslateSearchApi,
 } from "./zotero-api";
 
@@ -97,31 +99,29 @@ async function identifierSearch(identifier: Identifier): Promise<ZoteroTranslate
   return search;
 }
 
-async function translateIdentifier(
-  identifier: Identifier,
-  collections: number[] | false,
-): Promise<Zotero.Item[]> {
+// The works an identifier names, as item JSON; the translation saves nothing.
+async function translateIdentifier(identifier: Identifier): Promise<TranslatorItemJSON[]> {
   let search = await identifierSearch(identifier);
-  let items = await search.translate({
-    libraryID: userLibraryID(),
-    collections: collections,
-    saveAttachments: true,
-  });
-  if (items === false || items.length === 0) {
+  let works = await search.translate({ libraryID: false, saveAttachments: false });
+  if (works.length === 0) {
     throw notFound("No item found for identifier: " + JSON.stringify(identifier));
   }
-  return items;
+  return works;
 }
 
-async function translateIdentifiers(
+// Each work is filed as import_from_url files it: a work the library holds is answered
+// with its entry, and any other work is saved with the attachments Zotero gets for it.
+async function fileIdentifiers(
   identifiers: Identifier[],
-  collections: number[],
-): Promise<Zotero.Item[]> {
-  let items: Zotero.Item[] = [];
+  collectionIDs: number[],
+): Promise<FiledWork[]> {
+  let filed: FiledWork[] = [];
   for (let identifier of identifiers) {
-    items.push(...(await translateIdentifier(identifier, collections)));
+    for (let work of await translateIdentifier(identifier)) {
+      filed.push(await fileWork(work, { collectionIDs, storeAttachments: true }));
+    }
   }
-  return items;
+  return filed;
 }
 
 export async function handleImportByIdentifier(data: RequestData) {
@@ -132,7 +132,8 @@ export async function handleImportByIdentifier(data: RequestData) {
       : normalizeStringList(data.collection_keys, "collection_keys");
   let collections = await userCollectionIDs(collectionKeys);
 
-  let items = await translateIdentifiers(extractIdentifiers(raw), collections);
+  let filed = await fileIdentifiers(extractIdentifiers(raw), collections);
+  let items = filed.map((work) => work.item);
 
   return successResult(
     "import_by_identifier",
@@ -140,7 +141,8 @@ export async function handleImportByIdentifier(data: RequestData) {
       identifier: raw,
       item_count: items.length,
       collection_keys: collectionKeys,
+      attachment_failures: filed.flatMap((work) => work.attachmentFailures),
     },
-    await importedItemsFields(items),
+    { ...(await importedItemsFields(items)), existing: filed.map((work) => work.existing) },
   );
 }
