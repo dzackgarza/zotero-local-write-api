@@ -11,6 +11,7 @@ type Fixture = { body: string; type: string; pacing?: Pacing };
 
 export class FixtureServer {
   private readonly fixtures = new Map<string, Fixture>();
+  private readonly requests = new Map<string, number>();
   private readonly server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -42,12 +43,19 @@ export class FixtureServer {
     });
   }
 
+  /** The number of requests the server has answered for `path`. */
+  requestCount(path: string): number {
+    return this.requests.get(path) ?? 0;
+  }
+
   stop(): void {
     this.server.stop(true);
   }
 
   private answer(request: Request): Response {
-    const fixture = this.fixtures.get(new URL(request.url).pathname);
+    const path = new URL(request.url).pathname;
+    this.requests.set(path, this.requestCount(path) + 1);
+    const fixture = this.fixtures.get(path);
     if (fixture === undefined) {
       return new Response("not found", { status: 404 });
     }

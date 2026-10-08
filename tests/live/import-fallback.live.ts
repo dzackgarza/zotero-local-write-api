@@ -86,6 +86,15 @@ test("a PDF whose server streams it for longer than 30 s is imported", async () 
   await expectStoredPdf(data.item_key);
 });
 
+test("a PDF source is downloaded once, for recognition and storage together", async () => {
+  const path = `/once-${uid}.pdf`;
+  const url = server.servePdf(path, `lw once fixture body ${uid}`);
+  const data = await session.importFromUrl(url, { fallback_metadata: FALLBACK_METADATA });
+  expect(data.method).toBe("caller_metadata");
+  await expectStoredPdf(data.item_key);
+  expect(server.requestCount(path)).toBe(1);
+});
+
 test("fallback_metadata without a year is rejected and creates nothing", async () => {
   const before = await libraryItemCount();
   const url = server.servePage(`/plain-noyear-${uid}`, "<title>Nothing here</title>");
