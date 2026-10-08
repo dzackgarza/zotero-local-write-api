@@ -28,7 +28,10 @@ async function createBook(title: string): Promise<string> {
     body: { operation: "create_item", item_type: "book", fields: { title } },
   });
   assert(error === undefined, `create_item ${title} failed: ${JSON.stringify(error)}`);
-  assert(data?.operation === "create_item", `create_item ${title} answered ${JSON.stringify(data)}`);
+  assert(
+    data?.operation === "create_item",
+    `create_item ${title} answered ${JSON.stringify(data)}`,
+  );
   session.track([data.item_key]);
   return data.item_key;
 }
@@ -63,7 +66,10 @@ async function childFile(itemKey: string, attachmentKey: string) {
     body: { operation: "get_item_children", item_key: itemKey },
   });
   assert(error === undefined, `get_item_children ${itemKey} failed: ${JSON.stringify(error)}`);
-  assert(data?.operation === "get_item_children", `get_item_children answered ${JSON.stringify(data)}`);
+  assert(
+    data?.operation === "get_item_children",
+    `get_item_children answered ${JSON.stringify(data)}`,
+  );
   expect(data.details.parent_item_key).toBe(itemKey);
   const child = data.details.children.find((candidate) => candidate.item_key === attachmentKey);
   assert(
@@ -79,7 +85,10 @@ test("get_item_children answers a stored PDF as on disk, with its absolute path"
 
   const file = await childFile(itemKey, attachmentKey);
 
-  assert(file.state === "on_disk", `the stored PDF ${attachmentKey} answered ${JSON.stringify(file)}`);
+  assert(
+    file.state === "on_disk",
+    `the stored PDF ${attachmentKey} answered ${JSON.stringify(file)}`,
+  );
   expect(isAbsolute(file.path)).toBe(true);
   expect((await stat(file.path)).size).toBe(Buffer.byteLength(PDF_BYTES));
 });
@@ -88,7 +97,10 @@ test("get_item_children answers a stored PDF whose file left the disk as missing
   const itemKey = await createBook(`lw-lookup-missing-${session.uid}`);
   const attachmentKey = await attachPdf(itemKey);
   const stored = await childFile(itemKey, attachmentKey);
-  assert(stored.state === "on_disk", `the stored PDF ${attachmentKey} answered ${JSON.stringify(stored)}`);
+  assert(
+    stored.state === "on_disk",
+    `the stored PDF ${attachmentKey} answered ${JSON.stringify(stored)}`,
+  );
 
   await unlink(stored.path);
 
@@ -111,7 +123,10 @@ test("find_items_by_title answers the item whose title contains the query", asyn
   });
 
   assert(error === undefined, `find_items_by_title failed: ${JSON.stringify(error)}`);
-  assert(data?.operation === "find_items_by_title", `find_items_by_title answered ${JSON.stringify(data)}`);
+  assert(
+    data?.operation === "find_items_by_title",
+    `find_items_by_title answered ${JSON.stringify(data)}`,
+  );
   expect(data.details.match_count).toBe(1);
   expect(data.details.items).toMatchObject([{ item_key: itemKey, item_type: "book", title }]);
 });
