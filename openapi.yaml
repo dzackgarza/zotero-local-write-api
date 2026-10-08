@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Zotero Local Write API
-  version: '3.6.1'
+  version: '3.7.0'
   description: >
     Zotero add-on that registers local HTTP write endpoints on Zotero's existing server. Zotero's built-in local API is read-only; this add-on adds item, note, attachment, collection, and tag mutations for the user library. Zotero must be running with its local HTTP server enabled. On loopback with no token configured, no API key is required. Setting the publicBaseURL pref publishes the surface beyond loopback, and in that state the write operations require the bearer token declared on them.
 
@@ -312,6 +312,7 @@ components:
               - import_from_url
               - resolve_url
               - attach_standalone
+              - import_store_attachments
         translators_ready:
           type: boolean
           description: Whether Zotero has loaded its translators. Imports, URL resolution and identifier lookups fail until it is true; a client that has just started Zotero waits for it.
@@ -1672,7 +1673,7 @@ components:
         store_attachments:
           type: boolean
           default: true
-          description: 'false: the call stores no attachments. A new item gets no translator attachment, no open-access PDF and no PDF of the source, so the caller can attach its own copy. An existing item is not changed.'
+          description: 'false: the call stores no attachments. A new item gets no translator attachment, no open-access PDF and no PDF of the source, so the caller can attach its own copy. An existing item is not changed. Servers that support this field list import_store_attachments in /version capabilities.'
     ImportFromUrlAttempt:
       type: object
       required:

@@ -153,6 +153,7 @@ export interface components {
         | "import_from_url"
         | "resolve_url"
         | "attach_standalone"
+        | "import_store_attachments"
       )[];
       /** @description Whether Zotero has loaded its translators. Imports, URL resolution and identifier lookups fail until it is true; a client that has just started Zotero waits for it. */
       translators_ready: boolean;
@@ -1041,7 +1042,7 @@ export interface components {
       collection_keys?: components["schemas"]["NormalizedStringArray"];
       fallback_metadata?: components["schemas"]["FallbackMetadata"];
       /**
-       * @description false: the call stores no attachments. A new item gets no translator attachment, no open-access PDF and no PDF of the source, so the caller can attach its own copy. An existing item is not changed.
+       * @description false: the call stores no attachments. A new item gets no translator attachment, no open-access PDF and no PDF of the source, so the caller can attach its own copy. An existing item is not changed. Servers that support this field list import_store_attachments in /version capabilities.
        * @default true
        */
       store_attachments?: boolean;
