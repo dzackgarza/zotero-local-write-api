@@ -94,7 +94,10 @@ async function entriesTitled(title: string): Promise<string[]> {
 /** The keys of the PDFs stored under an item. */
 async function pdfKeys(itemKey: string): Promise<string[]> {
   const path = `items/${encodeURIComponent(itemKey)}/children`;
-  const children = await readLibrary<{ key: string; data: ChildData }[]>(path, `PDFs of ${itemKey}`);
+  const children = await readLibrary<{ key: string; data: ChildData }[]>(
+    path,
+    `PDFs of ${itemKey}`,
+  );
   return children
     .filter((child) => child.data.contentType === "application/pdf")
     .map((child) => child.key)
