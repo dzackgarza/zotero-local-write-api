@@ -15,6 +15,9 @@
  * path. `openImportSession` owns the setup and the cleanup.
  */
 import { expect, test } from "bun:test";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { citationHead } from "./fixture-server";
 import { openImportSession } from "./import-session";
@@ -233,4 +236,31 @@ test("import_bibtex of an entry the library holds answers its one entry", async 
   expect(second.item_keys).toEqual([first.item_key]);
   expect(second.existing).toEqual([true]);
   expect(await heldWork(first.item_key, `held-${uid}`)).toEqual(held);
+});
+
+test("import_bibtex stores the PDF that the entry's file field names", async () => {
+  const pdfUrl = server.servePdf(`/bibtex-file-${uid}.pdf`, `lw bibtex file ${uid}`);
+  const pdfPath = join(tmpdir(), `lw-bibtex-file-${uid}.pdf`);
+  await Bun.write(pdfPath, await (await fetch(pdfUrl)).arrayBuffer());
+  try {
+    const data = await session.importBibtex(
+      [
+        `@article{file${uid},`,
+        `  title = {bibtex-file-${uid}},`,
+        `  author = {Fixture, Ada},`,
+        `  year = {2020},`,
+        `  file = {Fixture PDF:${pdfPath}:application/pdf}`,
+        `}`,
+      ].join("\n"),
+    );
+    expect(data.existing).toEqual([false]);
+    expect(data.details.attachment_failures).toEqual([]);
+    const stored = (await attachmentChildren(data.item_key)).map(({ contentType, linkMode }) => ({
+      contentType,
+      linkMode,
+    }));
+    expect(stored).toEqual([{ contentType: "application/pdf", linkMode: "imported_file" }]);
+  } finally {
+    await rm(pdfPath);
+  }
 });
