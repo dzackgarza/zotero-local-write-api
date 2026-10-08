@@ -1,2 +1,1 @@
 GET /version added the new `recognition_held_from_sync` enum value to the `capabilities/items/` response property for the response status `200`
-POST /write removed the required property `oneOf[#/components/schemas/SyncSuccess]/allOf[subschema #2]/details/result` from the response with the `200` status

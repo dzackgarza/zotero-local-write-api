@@ -23,8 +23,6 @@ import { client, openImportSession } from "./import-session";
 
 const session = openImportSession();
 
-const ZOTERO_API = "https://api.zotero.org";
-
 /** The value that `code` returns inside Zotero. */
 async function runJavascript(code: string) {
   const { data, error } = await client.POST("/write", {
@@ -100,22 +98,24 @@ async function temporaryKeysWithSyncDuring(operation: () => Promise<void>): Prom
   );
 }
 
-/** The keys among `keys` that the Zotero server holds or lists as deleted since `version`. */
+/**
+ * The keys among `keys` that the Zotero server holds or lists as deleted since
+ * `version`. It asks the server that Zotero syncs with, as Zotero addresses it.
+ */
 async function keysTheServerSaw(keys: string[], version: number): Promise<string[]> {
-  const [userID, apiKey] = await zoteroStrings(
-    "return [String(Zotero.Users.getCurrentUserID()), await Zotero.Sync.Data.Local.getAPIKey()];",
+  const [libraryURL, apiKey, apiVersion] = await zoteroStrings(
+    "return [Zotero.Sync.Runner.baseURL + 'users/' + Zotero.Users.getCurrentUserID(), " +
+      "await Zotero.Sync.Data.Local.getAPIKey(), String(Zotero.Sync.Runner.apiVersion)];",
   );
-  const headers = { "Zotero-API-Key": apiKey, "Zotero-API-Version": "3" };
-  const deleted = await fetch(`${ZOTERO_API}/users/${userID}/deleted?since=${version}`, {
-    headers,
-  });
+  const headers = { "Zotero-API-Key": apiKey, "Zotero-API-Version": apiVersion };
+  const deleted = await fetch(`${libraryURL}/deleted?since=${version}`, { headers });
   if (!deleted.ok) {
     throw new Error(`Zotero web API deletions: HTTP ${deleted.status}`);
   }
   const deletedItems: string[] = JSON.parse(await deleted.text()).items;
   const seen = keys.filter((key) => deletedItems.includes(key));
   for (const key of keys) {
-    const item = await fetch(`${ZOTERO_API}/users/${userID}/items/${key}`, { headers });
+    const item = await fetch(`${libraryURL}/items/${key}`, { headers });
     if (item.status !== 404) {
       seen.push(key);
     }
