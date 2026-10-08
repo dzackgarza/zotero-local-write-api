@@ -1,7 +1,8 @@
 /**
  * Live proof of `import_from_url`: one source URL in, one correct Zotero item
  * out, with the method that identified the source. Also proves that
- * `import_by_identifier` answers the citation keys of the items it creates.
+ * `import_by_identifier` answers the citation keys of the items it creates, and
+ * that `import_by_identifier` and `import_bibtex` answer the entry of a held work.
  *
  * Every case drives a real running Zotero over real HTTP. The remote cases hit
  * the real publisher and metadata services, because the claim under test is
@@ -208,4 +209,17 @@ test("import_by_identifier of an arXiv ID the library holds answers its one entr
   expect(second.existing).toEqual([true]);
   await Bun.sleep(10_000);
   expect(await heldWork(first.item_key, "1105.0004")).toEqual(held);
+});
+
+// A BibTeX entry for a held work answers that entry, as an identifier does.
+test("import_bibtex of an entry the library holds answers its one entry", async () => {
+  const record = await Bun.file(new URL("../fixtures/uid-record.bib", import.meta.url)).text();
+  const bibtex = record.replaceAll("__UID__", `held-${uid}`);
+  const first = await session.importBibtex(bibtex);
+  expect(first.item_keys).toEqual([first.item_key]);
+  const held = await heldWork(first.item_key, `held-${uid}`);
+  expect(held.entries).toEqual([first.item_key]);
+  const second = await session.importBibtex(bibtex);
+  expect(second.item_keys).toEqual([first.item_key]);
+  expect(await heldWork(first.item_key, `held-${uid}`)).toEqual(held);
 });

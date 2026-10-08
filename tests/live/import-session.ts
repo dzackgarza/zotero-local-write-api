@@ -70,6 +70,20 @@ class ImportSession {
     return data;
   }
 
+  async importBibtex(bibtex: string) {
+    const { data, error } = await client.POST("/write", {
+      body: { operation: "import_bibtex", bibtex },
+    });
+    if (error !== undefined) {
+      throw new Error(`import_bibtex failed: ${error.stage}: ${error.error}`);
+    }
+    if (data === undefined || data.operation !== "import_bibtex") {
+      throw new Error("import_bibtex returned no import_bibtex success");
+    }
+    this.track(data.item_keys);
+    return data;
+  }
+
   async open(): Promise<void> {
     const { data, error } = await client.POST("/write", {
       body: { operation: "create_collection", name: `lw-import-url-${this.uid}` },
