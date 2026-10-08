@@ -221,7 +221,9 @@ export let EXTERNAL_SERVICES: ExternalService[] = [
     name: "Crossref",
     async search(seed) {
       let url =
-        "https://api.crossref.org/works?rows=" + EXTERNAL_SERVICE_CANDIDATE_LIMIT + "&select=DOI,title,author,issued" +
+        "https://api.crossref.org/works?rows=" +
+        EXTERNAL_SERVICE_CANDIDATE_LIMIT +
+        "&select=DOI,title,author,issued" +
         "&query.bibliographic=" +
         encodeURIComponent(seed.title) +
         "&query.author=" +
@@ -238,7 +240,8 @@ export let EXTERNAL_SERVICES: ExternalService[] = [
     async search(seed) {
       let query = 'ti:"' + seed.title + '" au:' + seed.surname;
       let url =
-        "https://api.zbmath.org/v1/document/_search?page=0&results_per_page=" + EXTERNAL_SERVICE_CANDIDATE_LIMIT +
+        "https://api.zbmath.org/v1/document/_search?page=0&results_per_page=" +
+        EXTERNAL_SERVICE_CANDIDATE_LIMIT +
         "&search_string=" +
         encodeURIComponent(query);
       // zbMATH answers a search with no results with 404.
@@ -261,7 +264,9 @@ export let EXTERNAL_SERVICES: ExternalService[] = [
     async search(seed) {
       let query = 'ti:"' + seed.title + '" AND au:' + seed.surname;
       let url =
-        "https://export.arxiv.org/api/query?max_results=" + EXTERNAL_SERVICE_CANDIDATE_LIMIT + "&search_query=" +
+        "https://export.arxiv.org/api/query?max_results=" +
+        EXTERNAL_SERVICE_CANDIDATE_LIMIT +
+        "&search_query=" +
         encodeURIComponent(query);
       let xhr = await requestService(url, { responseType: "document" });
       if (xhr.outcome === "failed") {
@@ -279,7 +284,8 @@ export let EXTERNAL_SERVICES: ExternalService[] = [
     name: "Open Library",
     async search(seed) {
       let url =
-        "https://openlibrary.org/search.json?limit=" + EXTERNAL_SERVICE_CANDIDATE_LIMIT +
+        "https://openlibrary.org/search.json?limit=" +
+        EXTERNAL_SERVICE_CANDIDATE_LIMIT +
         "&fields=key,title,author_name,first_publish_year,editions,editions.isbn" +
         "&title=" +
         encodeURIComponent(seed.title) +
