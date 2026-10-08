@@ -31,6 +31,7 @@ let PLUGIN_CAPABILITIES = [
   "import_from_url",
   "resolve_url",
   "attach_standalone",
+  "import_store_attachments",
 ];
 
 // The request path of each endpoint the add-on registers.
