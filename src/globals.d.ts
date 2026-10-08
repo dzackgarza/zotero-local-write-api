@@ -14,6 +14,7 @@ declare const LOCAL_WRITE_PATH: string;
 declare const VERSION_PATH: string;
 declare const OPENAPI_PATH: string;
 declare const FULLTEXT_ALLOWED_DIRS: string[];
+declare const EXTERNAL_SERVICE_CANDIDATE_LIMIT: number;
 declare const ADDON_ID: string;
 declare const HOMEPAGE_URL: string;
 declare const UPDATE_URL: string;

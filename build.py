@@ -45,6 +45,7 @@ WRITE_PATH = cfg["endpoints"]["write"]
 VERSION_PATH = cfg["endpoints"]["version"]
 OPENAPI_PATH = cfg["endpoints"]["openapi"]
 FULLTEXT_ALLOWED_DIRS = cfg["fulltext_attach"]["allowed_dirs"]
+EXTERNAL_SERVICE_CANDIDATE_LIMIT = cfg["external_services"]["candidate_limit"]
 
 UPDATE_MANIFEST_URL = (
     f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/updates.json"
@@ -59,6 +60,7 @@ ESBUILD_DEFINES = {
     "VERSION_PATH": VERSION_PATH,
     "OPENAPI_PATH": OPENAPI_PATH,
     "FULLTEXT_ALLOWED_DIRS": FULLTEXT_ALLOWED_DIRS,
+    "EXTERNAL_SERVICE_CANDIDATE_LIMIT": EXTERNAL_SERVICE_CANDIDATE_LIMIT,
     "ADDON_ID": ADDON_ID,
     "HOMEPAGE_URL": REPO_URL,
     "UPDATE_URL": UPDATE_MANIFEST_URL,

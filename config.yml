@@ -21,3 +21,6 @@ fulltext_attach:
   allowed_dirs:
     - /tmp
     - /var/tmp
+external_services:
+  # How many candidates each external metadata search asks for (Crossref, zbMATH Open, arXiv, Open Library); duplicate and identity matching sees only these.
+  candidate_limit: 20
