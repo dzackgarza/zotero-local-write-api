@@ -214,7 +214,9 @@ function creatorsAgree(a: TitleRuleCreator[] | null, b: TitleRuleCreator[] | nul
   if (a === null || b === null) {
     return a === b;
   }
-  return a.some((ac) => b.some((bc) => ac.lastName === bc.lastName && ac.firstInitial === bc.firstInitial));
+  return a.some((ac) =>
+    b.some((bc) => ac.lastName === bc.lastName && ac.firstInitial === bc.firstInitial),
+  );
 }
 
 // Two items with equal normalized titles are one work unless both have DOIs that differ,
