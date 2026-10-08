@@ -52,7 +52,7 @@ export type TranslatorItemJSON = JsonPayload & {
   url?: string;
   DOI?: string;
   ISBN?: string;
-  creators?: { lastName?: string; name?: string }[];
+  creators?: { firstName?: string; lastName?: string; name?: string }[];
 };
 // A detected web translator, as Zotero.Translate.Web#getTranslators resolves it.
 // itemType is detectWeb's answer: an item type, or "multiple" for a choice of
@@ -155,7 +155,11 @@ export function createImportTranslator(): ImportTranslator {
 
 // zotero-types declares Zotero.ItemFields as `any`.
 // Models zotero/zotero chrome/content/zotero/xpcom/data/itemFields.js.
-export type ItemFieldsApi = { getID(field: string): number | false };
+export type ItemFieldsApi = {
+  getID(field: string): number | false;
+  // False when no item type maps a field to the base field.
+  getTypeFieldsFromBase(baseField: string): number[] | false;
+};
 // The text of a PDF as Zotero's PDF worker extracts it for the recognizer service
 // (pdfWorker/manager.js `getRecognizerData`). Each page is its width, its height and its
 // content, nested arrays of words and positions that only the service reads.

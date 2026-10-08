@@ -2,6 +2,10 @@ import { userLibraryID } from "./library";
 import { normalizeText } from "./metadata-services";
 import { type ItemFieldsApi, type TranslatorItemJSON } from "./zotero-api";
 
+// A creator as Zotero's duplicate finder compares it; an absent firstName is a creator
+// known by one name.
+type DuplicateCreator = { lastName: string; firstName?: string };
+
 // The fields Zotero's duplicate finder compares; undefined is a field the item lacks.
 export type DuplicateKeys = {
   itemType: string;
@@ -9,6 +13,8 @@ export type DuplicateKeys = {
   DOI?: string;
   ISBN?: string;
   url?: string;
+  date?: string;
+  creators: DuplicateCreator[];
 };
 type ItemValueRow = { itemID: number; value: string };
 
@@ -19,6 +25,11 @@ export function duplicateKeysFromJSON(json: TranslatorItemJSON): DuplicateKeys {
     DOI: json.DOI,
     ISBN: json.ISBN,
     url: json.url,
+    date: json.date,
+    creators: (json.creators ?? []).map((creator) => ({
+      lastName: creator.lastName ?? creator.name ?? "",
+      firstName: creator.firstName,
+    })),
   };
 }
 
@@ -110,14 +121,136 @@ async function urlAndTitleMatches(keys: DuplicateKeys): Promise<number[]> {
   return matches;
 }
 
+// What the title rule of Zotero's duplicate finder compares of one item, read as
+// `_findDuplicates` reads it: a DOI only when it starts "10.", an ISBN only of a book, and
+// the year as the first four characters of the stored multipart date, unless "0000".
+type TitleRuleKeys = {
+  DOI: string | null;
+  ISBN: string | null;
+  year: number | null;
+  creators: { lastName: string; firstInitial: string }[];
+};
+
+function titleRuleKeys(
+  itemType: string,
+  doi: string,
+  isbn: string,
+  multipartDate: string,
+  creators: DuplicateCreator[],
+): TitleRuleKeys {
+  let cleanDOI = doi.trim().toUpperCase();
+  let cleanISBN = itemType === "book" ? Zotero.Utilities.cleanISBN(isbn) : false;
+  let year = multipartDate.slice(0, 4);
+  return {
+    DOI: cleanDOI.startsWith("10.") ? cleanDOI : null,
+    ISBN: cleanISBN === false || cleanISBN === "" ? null : cleanISBN,
+    year: year === "" || year === "0000" ? null : Number(year),
+    creators: creators.map((creator) => ({
+      lastName: normalizeText(creator.lastName),
+      firstInitial: normalizeText(creator.firstName ?? "").charAt(0),
+    })),
+  };
+}
+
+function keysTitleRuleKeys(keys: DuplicateKeys): TitleRuleKeys {
+  return titleRuleKeys(
+    keys.itemType,
+    keys.DOI ?? "",
+    keys.ISBN ?? "",
+    keys.date === undefined ? "" : Zotero.Date.strToMultipart(keys.date),
+    keys.creators,
+  );
+}
+
+function itemTitleRuleKeys(item: Zotero.Item): TitleRuleKeys {
+  return titleRuleKeys(
+    item.itemType,
+    item.getField("DOI"),
+    item.getField("ISBN"),
+    item.getField("date", true, true),
+    item.getCreators().map((creator) => ({
+      lastName: creator.lastName,
+      firstName: creator.fieldMode === 0 ? creator.firstName : undefined,
+    })),
+  );
+}
+
+// Two items with equal normalized titles are one work unless both have DOIs that differ,
+// both have ISBNs that differ, or both have years more than one apart; and they must
+// both have no creators or share a creator by last name and first initial. Ported from
+// the title comparison of `Zotero.Duplicates.prototype._findDuplicates`
+// (chrome/content/zotero/xpcom/duplicates.js), which compares only items already in a
+// library and so cannot be called for one unsaved item.
+function sameWorkByTitle(a: TitleRuleKeys, b: TitleRuleKeys): boolean {
+  if (a.DOI !== null && b.DOI !== null && a.DOI !== b.DOI) {
+    return false;
+  }
+  if (a.ISBN !== null && b.ISBN !== null && a.ISBN !== b.ISBN) {
+    return false;
+  }
+  if (a.year !== null && b.year !== null && Math.abs(a.year - b.year) > 1) {
+    return false;
+  }
+  if (a.creators.length === 0 || b.creators.length === 0) {
+    return a.creators.length === b.creators.length;
+  }
+  return a.creators.some((ac) =>
+    b.creators.some((bc) => ac.lastName === bc.lastName && ac.firstInitial === bc.firstInitial),
+  );
+}
+
+// The title, and every field mapped to it, of each live regular item of the user library.
+async function titleRows(): Promise<ItemValueRow[]> {
+  let mappedIDs = (Zotero.ItemFields as ItemFieldsApi).getTypeFieldsFromBase("title");
+  let titleIDs = [requireFieldID("title"), ...(mappedIDs === false ? [] : mappedIDs)];
+  let sql =
+    "SELECT itemID, value FROM items JOIN itemData USING (itemID) " +
+    "JOIN itemDataValues USING (valueID) " +
+    "WHERE libraryID=? AND fieldID IN (" +
+    titleIDs.map(() => "?").join() +
+    ") AND itemTypeID NOT IN (?, ?) " +
+    "AND itemID NOT IN (SELECT itemID FROM deletedItems)";
+  let rows = await Zotero.DB.queryAsync(sql, [
+    userLibraryID(),
+    ...titleIDs,
+    requireItemTypeID("attachment"),
+    requireItemTypeID("note"),
+  ]);
+  if (rows === undefined) {
+    throw new Error("Zotero answered a SELECT with no rows array");
+  }
+  return rows as ItemValueRow[];
+}
+
+async function titleCreatorYearMatches(keys: DuplicateKeys): Promise<number[]> {
+  let title = normalizeText(keys.title ?? "");
+  if (title === "") {
+    return [];
+  }
+  let wanted = keysTitleRuleKeys(keys);
+  let matches: number[] = [];
+  for (let row of await titleRows()) {
+    if (normalizeText(String(row.value)) !== title) {
+      continue;
+    }
+    let candidate = await Zotero.Items.getAsync(row.itemID);
+    if (candidate !== false && sameWorkByTitle(wanted, itemTitleRuleKeys(candidate))) {
+      matches.push(row.itemID);
+    }
+  }
+  return matches;
+}
+
 // The item already in the library that is this work, by the rules of Zotero's
-// duplicate finder (chrome/content/zotero/xpcom/duplicates.js): equal DOI, or
-// equal ISBN between books. A URL counts only together with an equal title,
-// because one landing URL can serve different papers over time.
+// duplicate finder (chrome/content/zotero/xpcom/duplicates.js): equal DOI, equal
+// ISBN between books, or equal title with agreeing creators and year. A URL counts
+// only together with an equal title, because one landing URL can serve different
+// papers over time.
 export async function findExistingItem(keys: DuplicateKeys): Promise<Zotero.Item | null> {
   let matchIDs = [
     ...(await doiMatches(keys)),
     ...(await isbnMatches(keys)),
+    ...(await titleCreatorYearMatches(keys)),
     ...(await urlAndTitleMatches(keys)),
   ];
   for (let itemID of [...new Set(matchIDs)].sort((a, b) => a - b)) {
