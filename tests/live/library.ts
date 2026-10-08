@@ -38,13 +38,16 @@ export async function readItem(itemKey: string): Promise<ItemData> {
   return (await readLibrary<{ data: ItemData }>(path, `read-back of ${itemKey}`)).data;
 }
 
-/** The files Zotero stores under an item. */
-async function storedChildren(itemKey: string): Promise<ChildData[]> {
+/** The attachments under an item, stored files and links alike. */
+export async function attachmentChildren(itemKey: string): Promise<ChildData[]> {
   const path = `items/${encodeURIComponent(itemKey)}/children`;
   const children = await readLibrary<{ data: ChildData }[]>(path, `children of ${itemKey}`);
-  return children
-    .map((child) => child.data)
-    .filter((child) => child.itemType === "attachment" && child.linkMode === "imported_url");
+  return children.map((child) => child.data).filter((child) => child.itemType === "attachment");
+}
+
+/** The files Zotero stores under an item. */
+async function storedChildren(itemKey: string): Promise<ChildData[]> {
+  return (await attachmentChildren(itemKey)).filter((child) => child.linkMode === "imported_url");
 }
 
 export async function expectStoredPdf(itemKey: string): Promise<void> {

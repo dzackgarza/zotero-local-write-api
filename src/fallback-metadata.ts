@@ -3,7 +3,12 @@ import { badRequest } from "./errors";
 import { userLibraryID } from "./library";
 import { findExistingOutsideRecognition, storePdf } from "./pdf-recognition";
 import { requireNonEmptyString, requireObject, requireString } from "./request-fields";
-import { type FetchedSource, type ImportOutcome, UNRESOLVED_TAG } from "./source-results";
+import {
+  type FetchedSource,
+  type ImportOutcome,
+  type SaveTarget,
+  UNRESOLVED_TAG,
+} from "./source-results";
 
 // ── fallback_metadata ───────────────────────────────────────────────
 // What the caller asserts about a source that no method identifies. The item
@@ -76,20 +81,21 @@ function fallbackDuplicateKeys(url: string, fallback: FallbackMetadata): Duplica
 }
 
 // The source as the caller describes it. A source already saved this way
-// (equal URL and title) is returned as it is.
+// (equal URL and title) is returned as it is. A PDF source is stored under a new item
+// when the target stores attachments.
 export async function saveFallback(
   url: string,
   source: FetchedSource | null,
   fallback: FallbackMetadata,
-  collectionIDs: number[],
+  target: SaveTarget,
 ): Promise<ImportOutcome> {
   let existing = await findExistingOutsideRecognition(fallbackDuplicateKeys(url, fallback));
   if (existing) {
-    await fileExistingItem(existing, collectionIDs);
+    await fileExistingItem(existing, target.collectionIDs);
     return fallbackOutcome(existing, true);
   }
-  let item = await saveFallbackItem(url, fallback, collectionIDs);
-  if (source !== null && source.kind === "pdf") {
+  let item = await saveFallbackItem(url, fallback, target.collectionIDs);
+  if (target.storeAttachments && source !== null && source.kind === "pdf") {
     await storePdf(source.finalUrl, item.id);
   }
   return fallbackOutcome(item, false);

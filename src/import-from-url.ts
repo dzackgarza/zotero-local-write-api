@@ -8,7 +8,7 @@ import {
   recognizePdf,
   storePdf,
 } from "./pdf-recognition";
-import { normalizeStringList } from "./request-fields";
+import { normalizeStringList, requireBoolean } from "./request-fields";
 import { type RequestData, successResult } from "./responses";
 import { fetchSource, requireHttpUrl } from "./source-fetch";
 import { identifierText, identifyByIdentifier } from "./source-methods";
@@ -20,6 +20,7 @@ import {
   type Identification,
   type ImportOutcome,
   recordAttempt,
+  type SaveTarget,
   type SourceMethod,
   SourceNotIdentifiedError,
   translatorDetails,
@@ -27,14 +28,24 @@ import {
 import { type TranslatorItemJSON, type ZoteroTranslateApi } from "./zotero-api";
 
 // The Zotero Connector's save mode: the translator's attachments are stored, and an
-// open-access PDF is looked up when the translator gives none.
-function connectorItemSaver(collectionIDs: number[]) {
-  let translateApi = Zotero.Translate as ZoteroTranslateApi;
-  return new translateApi.ItemSaver({
+// open-access PDF is looked up when the translator gives none. A target that stores no
+// attachments ignores them, and Zotero then looks up no open-access PDF.
+function connectorItemSaver(target: SaveTarget) {
+  let { ItemSaver } = Zotero.Translate as ZoteroTranslateApi;
+  return new ItemSaver({
     libraryID: userLibraryID(),
-    collections: collectionIDs.length ? collectionIDs : false,
-    attachmentMode: translateApi.ItemSaver.ATTACHMENT_MODE_DOWNLOAD,
+    collections: target.collectionIDs.length ? target.collectionIDs : false,
+    attachmentMode: target.storeAttachments
+      ? ItemSaver.ATTACHMENT_MODE_DOWNLOAD
+      : ItemSaver.ATTACHMENT_MODE_IGNORE,
   });
+}
+
+// Zotero saves a translator's link attachments in every attachment mode
+// (translate_item.js `_saveAttachment`), so a target that stores no attachments
+// gets the item without them.
+function itemToSave(json: TranslatorItemJSON, target: SaveTarget): TranslatorItemJSON {
+  return target.storeAttachments ? json : { ...json, attachments: [] };
 }
 
 function attachmentFailure(
@@ -51,11 +62,11 @@ function attachmentFailure(
 // Saves one translated item, and records each attachment that Zotero could not store.
 async function saveTranslatedItem(
   json: TranslatorItemJSON,
-  collectionIDs: number[],
+  target: SaveTarget,
 ): Promise<{ item: Zotero.Item; attachmentFailures: AttachmentFailure[] }> {
   let attachmentFailures: AttachmentFailure[] = [];
-  let items = await connectorItemSaver(collectionIDs).saveItems(
-    [json],
+  let items = await connectorItemSaver(target).saveItems(
+    [itemToSave(json, target)],
     (attachment, progress, error) => {
       if (progress === false) {
         attachmentFailures.push(attachmentFailure(attachment, error));
@@ -70,24 +81,24 @@ async function saveTranslatedItem(
 
 async function saveIdentification(
   identification: Identification & { method: SourceMethod },
-  collectionIDs: number[],
+  target: SaveTarget,
 ): Promise<ImportOutcome> {
   let { method, translator } = identification;
   let existing = await findExistingOutsideRecognition(duplicateKeysFromJSON(identification.json));
   if (existing) {
-    await fileExistingItem(existing, collectionIDs);
+    await fileExistingItem(existing, target.collectionIDs);
     return existingOutcome(existing, method, translator);
   }
-  let saved = await saveTranslatedItem(identification.json, collectionIDs);
+  let saved = await saveTranslatedItem(identification.json, target);
   return { ...saved, existing: false, method, translator };
 }
 
 // A PDF that Zotero's recognizer does not identify is saved from an identifier in its URLs,
-// with the PDF stored under the new item.
+// with the PDF stored under the new item when the target stores attachments.
 async function importPdfByIdentifier(
   requestedUrl: string,
   finalUrl: string,
-  collectionIDs: number[],
+  target: SaveTarget,
   attempts: Attempt[],
 ): Promise<ImportOutcome | null> {
   let byIdentifier = recordAttempt(
@@ -98,8 +109,8 @@ async function importPdfByIdentifier(
   if (byIdentifier === null) {
     return null;
   }
-  let outcome = await saveIdentification({ ...byIdentifier, method: "identifier" }, collectionIDs);
-  if (!outcome.existing && !hasStoredPdf(outcome.item)) {
+  let outcome = await saveIdentification({ ...byIdentifier, method: "identifier" }, target);
+  if (target.storeAttachments && !outcome.existing && !hasStoredPdf(outcome.item)) {
     await storePdf(finalUrl, outcome.item.id);
   }
   return outcome;
@@ -108,31 +119,31 @@ async function importPdfByIdentifier(
 async function importPdfSource(
   requestedUrl: string,
   finalUrl: string,
-  collectionIDs: number[],
+  target: SaveTarget,
   attempts: Attempt[],
 ): Promise<ImportOutcome | null> {
   let recognized = recordAttempt(
     attempts,
     "pdf_recognition",
-    await recognizePdf(finalUrl, collectionIDs),
+    await recognizePdf(finalUrl, target),
   );
   if (recognized) {
     return { ...recognized, method: "pdf_recognition" };
   }
-  return importPdfByIdentifier(requestedUrl, finalUrl, collectionIDs, attempts);
+  return importPdfByIdentifier(requestedUrl, finalUrl, target, attempts);
 }
 
 async function identifySource(
   url: string,
   source: FetchedSource,
-  collectionIDs: number[],
+  target: SaveTarget,
   attempts: Attempt[],
 ): Promise<ImportOutcome | null> {
   if (source.kind === "pdf") {
-    return importPdfSource(url, source.finalUrl, collectionIDs, attempts);
+    return importPdfSource(url, source.finalUrl, target, attempts);
   }
   let identification = await identifyPage(url, source.finalUrl, source.document, attempts);
-  return identification === null ? null : saveIdentification(identification, collectionIDs);
+  return identification === null ? null : saveIdentification(identification, target);
 }
 
 // The fetched source and the item a method saved from it; both are null when the source
@@ -142,7 +153,7 @@ async function identifySource(
 async function fetchAndIdentify(
   url: string,
   fallback: FallbackMetadata | null,
-  collectionIDs: number[],
+  target: SaveTarget,
   attempts: Attempt[],
 ): Promise<{ source: FetchedSource | null; outcome: ImportOutcome | null }> {
   let source: FetchedSource | null = null;
@@ -150,7 +161,7 @@ async function fetchAndIdentify(
     source = await fetchSource(url);
     return {
       source,
-      outcome: await identifySource(url, source, collectionIDs, attempts),
+      outcome: await identifySource(url, source, target, attempts),
     };
   } catch (error) {
     if (!(error instanceof SourceNotIdentifiedError && fallback !== null)) {
@@ -165,10 +176,10 @@ async function fetchAndIdentify(
 async function importSource(
   url: string,
   fallback: FallbackMetadata | null,
-  collectionIDs: number[],
+  target: SaveTarget,
   attempts: Attempt[],
 ): Promise<{ source: FetchedSource | null; outcome: ImportOutcome }> {
-  let { source, outcome } = await fetchAndIdentify(url, fallback, collectionIDs, attempts);
+  let { source, outcome } = await fetchAndIdentify(url, fallback, target, attempts);
   if (outcome !== null) {
     return { source, outcome };
   }
@@ -177,7 +188,18 @@ async function importSource(
   }
   return {
     source,
-    outcome: await saveFallback(url, source, fallback, collectionIDs),
+    outcome: await saveFallback(url, source, fallback, target),
+  };
+}
+
+// The collections of the request, and its store_attachments, which is true when absent.
+async function saveTarget(data: RequestData, collectionKeys: string[]): Promise<SaveTarget> {
+  return {
+    collectionIDs: await userCollectionIDs(collectionKeys),
+    storeAttachments:
+      data.store_attachments === undefined
+        ? true
+        : requireBoolean(data.store_attachments, "store_attachments"),
   };
 }
 
@@ -189,10 +211,10 @@ export async function handleImportFromUrl(data: RequestData) {
     data.collection_keys === undefined
       ? []
       : normalizeStringList(data.collection_keys, "collection_keys");
-  let collectionIDs = await userCollectionIDs(collectionKeys);
+  let target = await saveTarget(data, collectionKeys);
 
   let attempts: Attempt[] = [];
-  let { source, outcome } = await importSource(url, fallback, collectionIDs, attempts);
+  let { source, outcome } = await importSource(url, fallback, target, attempts);
 
   return successResult(
     "import_from_url",

@@ -26,6 +26,13 @@ export function requireNonEmptyString(value: unknown, fieldName: string): string
   return cleaned;
 }
 
+export function requireBoolean(value: unknown, fieldName: string): boolean {
+  if (typeof value !== "boolean") {
+    throw badRequest(fieldName + " must be a boolean");
+  }
+  return value;
+}
+
 export function optionalNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
