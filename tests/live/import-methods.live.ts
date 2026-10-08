@@ -211,10 +211,19 @@ test("import_by_identifier of an arXiv ID the library holds answers its one entr
   expect(await heldWork(first.item_key, "1105.0004")).toEqual(held);
 });
 
-// A BibTeX entry for a held work answers that entry, as an identifier does.
+// A BibTeX entry for a held work answers that entry, as an identifier does. The library
+// knows a work by its DOI, its ISBN, or its URL with its title; 10.5555 is the DOI test
+// prefix.
 test("import_bibtex of an entry the library holds answers its one entry", async () => {
-  const record = await Bun.file(new URL("../fixtures/uid-record.bib", import.meta.url)).text();
-  const bibtex = record.replaceAll("__UID__", `held-${uid}`);
+  const bibtex = [
+    `@article{held${uid},`,
+    `  title = {bibtex-held-${uid}},`,
+    `  author = {Fixture, Ada},`,
+    `  journal = {Journal of Fixtures},`,
+    `  year = {2020},`,
+    `  doi = {10.5555/lw-held-${uid}}`,
+    `}`,
+  ].join("\n");
   const first = await session.importBibtex(bibtex);
   expect(first.item_keys).toEqual([first.item_key]);
   const held = await heldWork(first.item_key, `held-${uid}`);
