@@ -1,5 +1,5 @@
 import { badRequest, notFound } from "./errors";
-import { type FiledWork, fileWork } from "./import-from-url";
+import { type FiledWork, fileWork, saveForTarget, saveWithItemSaver } from "./import-from-url";
 import { citationKeys, userCollectionIDs, userLibraryID } from "./library";
 import { normalizeStringList, requireNonEmptyString } from "./request-fields";
 import { type RequestData, successResult } from "./responses";
@@ -9,6 +9,7 @@ import {
   findIdentifiers,
   type Identifier,
   type TranslatorItemJSON,
+  type ZoteroTranslateApi,
   type ZoteroTranslateSearchApi,
 } from "./zotero-api";
 
@@ -20,22 +21,6 @@ function extractIdentifiers(raw: string): Identifier[] {
     throw badRequest("Could not parse identifier");
   }
   return identifiers;
-}
-
-function requireImportedItems(value: unknown, operation: string): Zotero.Item[] {
-  if (!Array.isArray(value)) {
-    throw new Error(operation + " did not return an item array");
-  }
-  for (let item of value) {
-    if (typeof item !== "object" || item === null) {
-      throw new Error(operation + " returned a non-object item");
-    }
-    let candidate = item as { key?: unknown; id?: unknown };
-    if (typeof candidate.key !== "string" || typeof candidate.id !== "number") {
-      throw new Error(operation + " returned an item without key/id");
-    }
-  }
-  return value as Zotero.Item[];
 }
 
 // The response fields that name the imported items; the first item is the primary one.
@@ -50,23 +35,31 @@ async function importedItemsFields(items: Zotero.Item[]) {
   };
 }
 
-// Imports one BibTeX entry into the given collections.
-async function translateBibTeX(bibtex: string, collectionIDs: number[]): Promise<Zotero.Item[]> {
+// The work one BibTeX entry names, as item JSON; the translation saves nothing.
+async function translateBibTeX(bibtex: string): Promise<TranslatorItemJSON> {
   let translator = createImportTranslator();
   translator.setTranslator(BIBTEX_TRANSLATOR_ID);
   translator.setString(bibtex);
-  let items = requireImportedItems(
-    await translator.translate({
-      libraryID: userLibraryID(),
-      collections: collectionIDs,
-      saveAttachments: true,
-    }),
-    "import_bibtex",
-  );
-  if (items.length !== 1) {
-    throw new Error("import_bibtex must create exactly one Zotero item");
+  let works = await translator.translate({ libraryID: false, saveAttachments: false });
+  if (works.length !== 1) {
+    throw badRequest("import_bibtex takes exactly one BibTeX entry, found " + works.length);
   }
-  return items;
+  return works[0];
+}
+
+// Zotero's own import saver (translate.js `Zotero.Translate.Import#_prepareTranslation`):
+// the entry's file attachments are stored from their paths.
+function saveImportedWork(collectionIDs: number[]) {
+  let { ItemSaver } = Zotero.Translate as ZoteroTranslateApi;
+  return (json: TranslatorItemJSON) =>
+    saveWithItemSaver(
+      new ItemSaver({
+        libraryID: userLibraryID(),
+        collections: collectionIDs.length ? collectionIDs : false,
+        attachmentMode: ItemSaver.ATTACHMENT_MODE_FILE,
+      }),
+      json,
+    );
 }
 
 export async function handleImportBibTeX(data: RequestData) {
@@ -75,16 +68,22 @@ export async function handleImportBibTeX(data: RequestData) {
     data.collection_keys === undefined
       ? []
       : normalizeStringList(data.collection_keys, "collection_keys");
-  let items = await translateBibTeX(bibtex, await userCollectionIDs(collectionKeys));
+  let collectionIDs = await userCollectionIDs(collectionKeys);
+  let filed = await fileWork(
+    await translateBibTeX(bibtex),
+    collectionIDs,
+    saveImportedWork(collectionIDs),
+  );
 
   return successResult(
     "import_bibtex",
     {
-      item_count: items.length,
+      item_count: 1,
       collection_keys: collectionKeys,
       translator_id: BIBTEX_TRANSLATOR_ID,
+      attachment_failures: filed.attachmentFailures,
     },
-    await importedItemsFields(items),
+    { ...(await importedItemsFields([filed.item])), existing: [filed.existing] },
   );
 }
 
@@ -115,10 +114,11 @@ async function fileIdentifiers(
   identifiers: Identifier[],
   collectionIDs: number[],
 ): Promise<FiledWork[]> {
+  let saveFromSearch = saveForTarget({ collectionIDs, storeAttachments: true });
   let filed: FiledWork[] = [];
   for (let identifier of identifiers) {
     for (let work of await translateIdentifier(identifier)) {
-      filed.push(await fileWork(work, { collectionIDs, storeAttachments: true }));
+      filed.push(await fileWork(work, collectionIDs, saveFromSearch));
     }
   }
   return filed;

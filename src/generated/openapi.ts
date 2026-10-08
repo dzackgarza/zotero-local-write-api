@@ -156,6 +156,7 @@ export interface components {
         | "import_store_attachments"
         | "recognition_held_from_sync"
         | "import_by_identifier_existing"
+        | "import_bibtex_existing"
       )[];
       /** @description Whether Zotero has loaded its translators. Imports, URL resolution and identifier lookups fail until it is true; a client that has just started Zotero waits for it. */
       translators_ready: boolean;
@@ -472,6 +473,7 @@ export interface components {
       tags?: components["schemas"]["NormalizedStringArray"];
       collection_keys?: components["schemas"]["NormalizedStringArray"];
     };
+    /** @description Create one Zotero item from one BibTeX entry, through Zotero's BibTeX import translator, with the file attachments the entry names. When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. */
     ImportBibtexRequest: {
       /**
        * @description discriminator enum property added by openapi-typescript
@@ -957,9 +959,19 @@ export interface components {
         item_count: number;
         collection_keys: string[];
         translator_id: string;
+        /** @description Attachments the translator named that Zotero could not store. The item is saved without them. */
+        attachment_failures: {
+          /** @description Null when the translator named no title. */
+          title: string | null;
+          /** @description Null when the translator named no URL. */
+          url: string | null;
+          error: string;
+        }[];
       };
       /** @description The Better BibTeX citation key of each item, in item_keys order. */
       citation_keys: string[];
+      /** @description For the item in item_keys, true when the work was already in the library and that item is returned; it gains the requested collections, and nothing else about it changes. Servers that answer this field list import_bibtex_existing in /version capabilities. */
+      existing: boolean[];
     } & {
       /**
        * @description discriminator enum property added by openapi-typescript

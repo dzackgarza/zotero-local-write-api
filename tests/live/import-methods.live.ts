@@ -1,7 +1,8 @@
 /**
  * Live proof of `import_from_url`: one source URL in, one correct Zotero item
  * out, with the method that identified the source. Also proves that
- * `import_by_identifier` answers the citation keys of the items it creates.
+ * `import_by_identifier` answers the citation keys of the items it creates, and
+ * that `import_by_identifier` and `import_bibtex` answer the entry of a held work.
  *
  * Every case drives a real running Zotero over real HTTP. The remote cases hit
  * the real publisher and metadata services, because the claim under test is
@@ -14,6 +15,9 @@
  * path. `openImportSession` owns the setup and the cleanup.
  */
 import { expect, test } from "bun:test";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { citationHead } from "./fixture-server";
 import { openImportSession } from "./import-session";
@@ -208,4 +212,42 @@ test("import_by_identifier of an arXiv ID the library holds answers its one entr
   expect(second.existing).toEqual([true]);
   await Bun.sleep(10_000);
   expect(await heldWork(first.item_key, "1105.0004")).toEqual(held);
+});
+
+// A BibTeX entry for a held work answers that entry, as an identifier does. The library
+// knows a work by its DOI, its ISBN, or its URL with its title; 10.5555 is the DOI test
+// prefix.
+test("import_bibtex of an entry the library holds answers its one entry", async () => {
+  const record = await Bun.file(new URL("../fixtures/held-record.bib", import.meta.url)).text();
+  const bibtex = record.replaceAll("__UID__", uid);
+  const first = await session.importBibtex(bibtex);
+  expect(first.item_keys).toEqual([first.item_key]);
+  expect(first.existing).toEqual([false]);
+  const held = await heldWork(first.item_key, `held-${uid}`);
+  expect(held.entries).toEqual([first.item_key]);
+  const second = await session.importBibtex(bibtex);
+  expect(second.item_keys).toEqual([first.item_key]);
+  expect(second.existing).toEqual([true]);
+  expect(await heldWork(first.item_key, `held-${uid}`)).toEqual(held);
+});
+
+test("import_bibtex stores the PDF that the entry's file field names", async () => {
+  const pdfUrl = server.servePdf(`/bibtex-file-${uid}.pdf`, `lw bibtex file ${uid}`);
+  const pdfPath = join(tmpdir(), `lw-bibtex-file-${uid}.pdf`);
+  await Bun.write(pdfPath, await (await fetch(pdfUrl)).arrayBuffer());
+  try {
+    const record = await Bun.file(new URL("../fixtures/file-record.bib", import.meta.url)).text();
+    const data = await session.importBibtex(
+      record.replaceAll("__UID__", uid).replaceAll("__PDF_PATH__", pdfPath),
+    );
+    expect(data.existing).toEqual([false]);
+    expect(data.details.attachment_failures).toEqual([]);
+    const stored = (await attachmentChildren(data.item_key)).map(({ contentType, linkMode }) => ({
+      contentType,
+      linkMode,
+    }));
+    expect(stored).toEqual([{ contentType: "application/pdf", linkMode: "imported_file" }]);
+  } finally {
+    await rm(pdfPath);
+  }
 });

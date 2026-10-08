@@ -66,7 +66,7 @@ type ZoteroTranslateWebApi = {
 };
 // Models translation/translate_item.js: the saver the translators themselves
 // use to turn item JSON into saved items inside one transaction.
-type ZoteroItemSaverApi = {
+export type ZoteroItemSaverApi = {
   saveItems(
     jsonItems: TranslatorItemJSON[],
     // Called with progress `false` and the error when an attachment fails.
@@ -92,6 +92,7 @@ export type ZoteroTranslateApi = {
   ItemSaver: ZoteroItemSaverConstructor & {
     ATTACHMENT_MODE_IGNORE: number;
     ATTACHMENT_MODE_DOWNLOAD: number;
+    ATTACHMENT_MODE_FILE: number;
   };
 };
 export function createTranslateSearch(): ZoteroTranslateSearchApi {
@@ -131,11 +132,6 @@ export type Identifier = Record<string, string>;
 type ImportTranslator = {
   setTranslator(translatorId: string): void;
   setString(input: string): void;
-  translate(options: {
-    libraryID: number;
-    collections: number[];
-    saveAttachments: boolean;
-  }): Promise<unknown>;
   translate(options: { libraryID: false; saveAttachments: false }): Promise<TranslatorItemJSON[]>;
 };
 export type ActiveZoteroPane = {

@@ -1,0 +1,1 @@
+GET /version added the new `import_bibtex_existing` enum value to the `capabilities/items/` response property for the response status `200`
