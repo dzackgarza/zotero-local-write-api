@@ -12,7 +12,7 @@
 import { expect, test } from "bun:test";
 
 import { client, openImportSession } from "./import-session";
-import { expectStoredPdf, libraryItemCount, readItem } from "./library";
+import { entriesTitled, expectStoredPdf, readItem } from "./library";
 import { liveSetting } from "./settings";
 
 const session = openImportSession();
@@ -102,7 +102,6 @@ test("a PDF source is downloaded once, for recognition and storage together", as
 });
 
 test("fallback_metadata without a year is rejected and creates nothing", async () => {
-  const before = await libraryItemCount();
   const url = server.servePage(`/plain-noyear-${uid}`, "<title>Nothing here</title>");
   const { title, creators } = fallbackMetadata("noyear");
   // Sent as raw JSON: the typed client would refuse the missing year at compile time.
@@ -116,5 +115,5 @@ test("fallback_metadata without a year is rejected and creates nothing", async (
     }),
   });
   expect(response.status).toBe(400);
-  expect(await libraryItemCount()).toBe(before);
+  expect(await entriesTitled(title)).toEqual([]);
 });

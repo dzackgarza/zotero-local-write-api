@@ -10,6 +10,7 @@ export type ItemData = {
   date?: string;
   url?: string;
   citationKey: string;
+  dateAdded: string;
   creators: { creatorType?: string; firstName?: string; lastName?: string }[];
   collections: string[];
   tags: { tag: string }[];
@@ -63,22 +64,13 @@ export async function expectStoredPdf(itemKey: string): Promise<void> {
   expect(contentTypes).toContain("application/pdf");
 }
 
-/** The number of top-level items the library holds. */
-export async function libraryItemCount(): Promise<number> {
-  const response = await fetch(libraryUrl("items/top?limit=1"));
-  if (!response.ok) {
-    throw new Error(`item count failed: HTTP ${response.status}`);
-  }
-  return Number(response.headers.get("Total-Results"));
-}
-
 /**
  * The standalone attachments whose URL contains `source`, among the 25 top-level items
  * added last, outside the trash. Other clients of the same Zotero add items during a run,
  * so only attachments of the work under test count. The local API ignores `/top` once
  * `itemType` is given, so the filter runs here.
  */
-async function strayPdfs(source: string): Promise<string[]> {
+export async function strayPdfs(source: string): Promise<string[]> {
   const path = "items/top?sort=dateAdded&direction=desc&limit=25";
   const items = await readLibrary<{ key: string; data: { itemType: string; url?: string } }[]>(
     path,
@@ -94,12 +86,26 @@ async function strayPdfs(source: string): Promise<string[]> {
     .map((item) => item.key);
 }
 
-/** The keys of the top-level items outside the trash that carry this title. */
-async function entriesTitled(title: string): Promise<string[]> {
+/** The top-level items outside the trash that carry this title. */
+async function itemsTitled(title: string): Promise<{ key: string; data: ItemData }[]> {
   const path = `items/top?q=${encodeURIComponent(title)}&limit=100`;
   const items = await readLibrary<{ key: string; data: ItemData }[]>(path, `items titled ${title}`);
-  return items
-    .filter((item) => item.data.title === title && item.data.deleted !== true)
+  return items.filter((item) => item.data.title === title && item.data.deleted !== true);
+}
+
+/** The keys of the top-level items outside the trash that carry this title. */
+export async function entriesTitled(title: string): Promise<string[]> {
+  return (await itemsTitled(title)).map((item) => item.key).sort();
+}
+
+/**
+ * The keys of the top-level items outside the trash that carry this title and were added
+ * at or after `since`. Zotero records dateAdded to the second.
+ */
+export async function entriesTitledAddedSince(title: string, since: Date): Promise<string[]> {
+  const sinceSecond = Math.floor(since.getTime() / 1000) * 1000;
+  return (await itemsTitled(title))
+    .filter((item) => Date.parse(item.data.dateAdded) >= sinceSecond)
     .map((item) => item.key)
     .sort();
 }
