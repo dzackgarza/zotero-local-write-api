@@ -66,7 +66,7 @@ class ImportSession {
         `import_by_identifier ${identifier} returned no import_by_identifier success`,
       );
     }
-    this.track(data.item_keys);
+    this.track(data.item_keys.filter((_, index) => !data.existing[index]));
     return data;
   }
 

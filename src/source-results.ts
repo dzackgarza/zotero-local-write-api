@@ -125,12 +125,3 @@ export function translatorDetails(translator: WebTranslatorInfo | null) {
     ? null
     : { translator_id: translator.translatorID, label: translator.label };
 }
-
-// The outcome for a work the library already holds: nothing new is saved.
-export function existingOutcome(
-  item: Zotero.Item,
-  method: ImportOutcome["method"],
-  translator: WebTranslatorInfo | null,
-): ImportOutcome {
-  return { item, existing: true, method, translator, attachmentFailures: [] };
-}

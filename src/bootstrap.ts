@@ -33,6 +33,7 @@ let PLUGIN_CAPABILITIES = [
   "attach_standalone",
   "import_store_attachments",
   "recognition_held_from_sync",
+  "import_by_identifier_existing",
 ];
 
 // The request path of each endpoint the add-on registers.

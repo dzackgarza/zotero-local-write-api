@@ -155,6 +155,7 @@ export interface components {
         | "attach_standalone"
         | "import_store_attachments"
         | "recognition_held_from_sync"
+        | "import_by_identifier_existing"
       )[];
       /** @description Whether Zotero has loaded its translators. Imports, URL resolution and identifier lookups fail until it is true; a client that has just started Zotero waits for it. */
       translators_ready: boolean;
@@ -480,6 +481,7 @@ export interface components {
       bibtex: components["schemas"]["NonBlankString"];
       collection_keys?: components["schemas"]["NormalizedStringArray"];
     };
+    /** @description Create one Zotero item for each work the identifiers name (DOI, ISBN, arXiv ID, PMID), through Zotero's search translators, with the attachments Zotero gets for it. When the work is already in the library (equal DOI; equal ISBN between books; or equal URL together with an equal title), the existing item is returned with existing true and gains the requested collections; nothing else about it changes. */
     ImportByIdentifierRequest: {
       /**
        * @description discriminator enum property added by openapi-typescript
@@ -977,9 +979,19 @@ export interface components {
         identifier: string;
         item_count: number;
         collection_keys: string[];
+        /** @description Attachments the translator named that Zotero could not store. The item is saved without them. */
+        attachment_failures: {
+          /** @description Null when the translator named no title. */
+          title: string | null;
+          /** @description Null when the translator named no URL. */
+          url: string | null;
+          error: string;
+        }[];
       };
       /** @description The Better BibTeX citation key of each item, in item_keys order. */
       citation_keys: string[];
+      /** @description For each item in item_keys, true when the work was already in the library and that item is returned; it gains the requested collections, and nothing else about it changes. Servers that answer this field list import_by_identifier_existing in /version capabilities. */
+      existing: boolean[];
     } & {
       /**
        * @description discriminator enum property added by openapi-typescript
