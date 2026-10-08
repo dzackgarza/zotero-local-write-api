@@ -77,14 +77,14 @@ test("a second import of a PDF the library holds answers its one entry with its 
   const url = "https://arxiv.org/pdf/1105.0003";
   const first = await session.importFromUrl(url);
   expect(first.existing).toBe(false);
-  const held = await heldWork(first.item_key);
+  const held = await heldWork(first.item_key, "1105.0003");
   expectOneEntryWithOnePdf(held, first.item_key);
   const second = await session.importFromUrl(url);
   expect(second.method).toBe("pdf_recognition");
   expect(second.existing).toBe(true);
   expect(second.item_key).toBe(first.item_key);
   await Bun.sleep(10_000);
-  expect(await heldWork(first.item_key)).toEqual(held);
+  expect(await heldWork(first.item_key, "1105.0003")).toEqual(held);
 });
 
 test("a direct PDF URL with store_attachments false becomes an item with no attachment", async () => {
@@ -200,10 +200,10 @@ test("import_by_identifier answers the citation key of every item it creates", a
 test("import_by_identifier of an arXiv ID the library holds answers its one entry with its one PDF", async () => {
   const first = await session.importByIdentifier("arXiv:1105.0004");
   expect(first.item_keys).toEqual([first.item_key]);
-  const held = await heldWork(first.item_key);
+  const held = await heldWork(first.item_key, "1105.0004");
   expectOneEntryWithOnePdf(held, first.item_key);
   const second = await session.importByIdentifier("arXiv:1105.0004");
   expect(second.item_keys).toEqual([first.item_key]);
   await Bun.sleep(10_000);
-  expect(await heldWork(first.item_key)).toEqual(held);
+  expect(await heldWork(first.item_key, "1105.0004")).toEqual(held);
 });

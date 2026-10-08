@@ -55,14 +55,12 @@ test("resolve_url recognizes a direct PDF URL and leaves no item behind", async 
 // Both operations recognize the PDF at once; the import files the one entry.
 test("resolve_url and import_from_url of one PDF at once: the import's item exists", async () => {
   const url = "https://arxiv.org/pdf/1105.0001";
-  const before = await libraryItemCount();
   const [resolved, imported] = await Promise.all([resolveUrl(url), session.importFromUrl(url)]);
   expect(resolved.method).toBe("pdf_recognition");
   expect(imported.method).toBe("pdf_recognition");
   expect((await readItem(imported.item_key)).title).toBe(String(resolved.csl.title));
   expect(imported.existing).toBe(false);
-  expect(await libraryItemCount()).toBe(before + 1);
-  expectOneEntryWithOnePdf(await heldWork(imported.item_key), imported.item_key);
+  expectOneEntryWithOnePdf(await heldWork(imported.item_key, "1105.0001"), imported.item_key);
 });
 
 // A duplicate-merge add-on (Zoplicate, "keep" action) merges a library item into a newly
@@ -73,12 +71,12 @@ test("resolve_url of a PDF the library holds leaves its one entry with its one P
   const url = "https://arxiv.org/pdf/1105.0002";
   const imported = await session.importFromUrl(url);
   expect(imported.existing).toBe(false);
-  const held = await heldWork(imported.item_key);
+  const held = await heldWork(imported.item_key, "1105.0002");
   expectOneEntryWithOnePdf(held, imported.item_key);
   const resolved = await resolveUrl(url);
   expect(resolved.method).toBe("pdf_recognition");
   await Bun.sleep(10_000);
-  expect(await heldWork(imported.item_key)).toEqual(held);
+  expect(await heldWork(imported.item_key, "1105.0002")).toEqual(held);
 });
 
 test("resolve_url on a URL that no method identifies returns the typed error", async () => {

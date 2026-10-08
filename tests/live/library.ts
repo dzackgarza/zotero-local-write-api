@@ -73,16 +73,22 @@ export async function libraryItemCount(): Promise<number> {
 }
 
 /**
- * The standalone attachments among the 25 top-level items added last, outside the trash.
- * The local API ignores `/top` once `itemType` is given, so the filter runs here.
+ * The standalone attachments whose URL contains `source`, among the 25 top-level items
+ * added last, outside the trash. Other clients of the same Zotero add items during a run,
+ * so only attachments of the work under test count. The local API ignores `/top` once
+ * `itemType` is given, so the filter runs here.
  */
-async function recentStandaloneAttachments(): Promise<string[]> {
+async function strayPdfs(source: string): Promise<string[]> {
   const path = "items/top?sort=dateAdded&direction=desc&limit=25";
-  const items = await readLibrary<{ key: string; data: { itemType: string } }[]>(
+  const items = await readLibrary<{ key: string; data: { itemType: string; url?: string } }[]>(
     path,
     "recently added items",
   );
-  return items.filter((item) => item.data.itemType === "attachment").map((item) => item.key);
+  return items
+    .filter((item) => item.data.itemType === "attachment" &&
+        item.data.url !== undefined &&
+        item.data.url.includes(source))
+    .map((item) => item.key);
 }
 
 /** The keys of the top-level items outside the trash that carry this title. */
@@ -113,21 +119,23 @@ export type HeldWork = {
   entries: string[];
   children: string[];
   pdfs: string[];
-  recentStandaloneAttachments: string[];
+  strayPdfs: string[];
 };
 
-export async function heldWork(itemKey: string): Promise<HeldWork> {
+/** How the library holds the work of an item; `source` is in the URL of every PDF of the work. */
+export async function heldWork(itemKey: string, source: string): Promise<HeldWork> {
   const { title } = await readItem(itemKey);
   return {
     entries: await entriesTitled(title),
     children: await childKeys(itemKey),
     pdfs: await pdfKeys(itemKey),
-    recentStandaloneAttachments: await recentStandaloneAttachments(),
+    strayPdfs: await strayPdfs(source),
   };
 }
 
-/** The library holds the work as one entry, this item, with one PDF. */
+/** The library holds the work as one entry, this item, with one PDF and no standalone PDF. */
 export function expectOneEntryWithOnePdf(held: HeldWork, itemKey: string): void {
   expect(held.entries).toEqual([itemKey]);
   expect(held.pdfs).toHaveLength(1);
+  expect(held.strayPdfs).toEqual([]);
 }
