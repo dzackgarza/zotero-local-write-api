@@ -1,0 +1,572 @@
+openapi: 3.1.0
+info:
+  title: Zotero Local Write API
+  version: "3.3.1"
+  description: >
+    Zotero add-on that registers local HTTP write endpoints on Zotero's existing
+    server. Zotero's built-in local API is read-only; this add-on adds item,
+    note, attachment, collection, and tag mutations for the user library.
+    Zotero must be running with its local HTTP server enabled. No API key is
+    required because the server only listens on loopback.
+  license:
+    name: MIT
+    url: https://github.com/dzackgarza/zotero-local-write-api/blob/main/LICENSE
+externalDocs:
+  description: Repository
+  url: https://github.com/dzackgarza/zotero-local-write-api
+security: []
+servers:
+  - url: http://127.0.0.1:23119
+    description: Zotero's local HTTP server (loopback only)
+
+paths:
+  /version:
+    get:
+      operationId: getVersion
+      summary: Health check and capability probe
+      responses:
+        "200":
+          description: Add-on is installed and running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
+
+  /attach:
+    post:
+      operationId: attachFile
+      summary: Attach a stored file to an existing item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachRequest"
+      responses:
+        "200":
+          description: Attachment created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachSuccessResponse"
+        "500":
+          description: Attach failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /write:
+    post:
+      operationId: write
+      summary: General Zotero write/query operation endpoint
+      description: >
+        Every request is a JSON object with an `operation` string and the
+        fields that operation requires. String fields must be non-empty
+        unless noted otherwise; string arrays drop blank entries and
+        duplicates. Collection keys are validated before item-collection
+        writes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WriteRequest"
+      responses:
+        "200":
+          description: Operation completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WriteSuccessResponse"
+        "500":
+          description: Operation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [success, operation, stage, error, details, version]
+      properties:
+        success: { type: boolean, const: false }
+        operation: { type: string }
+        stage: { type: string }
+        error: { type: string }
+        details:
+          type: object
+          properties:
+            request: { type: object }
+        version: { type: string }
+
+    VersionResponse:
+      type: object
+      required:
+        - success
+        - healthy
+        - status
+        - message
+        - version
+        - addon_id
+        - homepage_url
+        - update_url
+        - endpoints
+        - compatibility
+        - capabilities
+      properties:
+        success: { type: boolean, const: true }
+        healthy: { type: boolean }
+        status: { type: string }
+        message: { type: string }
+        version: { type: string }
+        addon_id: { type: string }
+        homepage_url: { type: string, format: uri }
+        update_url: { type: string, format: uri }
+        endpoints:
+          type: object
+          properties:
+            attach: { type: string }
+            write: { type: string }
+            version: { type: string }
+        compatibility:
+          type: object
+          properties:
+            strict_min_version: { type: string }
+            strict_max_version: { type: string }
+            tested_zotero_version: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+
+    SuccessEnvelope:
+      type: object
+      description: >
+        Common envelope every /attach and /write success response shares.
+        Operations merge additional top-level fields (e.g. `item_key`,
+        `attachment_key`) and operation-specific keys into `details` on top
+        of this shape.
+      required: [success, operation, stage, version]
+      properties:
+        success: { type: boolean, const: true }
+        operation: { type: string }
+        stage: { type: string, const: completed }
+        version: { type: string }
+        details: { type: object }
+      additionalProperties: true
+
+    AttachSuccessResponse:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            attachment_key: { type: string }
+            attachment_id: { type: integer }
+            message: { type: string }
+            handler: { type: string, const: fulltext-attach }
+
+    WriteSuccessResponse:
+      $ref: "#/components/schemas/SuccessEnvelope"
+
+    AttachRequest:
+      description: Path-backed or byte-backed attachment upload.
+      oneOf:
+        - $ref: "#/components/schemas/AttachByPath"
+        - $ref: "#/components/schemas/AttachByBytes"
+
+    AttachByPath:
+      type: object
+      required: [item_key, title, file_path]
+      properties:
+        item_key: { type: string, minLength: 1, description: Parent item key in the user library. }
+        title: { type: string, minLength: 1, description: Attachment title. }
+        file_path:
+          type: string
+          minLength: 1
+          description: Absolute path, must be under /tmp or /var/tmp (see config.yml).
+        file_name: { type: string, minLength: 1 }
+        file_bytes_base64:
+          type: string
+          minLength: 1
+          description: Used as a fallback if file_path is missing at runtime.
+
+    AttachByBytes:
+      type: object
+      required: [item_key, title, file_name, file_bytes_base64]
+      properties:
+        item_key: { type: string, minLength: 1, description: Parent item key in the user library. }
+        title: { type: string, minLength: 1, description: Attachment title. }
+        file_name: { type: string, minLength: 1, description: Used for the temporary uploaded file. }
+        file_bytes_base64: { type: string, minLength: 1, description: Base64-encoded file bytes. }
+
+    WriteRequest:
+      discriminator:
+        propertyName: operation
+        mapping:
+          create_item: "#/components/schemas/CreateItem"
+          import_bibtex: "#/components/schemas/ImportBibtex"
+          import_by_identifier: "#/components/schemas/ImportByIdentifier"
+          update_item_fields: "#/components/schemas/UpdateItemFields"
+          replace_item_json: "#/components/schemas/ReplaceItemJson"
+          copy_item: "#/components/schemas/CopyItem"
+          merge_items: "#/components/schemas/MergeItems"
+          trash_item: "#/components/schemas/TrashItem"
+          restore_item: "#/components/schemas/RestoreItem"
+          attach_note: "#/components/schemas/AttachNote"
+          update_note: "#/components/schemas/UpdateNote"
+          attach_url: "#/components/schemas/AttachUrl"
+          relink_attachment_file: "#/components/schemas/RelinkAttachmentFile"
+          update_attachment_title: "#/components/schemas/UpdateAttachmentTitle"
+          set_item_tags: "#/components/schemas/SetItemTags"
+          add_item_tags: "#/components/schemas/AddItemTags"
+          remove_item_tags: "#/components/schemas/RemoveItemTags"
+          rename_tag: "#/components/schemas/RenameTag"
+          merge_tags: "#/components/schemas/MergeTags"
+          delete_tag: "#/components/schemas/DeleteTag"
+          delete_unused_tags: "#/components/schemas/DeleteUnusedTags"
+          create_collection: "#/components/schemas/CreateCollection"
+          rename_collection: "#/components/schemas/RenameCollection"
+          move_collection: "#/components/schemas/MoveCollection"
+          merge_collections: "#/components/schemas/MergeCollections"
+          trash_collection: "#/components/schemas/TrashCollection"
+          set_item_collections: "#/components/schemas/SetItemCollections"
+          add_item_to_collection: "#/components/schemas/AddItemToCollection"
+          remove_item_from_collection: "#/components/schemas/RemoveItemFromCollection"
+          get_selected_collection: "#/components/schemas/GetSelectedCollection"
+          sync: "#/components/schemas/Sync"
+          run_javascript: "#/components/schemas/RunJavascript"
+      oneOf:
+        - $ref: "#/components/schemas/CreateItem"
+        - $ref: "#/components/schemas/ImportBibtex"
+        - $ref: "#/components/schemas/ImportByIdentifier"
+        - $ref: "#/components/schemas/UpdateItemFields"
+        - $ref: "#/components/schemas/ReplaceItemJson"
+        - $ref: "#/components/schemas/CopyItem"
+        - $ref: "#/components/schemas/MergeItems"
+        - $ref: "#/components/schemas/TrashItem"
+        - $ref: "#/components/schemas/RestoreItem"
+        - $ref: "#/components/schemas/AttachNote"
+        - $ref: "#/components/schemas/UpdateNote"
+        - $ref: "#/components/schemas/AttachUrl"
+        - $ref: "#/components/schemas/RelinkAttachmentFile"
+        - $ref: "#/components/schemas/UpdateAttachmentTitle"
+        - $ref: "#/components/schemas/SetItemTags"
+        - $ref: "#/components/schemas/AddItemTags"
+        - $ref: "#/components/schemas/RemoveItemTags"
+        - $ref: "#/components/schemas/RenameTag"
+        - $ref: "#/components/schemas/MergeTags"
+        - $ref: "#/components/schemas/DeleteTag"
+        - $ref: "#/components/schemas/DeleteUnusedTags"
+        - $ref: "#/components/schemas/CreateCollection"
+        - $ref: "#/components/schemas/RenameCollection"
+        - $ref: "#/components/schemas/MoveCollection"
+        - $ref: "#/components/schemas/MergeCollections"
+        - $ref: "#/components/schemas/TrashCollection"
+        - $ref: "#/components/schemas/SetItemCollections"
+        - $ref: "#/components/schemas/AddItemToCollection"
+        - $ref: "#/components/schemas/RemoveItemFromCollection"
+        - $ref: "#/components/schemas/GetSelectedCollection"
+        - $ref: "#/components/schemas/Sync"
+        - $ref: "#/components/schemas/RunJavascript"
+
+    CreateItem:
+      type: object
+      description: Create a new Zotero item in the user library. Response adds item_key, item_id.
+      required: [operation, item_type]
+      properties:
+        operation: { type: string, enum: [create_item] }
+        item_type: { type: string, minLength: 1 }
+        fields: { type: object }
+        tags: { type: array, items: { type: string } }
+        collection_keys: { type: array, items: { type: string } }
+
+    ImportBibtex:
+      type: object
+      description: >
+        Import exactly one Zotero item from BibTeX using Zotero's built-in
+        BibTeX translator (9cb70025-a888-4a29-a210-93ec52da40d4); rejects any
+        result that does not create exactly one item. Response adds item_key,
+        item_id, item_keys, item_ids, titles.
+      required: [operation, bibtex]
+      properties:
+        operation: { type: string, enum: [import_bibtex] }
+        bibtex: { type: string, minLength: 1 }
+        collection_keys: { type: array, items: { type: string } }
+
+    ImportByIdentifier:
+      type: object
+      description: >
+        Import items from a DOI, ISBN, arXiv ID, PMID, or other identifier via
+        Zotero.Utilities.extractIdentifiers and Zotero.Translate.Search;
+        translator-provided attachments are saved. Response adds item_key,
+        item_id, item_keys, item_ids, titles.
+      required: [operation, identifier]
+      properties:
+        operation: { type: string, enum: [import_by_identifier] }
+        identifier: { type: string, minLength: 1 }
+        collection_keys: { type: array, items: { type: string } }
+
+    UpdateItemFields:
+      type: object
+      description: Merge fields into an existing item's Zotero JSON.
+      required: [operation, item_key, fields]
+      properties:
+        operation: { type: string, enum: [update_item_fields] }
+        item_key: { type: string, minLength: 1 }
+        fields: { type: object }
+
+    ReplaceItemJson:
+      type: object
+      description: Replace an existing item from Zotero item JSON.
+      required: [operation, item_key, item_json]
+      properties:
+        operation: { type: string, enum: [replace_item_json] }
+        item_key: { type: string, minLength: 1 }
+        item_json: { type: object }
+
+    CopyItem:
+      type: object
+      description: >
+        Clone an item; regular items include child notes and attachments.
+        Response adds new_key, new_item_key.
+      required: [operation, item_key]
+      properties:
+        operation: { type: string, enum: [copy_item] }
+        item_key: { type: string, minLength: 1 }
+
+    MergeItems:
+      type: object
+      description: Move tags, relations, notes, and attachments to target, then trash source.
+      required: [operation, source_key, target_key]
+      properties:
+        operation: { type: string, enum: [merge_items] }
+        source_key: { type: string, minLength: 1 }
+        target_key: { type: string, minLength: 1 }
+
+    TrashItem:
+      type: object
+      description: Move an item to the trash.
+      required: [operation, item_key]
+      properties:
+        operation: { type: string, enum: [trash_item] }
+        item_key: { type: string, minLength: 1 }
+
+    RestoreItem:
+      type: object
+      description: Restore a trashed item.
+      required: [operation, item_key]
+      properties:
+        operation: { type: string, enum: [restore_item] }
+        item_key: { type: string, minLength: 1 }
+
+    AttachNote:
+      type: object
+      description: >
+        Create a child note. `title` is reported back but Zotero note content
+        comes from `note_text`. Response adds note_key, note_id.
+      required: [operation, parent_item_key, note_text]
+      properties:
+        operation: { type: string, enum: [attach_note] }
+        parent_item_key: { type: string, minLength: 1 }
+        note_text: { type: string }
+        title: { type: string }
+
+    UpdateNote:
+      type: object
+      description: Replace note HTML/text content.
+      required: [operation, note_key, new_content]
+      properties:
+        operation: { type: string, enum: [update_note] }
+        note_key: { type: string, minLength: 1 }
+        new_content: { type: string }
+
+    AttachUrl:
+      type: object
+      description: Create a linked URL attachment. Response adds attachment_key, attachment_id.
+      required: [operation, parent_item_key, url]
+      properties:
+        operation: { type: string, enum: [attach_url] }
+        parent_item_key: { type: string, minLength: 1 }
+        url: { type: string, minLength: 1 }
+        title: { type: string }
+
+    RelinkAttachmentFile:
+      type: object
+      description: Relink an existing attachment to a local file.
+      required: [operation, attachment_key, file_path]
+      properties:
+        operation: { type: string, enum: [relink_attachment_file] }
+        attachment_key: { type: string, minLength: 1 }
+        file_path: { type: string, minLength: 1 }
+
+    UpdateAttachmentTitle:
+      type: object
+      description: Change an attachment title.
+      required: [operation, attachment_key, new_title]
+      properties:
+        operation: { type: string, enum: [update_attachment_title] }
+        attachment_key: { type: string, minLength: 1 }
+        new_title: { type: string, minLength: 1 }
+
+    SetItemTags:
+      type: object
+      description: Replace all tags on an item.
+      required: [operation, item_key, tags]
+      properties:
+        operation: { type: string, enum: [set_item_tags] }
+        item_key: { type: string, minLength: 1 }
+        tags: { type: array, items: { type: string } }
+
+    AddItemTags:
+      type: object
+      description: Add tags that are not already present.
+      required: [operation, item_key, tags]
+      properties:
+        operation: { type: string, enum: [add_item_tags] }
+        item_key: { type: string, minLength: 1 }
+        tags: { type: array, items: { type: string } }
+
+    RemoveItemTags:
+      type: object
+      description: Remove matching tags.
+      required: [operation, item_key, tags]
+      properties:
+        operation: { type: string, enum: [remove_item_tags] }
+        item_key: { type: string, minLength: 1 }
+        tags: { type: array, items: { type: string } }
+
+    RenameTag:
+      type: object
+      description: Rename a tag across the user library.
+      required: [operation, old_name, new_name]
+      properties:
+        operation: { type: string, enum: [rename_tag] }
+        old_name: { type: string, minLength: 1 }
+        new_name: { type: string, minLength: 1 }
+
+    MergeTags:
+      type: object
+      description: Rename source tags to the target tag.
+      required: [operation, source_tags, target_tag]
+      properties:
+        operation: { type: string, enum: [merge_tags] }
+        source_tags: { type: array, items: { type: string } }
+        target_tag: { type: string, minLength: 1 }
+
+    DeleteTag:
+      type: object
+      description: Remove a tag from the user library.
+      required: [operation, tag_name]
+      properties:
+        operation: { type: string, enum: [delete_tag] }
+        tag_name: { type: string, minLength: 1 }
+
+    DeleteUnusedTags:
+      type: object
+      description: Purge unused tags.
+      required: [operation]
+      properties:
+        operation: { type: string, enum: [delete_unused_tags] }
+
+    CreateCollection:
+      type: object
+      description: >
+        Create a collection, optionally under a parent collection. Response
+        adds collection_key, collection_name, parent_key.
+      required: [operation, name]
+      properties:
+        operation: { type: string, enum: [create_collection] }
+        name: { type: string, minLength: 1 }
+        parent_key: { type: string, minLength: 1 }
+
+    RenameCollection:
+      type: object
+      description: Rename a collection.
+      required: [operation, collection_key, new_name]
+      properties:
+        operation: { type: string, enum: [rename_collection] }
+        collection_key: { type: string, minLength: 1 }
+        new_name: { type: string, minLength: 1 }
+
+    MoveCollection:
+      type: object
+      description: Move a collection. Omit new_parent_key to make it top-level.
+      required: [operation, collection_key]
+      properties:
+        operation: { type: string, enum: [move_collection] }
+        collection_key: { type: string, minLength: 1 }
+        new_parent_key: { type: string, minLength: 1 }
+
+    MergeCollections:
+      type: object
+      description: Move source items and child collections into target, then trash sources.
+      required: [operation, source_keys, target_key]
+      properties:
+        operation: { type: string, enum: [merge_collections] }
+        source_keys: { type: array, items: { type: string } }
+        target_key: { type: string, minLength: 1 }
+
+    TrashCollection:
+      type: object
+      description: Move a collection to the trash.
+      required: [operation, collection_key]
+      properties:
+        operation: { type: string, enum: [trash_collection] }
+        collection_key: { type: string, minLength: 1 }
+
+    SetItemCollections:
+      type: object
+      description: Replace collection membership.
+      required: [operation, item_key, collection_keys]
+      properties:
+        operation: { type: string, enum: [set_item_collections] }
+        item_key: { type: string, minLength: 1 }
+        collection_keys: { type: array, items: { type: string } }
+
+    AddItemToCollection:
+      type: object
+      description: Add an item to one collection.
+      required: [operation, item_key, collection_key]
+      properties:
+        operation: { type: string, enum: [add_item_to_collection] }
+        item_key: { type: string, minLength: 1 }
+        collection_key: { type: string, minLength: 1 }
+
+    RemoveItemFromCollection:
+      type: object
+      description: Remove an item from one collection.
+      required: [operation, item_key, collection_key]
+      properties:
+        operation: { type: string, enum: [remove_item_from_collection] }
+        item_key: { type: string, minLength: 1 }
+        collection_key: { type: string, minLength: 1 }
+
+    GetSelectedCollection:
+      type: object
+      description: Return the key and name of the collection selected in Zotero's active pane.
+      required: [operation]
+      properties:
+        operation: { type: string, enum: [get_selected_collection] }
+
+    Sync:
+      type: object
+      description: >
+        Trigger a foreground Zotero sync via
+        Zotero.Sync.Runner.sync({background:false}); returns when the sync
+        engine has run.
+      required: [operation]
+      properties:
+        operation: { type: string, enum: [sync] }
+
+    RunJavascript:
+      type: object
+      description: >
+        Debug endpoint. Evaluate arbitrary internal JavaScript in the add-on's
+        privileged chrome scope, with Zotero in scope and await supported.
+        Unsandboxed by design; single-user dev tool.
+      required: [operation, code]
+      properties:
+        operation: { type: string, enum: [run_javascript] }
+        code: { type: string, minLength: 1 }

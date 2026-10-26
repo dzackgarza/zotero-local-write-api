@@ -1,0 +1,19 @@
+{
+  "name": "local-write-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/bootstrap.ts --outfile=src/bootstrap.js --target=firefox115",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/bootstrap.ts",
+    "test": "bun test --coverage --coverage-reporter=lcov --coverage-dir=."
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@zotero-plugin/eslint-config": "^0.6.8",
+    "esbuild": "^0.27.3",
+    "eslint": "^10.0.3",
+    "typescript": "^5.9.3",
+    "zotero-types": "^4.1.2"
+  }
+}
