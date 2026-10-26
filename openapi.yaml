@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Zotero Local Write API
-  version: "3.3.1"
+  version: '3.3.1'
   description: >
     Zotero add-on that registers local HTTP write endpoints on Zotero's existing
     server. Zotero's built-in local API is read-only; this add-on adds item,
@@ -25,12 +25,12 @@ paths:
       operationId: getVersion
       summary: Health check and capability probe
       responses:
-        "200":
+        '200':
           description: Add-on is installed and running.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VersionResponse"
+                $ref: '#/components/schemas/VersionResponse'
 
   /attach:
     post:
@@ -41,20 +41,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AttachRequest"
+              $ref: '#/components/schemas/AttachRequest'
       responses:
-        "200":
+        '200':
           description: Attachment created.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AttachSuccessResponse"
-        "500":
+                $ref: '#/components/schemas/AttachSuccessResponse'
+        '500':
           description: Attach failed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
 
   /write:
     post:
@@ -71,20 +71,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/WriteRequest"
+              $ref: '#/components/schemas/WriteRequest'
       responses:
-        "200":
+        '200':
           description: Operation completed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WriteSuccessResponse"
-        "500":
+                $ref: '#/components/schemas/WriteSuccessResponse'
+        '500':
           description: Operation failed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   schemas:
@@ -159,7 +159,7 @@ components:
 
     AttachSuccessResponse:
       allOf:
-        - $ref: "#/components/schemas/SuccessEnvelope"
+        - $ref: '#/components/schemas/SuccessEnvelope'
         - type: object
           properties:
             attachment_key: { type: string }
@@ -168,13 +168,13 @@ components:
             handler: { type: string, const: fulltext-attach }
 
     WriteSuccessResponse:
-      $ref: "#/components/schemas/SuccessEnvelope"
+      $ref: '#/components/schemas/SuccessEnvelope'
 
     AttachRequest:
       description: Path-backed or byte-backed attachment upload.
       oneOf:
-        - $ref: "#/components/schemas/AttachByPath"
-        - $ref: "#/components/schemas/AttachByBytes"
+        - $ref: '#/components/schemas/AttachByPath'
+        - $ref: '#/components/schemas/AttachByBytes'
 
     AttachByPath:
       type: object
@@ -205,71 +205,71 @@ components:
       discriminator:
         propertyName: operation
         mapping:
-          create_item: "#/components/schemas/CreateItem"
-          import_bibtex: "#/components/schemas/ImportBibtex"
-          import_by_identifier: "#/components/schemas/ImportByIdentifier"
-          update_item_fields: "#/components/schemas/UpdateItemFields"
-          replace_item_json: "#/components/schemas/ReplaceItemJson"
-          copy_item: "#/components/schemas/CopyItem"
-          merge_items: "#/components/schemas/MergeItems"
-          trash_item: "#/components/schemas/TrashItem"
-          restore_item: "#/components/schemas/RestoreItem"
-          attach_note: "#/components/schemas/AttachNote"
-          update_note: "#/components/schemas/UpdateNote"
-          attach_url: "#/components/schemas/AttachUrl"
-          relink_attachment_file: "#/components/schemas/RelinkAttachmentFile"
-          update_attachment_title: "#/components/schemas/UpdateAttachmentTitle"
-          set_item_tags: "#/components/schemas/SetItemTags"
-          add_item_tags: "#/components/schemas/AddItemTags"
-          remove_item_tags: "#/components/schemas/RemoveItemTags"
-          rename_tag: "#/components/schemas/RenameTag"
-          merge_tags: "#/components/schemas/MergeTags"
-          delete_tag: "#/components/schemas/DeleteTag"
-          delete_unused_tags: "#/components/schemas/DeleteUnusedTags"
-          create_collection: "#/components/schemas/CreateCollection"
-          rename_collection: "#/components/schemas/RenameCollection"
-          move_collection: "#/components/schemas/MoveCollection"
-          merge_collections: "#/components/schemas/MergeCollections"
-          trash_collection: "#/components/schemas/TrashCollection"
-          set_item_collections: "#/components/schemas/SetItemCollections"
-          add_item_to_collection: "#/components/schemas/AddItemToCollection"
-          remove_item_from_collection: "#/components/schemas/RemoveItemFromCollection"
-          get_selected_collection: "#/components/schemas/GetSelectedCollection"
-          sync: "#/components/schemas/Sync"
-          run_javascript: "#/components/schemas/RunJavascript"
+          create_item: '#/components/schemas/CreateItem'
+          import_bibtex: '#/components/schemas/ImportBibtex'
+          import_by_identifier: '#/components/schemas/ImportByIdentifier'
+          update_item_fields: '#/components/schemas/UpdateItemFields'
+          replace_item_json: '#/components/schemas/ReplaceItemJson'
+          copy_item: '#/components/schemas/CopyItem'
+          merge_items: '#/components/schemas/MergeItems'
+          trash_item: '#/components/schemas/TrashItem'
+          restore_item: '#/components/schemas/RestoreItem'
+          attach_note: '#/components/schemas/AttachNote'
+          update_note: '#/components/schemas/UpdateNote'
+          attach_url: '#/components/schemas/AttachUrl'
+          relink_attachment_file: '#/components/schemas/RelinkAttachmentFile'
+          update_attachment_title: '#/components/schemas/UpdateAttachmentTitle'
+          set_item_tags: '#/components/schemas/SetItemTags'
+          add_item_tags: '#/components/schemas/AddItemTags'
+          remove_item_tags: '#/components/schemas/RemoveItemTags'
+          rename_tag: '#/components/schemas/RenameTag'
+          merge_tags: '#/components/schemas/MergeTags'
+          delete_tag: '#/components/schemas/DeleteTag'
+          delete_unused_tags: '#/components/schemas/DeleteUnusedTags'
+          create_collection: '#/components/schemas/CreateCollection'
+          rename_collection: '#/components/schemas/RenameCollection'
+          move_collection: '#/components/schemas/MoveCollection'
+          merge_collections: '#/components/schemas/MergeCollections'
+          trash_collection: '#/components/schemas/TrashCollection'
+          set_item_collections: '#/components/schemas/SetItemCollections'
+          add_item_to_collection: '#/components/schemas/AddItemToCollection'
+          remove_item_from_collection: '#/components/schemas/RemoveItemFromCollection'
+          get_selected_collection: '#/components/schemas/GetSelectedCollection'
+          sync: '#/components/schemas/Sync'
+          run_javascript: '#/components/schemas/RunJavascript'
       oneOf:
-        - $ref: "#/components/schemas/CreateItem"
-        - $ref: "#/components/schemas/ImportBibtex"
-        - $ref: "#/components/schemas/ImportByIdentifier"
-        - $ref: "#/components/schemas/UpdateItemFields"
-        - $ref: "#/components/schemas/ReplaceItemJson"
-        - $ref: "#/components/schemas/CopyItem"
-        - $ref: "#/components/schemas/MergeItems"
-        - $ref: "#/components/schemas/TrashItem"
-        - $ref: "#/components/schemas/RestoreItem"
-        - $ref: "#/components/schemas/AttachNote"
-        - $ref: "#/components/schemas/UpdateNote"
-        - $ref: "#/components/schemas/AttachUrl"
-        - $ref: "#/components/schemas/RelinkAttachmentFile"
-        - $ref: "#/components/schemas/UpdateAttachmentTitle"
-        - $ref: "#/components/schemas/SetItemTags"
-        - $ref: "#/components/schemas/AddItemTags"
-        - $ref: "#/components/schemas/RemoveItemTags"
-        - $ref: "#/components/schemas/RenameTag"
-        - $ref: "#/components/schemas/MergeTags"
-        - $ref: "#/components/schemas/DeleteTag"
-        - $ref: "#/components/schemas/DeleteUnusedTags"
-        - $ref: "#/components/schemas/CreateCollection"
-        - $ref: "#/components/schemas/RenameCollection"
-        - $ref: "#/components/schemas/MoveCollection"
-        - $ref: "#/components/schemas/MergeCollections"
-        - $ref: "#/components/schemas/TrashCollection"
-        - $ref: "#/components/schemas/SetItemCollections"
-        - $ref: "#/components/schemas/AddItemToCollection"
-        - $ref: "#/components/schemas/RemoveItemFromCollection"
-        - $ref: "#/components/schemas/GetSelectedCollection"
-        - $ref: "#/components/schemas/Sync"
-        - $ref: "#/components/schemas/RunJavascript"
+        - $ref: '#/components/schemas/CreateItem'
+        - $ref: '#/components/schemas/ImportBibtex'
+        - $ref: '#/components/schemas/ImportByIdentifier'
+        - $ref: '#/components/schemas/UpdateItemFields'
+        - $ref: '#/components/schemas/ReplaceItemJson'
+        - $ref: '#/components/schemas/CopyItem'
+        - $ref: '#/components/schemas/MergeItems'
+        - $ref: '#/components/schemas/TrashItem'
+        - $ref: '#/components/schemas/RestoreItem'
+        - $ref: '#/components/schemas/AttachNote'
+        - $ref: '#/components/schemas/UpdateNote'
+        - $ref: '#/components/schemas/AttachUrl'
+        - $ref: '#/components/schemas/RelinkAttachmentFile'
+        - $ref: '#/components/schemas/UpdateAttachmentTitle'
+        - $ref: '#/components/schemas/SetItemTags'
+        - $ref: '#/components/schemas/AddItemTags'
+        - $ref: '#/components/schemas/RemoveItemTags'
+        - $ref: '#/components/schemas/RenameTag'
+        - $ref: '#/components/schemas/MergeTags'
+        - $ref: '#/components/schemas/DeleteTag'
+        - $ref: '#/components/schemas/DeleteUnusedTags'
+        - $ref: '#/components/schemas/CreateCollection'
+        - $ref: '#/components/schemas/RenameCollection'
+        - $ref: '#/components/schemas/MoveCollection'
+        - $ref: '#/components/schemas/MergeCollections'
+        - $ref: '#/components/schemas/TrashCollection'
+        - $ref: '#/components/schemas/SetItemCollections'
+        - $ref: '#/components/schemas/AddItemToCollection'
+        - $ref: '#/components/schemas/RemoveItemFromCollection'
+        - $ref: '#/components/schemas/GetSelectedCollection'
+        - $ref: '#/components/schemas/Sync'
+        - $ref: '#/components/schemas/RunJavascript'
 
     CreateItem:
       type: object

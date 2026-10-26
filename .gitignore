@@ -1,0 +1,14 @@
+.serena/
+__pycache__/
+*.pyc
+*.xpi
+.DS_Store
+node_modules/
+lcov.info
+.lcov.info.*.tmp
+tsconfig.tsbuildinfo
+src/bootstrap.js
+src/manifest.json
+.grepai/
+.claude/
+.devcontainer/

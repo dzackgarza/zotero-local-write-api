@@ -283,7 +283,7 @@ async function materializeUploadBytes(fileName: string, fileBytesBase64: string)
   }
   // Zotero.File.putContentsAsync() accepts Blob at runtime, but zotero-types
   // only advertises string | ArrayBuffer | nsIInputStream.
-  await Zotero.File.putContentsAsync(tempDir.path, new Blob([bytes]) as unknown as ArrayBuffer);
+  await Zotero.File.putContentsAsync(tempDir.path, new Blob([bytes]));
   return tempDir.path;
 }
 
@@ -949,9 +949,7 @@ async function handleRemoveItemFromCollection(data: RequestData) {
 }
 
 function extractIdentifiers(raw: string): Identifier[] {
-  let utilities = Zotero.Utilities as typeof Zotero.Utilities & {
-    extractIdentifiers(identifier: string): Identifier[];
-  };
+  let utilities = Zotero.Utilities;
   let identifiers = utilities.extractIdentifiers(raw);
   if (!identifiers.length) {
     throw new Error("Could not parse identifier");
