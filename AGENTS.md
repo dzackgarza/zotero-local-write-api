@@ -253,5 +253,3 @@ Do not make the reader excavate the missing work from beneath praise, context-se
 
 Nuance belongs in the evidence and blocker analysis, not in softening the completion standard.
 The review should make it easy to finish the work, not easy to feel satisfied with less than the original contract required.
-
-> Optimized tool-use workflow for agents: see [SDL.md](./SDL.md).
