@@ -619,7 +619,9 @@ def _prove_create_item(smoke: SmokeRun, tags: list[str]) -> str:
     item_key = _create_book(smoke, title, tags)
     created_item = smoke.item(item_key)
     _require(created_item["data"]["title"] == title, f"Unexpected item title: {created_item!r}")
-    created_tags = set(_tag_names(created_item))
+    # Other add-ons in a real profile tag new items asynchronously (zoterotag adds "/unread"), so
+    # compare only the tags this run owns: each carries the run's suffix.
+    created_tags = {tag for tag in _tag_names(created_item) if smoke.suffix in tag}
     _require(created_tags == set(tags), f"Unexpected initial tags: {created_tags!r}")
     return item_key
 
