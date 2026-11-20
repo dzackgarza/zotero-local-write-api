@@ -11,7 +11,8 @@ export type ItemData = {
   url?: string;
   citationKey: string;
   dateAdded: string;
-  creators: { creatorType?: string; firstName?: string; lastName?: string }[];
+  // A two-field name, or a single-field name in `name` (Zotero API item JSON).
+  creators: { creatorType?: string; firstName?: string; lastName?: string; name?: string }[];
   collections: string[];
   tags: { tag: string }[];
   deleted?: boolean;

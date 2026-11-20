@@ -198,6 +198,21 @@ test("import_by_identifier answers the citation key of every item it answers", a
   expect(data.citation_keys).toEqual(keys);
 });
 
+// Zotero's DOI translator gives MSRI book chapters an institutional editor: a
+// single-field creator whose firstName is null. The held-work check must compare it
+// as a single-field name, as Zotero's own duplicate finder does.
+test("import_by_identifier of a DOI with an institutional editor creates the chapter", async () => {
+  const data = await session.importByIdentifier("10.1017/9781139032766.015");
+  expect(data.existing).toEqual([false]);
+  const item = await readItem(data.item_key);
+  expect(item.itemType).toBe("bookSection");
+  expect(item.title).toBe("Basic results on irregular varieties via Fourier-Mukai methods");
+  expect(item.creators).toContainEqual({
+    creatorType: "editor",
+    name: "Mathematical Sciences Research Institute",
+  });
+});
+
 // The library holds each work as one entry with one PDF, so an identifier for a held work
 // answers that entry. Zoplicate waits up to 5 s for a new item's attachments before it
 // merges a duplicate.
