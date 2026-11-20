@@ -56,10 +56,14 @@ export function seedFromJSON(json: TranslatorItemJSON): BibliographicSeed | null
 // The surname of a creator: its last name, or the last word of a single-field name.
 function surnameOf(creator: CreatorJSON): string {
   if ("name" in creator) {
-    let words = creator.name.trim().split(/\s+/);
-    return words[words.length - 1];
+    return lastWord(creator.name);
   }
-  return creator.lastName;
+  return creator.fieldMode === 1 ? lastWord(creator.lastName) : creator.lastName;
+}
+
+function lastWord(name: string): string {
+  let words = name.trim().split(/\s+/);
+  return words[words.length - 1];
 }
 
 // A candidate is the seed's work when the normalized titles are equal, the

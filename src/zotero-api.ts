@@ -54,9 +54,13 @@ export type TranslatorItemJSON = JsonPayload & {
   ISBN?: string;
   creators?: CreatorJSON[];
 };
-// A creator of Zotero's item JSON: a two-field name, whose absent firstName is a
-// surname only, or a single-field name (creators.js `cleanData`).
-export type CreatorJSON = { firstName?: string; lastName: string } | { name: string };
+// A creator of Zotero's item JSON: a two-field name, whose absent or null firstName is
+// a surname only, or a single-field name. A translator writes a single-field name as
+// its lastName with fieldMode 1 and firstName null, which `cleanData` reads as `name`
+// (creators.js `cleanData`).
+export type CreatorJSON =
+  | { firstName?: string | null; lastName: string; fieldMode?: 0 | 1 }
+  | { name: string };
 // A detected web translator, as Zotero.Translate.Web#getTranslators resolves it.
 // itemType is detectWeb's answer: an item type, or "multiple" for a choice of
 // items (translate.js `complete`, detect state).

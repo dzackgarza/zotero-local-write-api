@@ -159,8 +159,13 @@ function titleRuleCreator(creator: CreatorJSON): TitleRuleCreator {
   if ("name" in creator) {
     return { lastName: normalizeText(creator.name), firstInitial: "" };
   }
+  if (creator.fieldMode === 1) {
+    return { lastName: normalizeText(creator.lastName), firstInitial: "" };
+  }
   let firstInitial =
-    creator.firstName === undefined ? "" : normalizeText(creator.firstName).charAt(0);
+    creator.firstName === undefined || creator.firstName === null
+      ? ""
+      : normalizeText(creator.firstName).charAt(0);
   return { lastName: normalizeText(creator.lastName), firstInitial };
 }
 
