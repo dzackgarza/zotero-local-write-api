@@ -29,10 +29,6 @@ version:
 typecheck:
     bun tsc --noEmit
 
-# Lint the TypeScript source
-lint:
-    bun run lint
-
 # Compile TypeScript and build the XPI (does not bump version or release).
 # The update manifest goes to a scratch path so a dev build never rewrites the
 # tracked updates.json, whose hash must match the XPI on the GitHub release.
@@ -340,8 +336,8 @@ schemathesis-stateful-live:
 # Full live API proof: generic fuzz, stateful workflow, client wrapper, lookups, smoke.
 api-live: schemathesis-fuzz-live schemathesis-stateful-live client-live item-lookup-live smoke-live
 
-# Run all checks (typecheck + lint)
-check: typecheck lint
+# Run commit-tier checks: typecheck, then the canonical QC lint and tests
+check: typecheck test-commit
 
 # Release a patch version — bug fixes, infra, tooling (default)
 release: (_release "patch")
@@ -430,7 +426,7 @@ _release bump_type: (_bump bump_type)
     set -euo pipefail
     echo "Required before tagging: install the current working-tree XPI and run 'EXPECTED_VERSION=\$(cat VERSION) just smoke-live'" >&2
     bun run typecheck
-    bun run lint
+    just test-commit
     uv run build.py
     version=$(cat VERSION)
     git add VERSION updates.json openapi.yaml src/generated/openapi.ts
