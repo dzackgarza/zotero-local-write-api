@@ -1,6 +1,5 @@
 qc-type := "bun"
 
-# ai-review-ci contract variables consumed by doctor and workflow installers.
 ai_review_ci_schema_version := "1"
 ai_review_ci_profile := "bun"
 ai_review_ci_ref := "main"
@@ -9,34 +8,31 @@ ai_review_ci_workflow_template_version := "1"
 ai_review_ci_local_delegation := "global-justfile"
 ai_review_ci_default_branch := "main"
 
-# Run immediate commit-tier QC
+[doc("Run immediate commit-tier QC")]
 test-commit:
     @just -f ~/ai-review-ci/justfiles/bun.just -d . test-commit
 
-# Run the full project suite before pushing
+[doc("Run the full project suite before pushing")]
 test-push:
     @just -f ~/ai-review-ci/justfiles/bun.just -d . test-push
 
-# Run CI acceptance QC
+[doc("Run CI acceptance QC")]
 test-ci:
     @just -f ~/ai-review-ci/justfiles/bun.just -d . test-ci
 
-# Show the current version
+[doc("Show the current version")]
 version:
     @cat VERSION
 
-# Type-check the TypeScript source
+[doc("Type-check the TypeScript source")]
 typecheck:
     bun tsc --noEmit
 
-# Compile TypeScript and build the XPI (does not bump version or release).
-# The update manifest goes to a scratch path so a dev build never rewrites the
-# tracked updates.json, whose hash must match the XPI on the GitHub release.
+[doc("Compile TypeScript and build the XPI (does not bump version or release).")]
 build:
     uv run build.py --updates-out "$(mktemp -d)/updates.json"
 
-# Live runtime proof against a real Zotero with the current XPI installed.
-# EXPECTED_VERSION names the installed add-on version under proof.
+[doc("Live runtime proof against a real Zotero with the current XPI installed.")]
 smoke-live:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -52,21 +48,6 @@ smoke-live:
     fi
     uv run examples/live_smoke.py "${args[@]}"
 
-# Build the working-tree XPI and hot-install it into a Zotero profile, then
-# restart Zotero with a cache purge so the current code is actually loaded, and
-# wait until the add-on answers with the built version and its capabilities.
-#
-# This REPLACES the running add-on and RESTARTS Zotero (closing the current
-# session). updates.json is a release channel, not a reliable local same-version
-# reload, so the proven path is replace-profile-XPI + restart (AGENTS.md).
-#
-# This is the ONLY install path. Locally it targets the active Default=1 profile;
-# CI sets ZOTERO_PROFILE_DIR (and ZOTERO_PROFILE_NAME, passed to -P) to target a
-# disposable profile. The build -> byte-compare -> purgecache-restart -> version
-# wait sequence is what catches the stale-build trap, so CI must not re-implement
-# it: a second copy that drifts would prove something different from local.
-#   ZOTERO_PROFILE_DIR   override the profile directory (default: Default=1)
-#   ZOTERO_PROFILE_NAME  profile name for `zotero -P` (default: none)
 [doc("Build, install, and restart Zotero so the working-tree XPI is live (RESTARTS Zotero)")]
 install-live:
     #!/usr/bin/env bash
@@ -74,15 +55,12 @@ install-live:
     version="$(cat VERSION)"
     xpi="local-write-api-${version}.xpi"
 
-    # 1. Build from the working tree. The update manifest goes to a scratch path
-    #    so this install never rewrites the tracked updates.json.
     uv run build.py --updates-out "$(mktemp -d)/updates.json"
     if [[ ! -f "$xpi" ]]; then
         echo "expected $xpi was not built" >&2
         exit 1
     fi
 
-    # 2. Resolve the target profile: CI provides one, otherwise Default=1.
     profile_dir="${ZOTERO_PROFILE_DIR:-$(just _default-profile-dir)}"
     if [[ ! -d "$profile_dir" ]]; then
         echo "profile dir not found: $profile_dir" >&2
@@ -91,13 +69,10 @@ install-live:
     ext_dir="${profile_dir}/extensions"
     installed="${ext_dir}/local-write-api@dzackgarza.com.xpi"
 
-    # 3. Timestamped backup of the currently installed XPI.
     if [[ -f "$installed" ]]; then
         cp -p "$installed" "${installed}.bak.$(date +%Y%m%d-%H%M%S)"
     fi
 
-    # 4. Install and verify the installed bytes match the build exactly. A
-    #    matching version string is NOT proof when rebuilding the same version.
     mkdir -p "$ext_dir"
     cp "$xpi" "$installed"
     if [[ "$(sha256sum "$xpi" | cut -d' ' -f1)" != "$(sha256sum "$installed" | cut -d' ' -f1)" ]]; then
@@ -106,10 +81,6 @@ install-live:
     fi
     echo "installed $xpi -> $installed"
 
-    # 5. Restart Zotero with cache purge. Stop by exact process name (-x), never
-    #    pkill -f, whose pattern would match this recipe's own shell (AGENTS.md).
-    #    Only zotero-bin is stopped: the zotero launcher exits by itself once
-    #    zotero-bin is gone, so a second pkill races that exit.
     if pgrep -x zotero-bin > /dev/null; then pkill -x zotero-bin; fi
     for _ in $(seq 1 30); do
         if ! pgrep -x 'zotero(-bin)?' > /dev/null; then break; fi
@@ -131,11 +102,6 @@ install-live:
         DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}" \
         zotero "${profile_args[@]}" -purgecaches >"$log" 2>&1 < /dev/null &
 
-    # 6. Wait for the add-on to answer with the just-built version AND the
-    #    capabilities the proofs rely on. Version alone would pass against a
-    #    build that dropped an endpoint. Then wait for translators_ready: the
-    #    add-on answers before Zotero has loaded its translators, and imports
-    #    fail until it has.
     base="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}"
     probe="$(mktemp)"
     trap 'rm -f "$probe"' EXIT
@@ -163,14 +129,10 @@ install-live:
     echo "Zotero did not report version $version within timeout; see $log" >&2
     exit 1
 
-# Path of the active (Default=1) Zotero profile directory.
+[doc("Path of the active (Default=1) Zotero profile directory.")]
 [private]
 _default-profile-dir:
     #!/usr/bin/env python3
-    # profiles.ini is INI, so it is parsed with configparser rather than matched
-    # with a line-order-dependent regex: Default= and Path= may appear in either
-    # order within a section, and only [Profile*] sections carry Default=1 (an
-    # [Install*] section's Default= is a path, not a flag).
     import configparser, pathlib, sys
 
     ini = pathlib.Path.home() / ".zotero/zotero/profiles.ini"
@@ -190,15 +152,7 @@ _default-profile-dir:
     else:
         sys.exit(f"no Default=1 profile with a Path in {ini}")
 
-# Provision (idempotently) a disposable Zotero profile + empty data directory
-# for the mutating fuzz, and print `NAME<TAB>DIR<TAB>DATADIR`. Does NOT touch the
-# Default=1 profile and does NOT start Zotero — the caller boots it via
-# `ZOTERO_PROFILE_NAME=<name> ZOTERO_PROFILE_DIR=<dir> just install-live` and
-# then approves the sideloaded add-on with `_approve-sideloaded-addon`.
-#
-# ZOTERO_ROOT overrides ~/.zotero so the file surgery can be tested off to the
-# side. profiles.ini is written with case preserved because Mozilla's
-# nsINIParser is case-sensitive (Name/Path/Default), unlike configparser.
+[doc("Provision (idempotently) a disposable Zotero profile + empty data directory")]
 [private]
 _provision-disposable-profile name="lw-fuzz":
     #!/usr/bin/env python3
@@ -215,7 +169,6 @@ _provision-disposable-profile name="lw-fuzz":
     cfg.optionxform = str
     if ini.is_file():
         cfg.read(ini)
-    # Reuse an existing section for this profile name, else the next free slot.
     section = next(
         (s for s in cfg.sections()
          if s.startswith("Profile") and cfg[s].get("Name") == name),
@@ -230,12 +183,10 @@ _provision-disposable-profile name="lw-fuzz":
     cfg[section]["Name"] = name
     cfg[section]["IsRelative"] = "0"
     cfg[section]["Path"] = str(profile_dir)
-    cfg[section].pop("Default", None)  # never the default profile
+    cfg[section].pop("Default", None)
     with open(ini, "w") as f:
         cfg.write(f, space_around_delimiters=False)
 
-    # Disposable library + local API on; no sync credentials, so this profile
-    # cannot reach the online library.
     (profile_dir / "prefs.js").write_text(
         f'user_pref("extensions.zotero.dataDir", "{data_dir}");\n'
         'user_pref("extensions.zotero.useDataDir", true);\n'
@@ -246,9 +197,7 @@ _provision-disposable-profile name="lw-fuzz":
     )
     print(f"{name}\t{profile_dir}\t{data_dir}")
 
-# Approve the add-on that Zotero registered as a disabled sideload on first
-# boot of a fresh profile, so a second boot activates it. No-op until Zotero has
-# created extensions.json. addon_id defaults to this add-on.
+[doc("Approve the add-on that Zotero registered as a disabled sideload on first")]
 [private]
 _approve-sideloaded-addon profile_dir addon_id="local-write-api@dzackgarza.com":
     #!/usr/bin/env python3
@@ -269,13 +218,10 @@ _approve-sideloaded-addon profile_dir addon_id="local-write-api@dzackgarza.com":
     p.write_text(json.dumps(data))
     print(f"approved {{addon_id}} in {p}")
 
-# Static OpenAPI contract check (lint + generated-drift + dispatch conformance)
+[doc("Static OpenAPI contract check (lint + generated-drift + dispatch conformance)")]
 openapi-check:
     bun run openapi:check
 
-# Generic Schemathesis fuzzing against a live Zotero.
-# MUTATING: point ZOTERO_LOCAL_BASE_URL at a disposable test profile, never a
-# real library. The filter_case hook excludes dangerous/networked/bulk ops.
 [doc("Generic Schemathesis fuzz against a live Zotero (MUTATING: use a disposable profile)")]
 schemathesis-fuzz-live:
     #!/usr/bin/env bash
@@ -283,9 +229,6 @@ schemathesis-fuzz-live:
     url="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}"
     export PYTHONPATH="${PYTHONPATH:-}:."
     export SCHEMATHESIS_HOOKS="tests.schemathesis.hooks"
-    # A fixed seed for a reproducible run, then a randomized exploration run.
-    # Both emit JUnit + HAR reproduction artifacts. The stateful workflow runs
-    # separately via schemathesis-stateful-live.
     for seed in "--seed 0" ""; do
         uv run st run openapi.yaml --url "$url" \
             --phases examples,coverage,fuzzing \
@@ -293,63 +236,43 @@ schemathesis-fuzz-live:
             --report junit,har --report-dir schemathesis-report
     done
 
-# Live proof of the generated OpenAPI client wrapper (src/client.ts) against a
-# real Zotero: real POST /write, body serialized unchanged, typed success/error
-# split. MUTATING. The live suites in tests/live have no `.test` in their file
-# names, so `bun test` does not collect them; the package scripts `client:live`
-# and `import-from-url:live` run each one by its `./` path, which also declares
-# the suites as entry files to knip. An unreachable Zotero fails a suite. Objects are uniquely prefixed
-# and trashed afterwards.
 [doc("Live proof of the generated TypeScript client wrapper (MUTATING)")]
 client-live:
     ZOTERO_LOCAL_BASE_URL="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}" \
     ZOTERO_LIBRARY_ID="${ZOTERO_LIBRARY_ID:-0}" \
     bun run client:live
 
-# Live proof of import_from_url and resolve_url against a real Zotero and the
-# real publisher and metadata services. MUTATING; every item it creates is
-# trashed afterwards. Library 0 is the local API's name for the user library.
-# Remote translators and metadata services answer in seconds, but the PDF case
-# downloads and recognizes a full article, hence the 180 s per-test timeout.
 [doc("Live proof of import_from_url and resolve_url (MUTATING)")]
 import-from-url-live:
     ZOTERO_LOCAL_BASE_URL="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}" \
     ZOTERO_LIBRARY_ID="${ZOTERO_LIBRARY_ID:-0}" \
     bun run import-from-url:live
 
-# Live proof of find_items_by_title and get_item_children: a stored PDF child's
-# answered path exists on this machine's disk. MUTATING; the book it creates is
-# trashed afterwards.
 [doc("Live proof of find_items_by_title and get_item_children (MUTATING)")]
 item-lookup-live:
     ZOTERO_LOCAL_BASE_URL="${ZOTERO_LOCAL_BASE_URL:-http://127.0.0.1:23119}" \
     ZOTERO_LIBRARY_ID="${ZOTERO_LIBRARY_ID:-0}" \
     bun run item-lookup:live
 
-# Stateful create/note/collection/tag/merge/restore/trash proof with Zotero
-# read-back. Safe against a real library: unique-prefixed objects, cleanup in
-# teardown. An unreachable Zotero fails the suite.
 [doc("Stateful create/merge/restore/trash workflow proof against a live Zotero")]
 schemathesis-stateful-live:
     uv run pytest tests/schemathesis/test_stateful.py -q
 
-# Full live API proof: generic fuzz, stateful workflow, client wrapper, lookups, smoke.
+[doc("Full live API proof: generic fuzz, stateful workflow, client wrapper, lookups, smoke.")]
 api-live: schemathesis-fuzz-live schemathesis-stateful-live client-live item-lookup-live smoke-live
 
-# Run commit-tier checks: typecheck, then the canonical QC lint and tests
+[doc("Run commit-tier checks: typecheck, then the canonical QC lint and tests")]
 check: typecheck test-commit
 
-# Release a patch version — bug fixes, infra, tooling (default)
+[doc("Release a patch version — bug fixes, infra, tooling (default)")]
 release: (_release "patch")
 
-# Release a minor version — new features or behaviour changes
+[doc("Release a minor version — new features or behaviour changes")]
 release-minor: (_release "minor")
 
-# Release a major version — breaking release line
+[doc("Release a major version — breaking release line")]
 release-major: (_release "major")
 
-# Regenerate plugin icons via Replicate (requires REPLICATE_API_TOKEN in env)
-# Run this, commit src/icons/, then cut a release.
 [doc("Regenerate plugin icons via Replicate (requires REPLICATE_API_TOKEN)")]
 gen-icons:
     #!/usr/bin/env python3
@@ -389,8 +312,7 @@ gen-icons:
     raw.resize((48, 48), Image.LANCZOS).save(icons / "favicon@0.5x.png")
     print("Wrote src/icons/favicon.png (96x96) and src/icons/favicon@0.5x.png (48x48)")
 
-# --- private ---
-
+[private]
 _bump bump_type:
     #!/usr/bin/env python3
     import re, sys
@@ -409,8 +331,6 @@ _bump bump_type:
         patch += 1
     new = f"{major}.{minor}.{patch}"
     path.write_text(new + "\n")
-    # openapi.yaml's info.version is served at /openapi.yaml and asserted equal
-    # to VERSION by the contract test, so it must move in lockstep.
     spec = Path("openapi.yaml")
     spec_text = spec.read_text()
     spec_new, count = re.subn(
@@ -421,6 +341,7 @@ _bump bump_type:
     spec.write_text(spec_new)
     print(f"Bumped to {new}")
 
+[private]
 _release bump_type: (_bump bump_type)
     #!/usr/bin/env bash
     set -euo pipefail
@@ -436,28 +357,19 @@ _release bump_type: (_bump bump_type)
     git push --tags
     echo "v${version} tagged — Actions will publish the release"
 
-# --- GPT Action tunnel (see docs/gpt-action.md) ---
-
 tunnel_name := "zotero-write"
 tunnel_hostname := "zotero-write.dzackgarza.com"
 tunnel_config := home_directory() / ".cloudflared/zotero-write.yml"
 tunnel_unit := "zotero-write-tunnel.service"
 
-# Fail loudly unless the LIVE write surface enforces a bearer token. The check
-# lives in one tracked script so the systemd unit's ExecStartPre runs the same
-# probe on every (re)start; see dev/cloudflared/require-write-token.sh.
+[doc("Fail loudly unless the LIVE write surface enforces a bearer token. The check")]
 _require-write-token:
     bash dev/cloudflared/require-write-token.sh
 
-# Create the named tunnel, route DNS, and write ~/.cloudflared/zotero-write.yml
+[doc("Create the named tunnel, route DNS, and write ~/.cloudflared/zotero-write.yml")]
 tunnel-setup: _require-write-token
     #!/usr/bin/env bash
     set -euo pipefail
-    # The ingress path allowlist is the security boundary that keeps Zotero's
-    # unauthenticated read API and connector off the public hostname. It must
-    # equal the plugin's endpoint set (config.yml, the same source build.py
-    # reads), so assert they match and fail loud on drift rather than letting a
-    # new endpoint silently miss the tunnel or a widened regex leak the read API.
     config_paths=$(yq -r '.endpoints[]' config.yml | sed 's#^/##' | sort | paste -sd,)
     regex=$(yq -r '.ingress[0].path' dev/cloudflared/zotero-write.yml.template)
     alt=${regex#^/(}; alt=${alt%)$}
@@ -479,11 +391,9 @@ tunnel-setup: _require-write-token
         dev/cloudflared/zotero-write.yml.template > "{{ tunnel_config }}"
     echo "Wrote {{ tunnel_config }} (tunnel ${uuid})"
 
-# Install and start the systemd user unit that keeps the tunnel up
+[doc("Install and start the systemd user unit that keeps the tunnel up")]
 tunnel-install: _require-write-token
     mkdir -p ~/.config/systemd/user ~/.cloudflared
-    # The unit's ExecStartPre runs this from a stable path, decoupled from the
-    # repo checkout, so every start (including at boot) re-verifies auth.
     cp dev/cloudflared/require-write-token.sh ~/.cloudflared/require-write-token.sh
     chmod +x ~/.cloudflared/require-write-token.sh
     cp systemd/{{ tunnel_unit }} ~/.config/systemd/user/
@@ -491,16 +401,19 @@ tunnel-install: _require-write-token
     systemctl --user enable --now {{ tunnel_unit }}
     systemctl --user --no-pager status {{ tunnel_unit }}
 
+[doc("Show the tunnel unit status and tunnel info")]
 tunnel-status:
     systemctl --user --no-pager status {{ tunnel_unit }}
     cloudflared tunnel info {{ tunnel_name }}
 
+[doc("Follow the tunnel unit logs")]
 tunnel-logs:
     journalctl --user -u {{ tunnel_unit }} -f
 
+[doc("Restart the tunnel unit")]
 tunnel-restart: _require-write-token
     systemctl --user restart {{ tunnel_unit }}
 
-# Stop and disable the unit (the tunnel and DNS record survive)
+[doc("Stop and disable the unit (the tunnel and DNS record survive)")]
 tunnel-uninstall:
     systemctl --user disable --now {{ tunnel_unit }}
