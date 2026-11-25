@@ -152,7 +152,7 @@ _default-profile-dir:
     else:
         sys.exit(f"no Default=1 profile with a Path in {ini}")
 
-[doc("Provision (idempotently) a disposable Zotero profile + empty data directory")]
+[doc("Provision (idempotently) a disposable Zotero profile + empty data directory for the mutating fuzz, and print `NAME<TAB>DIR<TAB>DATADIR`.")]
 [private]
 _provision-disposable-profile name="lw-fuzz":
     #!/usr/bin/env python3
@@ -197,7 +197,7 @@ _provision-disposable-profile name="lw-fuzz":
     )
     print(f"{name}\t{profile_dir}\t{data_dir}")
 
-[doc("Approve the add-on that Zotero registered as a disabled sideload on first")]
+[doc("Approve the add-on that Zotero registered as a disabled sideload on first boot of a fresh profile, so a second boot activates it.")]
 [private]
 _approve-sideloaded-addon profile_dir addon_id="local-write-api@dzackgarza.com":
     #!/usr/bin/env python3
@@ -362,7 +362,7 @@ tunnel_hostname := "zotero-write.dzackgarza.com"
 tunnel_config := home_directory() / ".cloudflared/zotero-write.yml"
 tunnel_unit := "zotero-write-tunnel.service"
 
-[doc("Fail loudly unless the LIVE write surface enforces a bearer token. The check")]
+[doc("Fail loudly unless the LIVE write surface enforces a bearer token.")]
 _require-write-token:
     bash dev/cloudflared/require-write-token.sh
 
