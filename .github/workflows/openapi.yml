@@ -34,6 +34,9 @@ jobs:
       - name: Install dependencies (frozen)
         run: bun install --frozen-lockfile
 
+      - name: Smoke runner cleanup regression
+        run: uv run --no-project --with 'httpx>=0.28,<1' --with 'pydantic>=2.7,<3' python -m unittest tests.test_live_smoke_cleanup
+
       - name: Lint, drift check, dispatch conformance, typecheck, tests
         env:
           AI_REVIEW_CI_CONFIGS: ${{ github.workspace }}/.ai-review-ci/tool-configs

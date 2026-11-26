@@ -34,6 +34,7 @@ import sys
 import time
 import urllib.parse
 from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Final, Generic, Literal, NamedTuple, NotRequired, TypeVar
 from uuid import uuid4
@@ -508,13 +509,39 @@ def _wait_for_deleted(http: httpx.Client, library_id: str, item_key: str, *, tim
 
 
 def _trash_created(smoke: SmokeRun) -> None:
-    """Trash every top-level item and collection this run created. Trashing is
-    idempotent, so objects the run already trashed or merged away are trashed
-    again harmlessly."""
-    for item_key in smoke.created:
-        smoke.write({"operation": "trash_item", "item_key": item_key}, ACK)
-    for collection_key in smoke.created_collections:
-        smoke.write({"operation": "trash_collection", "collection_key": collection_key}, ACK)
+    """Attempt every cleanup, reporting the identity of each failed object."""
+    failures: list[Exception] = []
+    for operation, field, keys in (
+        ("trash_item", "item_key", smoke.created),
+        ("trash_collection", "collection_key", smoke.created_collections),
+    ):
+        for key in keys:
+            try:
+                smoke.write({"operation": operation, field: key}, ACK)
+            except Exception as exc:
+                detail = f"cleanup {operation} {key}"
+                print(f"WARNING: {detail}: {exc}", file=sys.stderr)
+                exc.add_note(detail)
+                failures.append(exc)
+    if failures:
+        raise SmokeFailure(f"Cleanup failed for {len(failures)} object(s)") from ExceptionGroup(
+            "Cleanup failures", failures
+        )
+
+
+@contextmanager
+def _cleanup_after_proof(smoke: SmokeRun) -> Generator[None, None, None]:
+    """Preserve a failed proof; a cleanup-only failure still fails the run."""
+    try:
+        yield
+    except BaseException as primary:
+        try:
+            _trash_created(smoke)
+        except SmokeFailure as cleanup:
+            primary.add_note(str(cleanup))
+        raise
+    else:
+        _trash_created(smoke)
 
 
 def _select_pane_row(http: httpx.Client, write_path: str, row_id: str) -> None:
@@ -1044,10 +1071,8 @@ def run(http: httpx.Client, args: SmokeArgs) -> SmokeReport:
         created=[],
         created_collections=[],
     )
-    try:
+    with _cleanup_after_proof(smoke):
         return _prove_library_writes(smoke, version_payload["version"])
-    finally:
-        _trash_created(smoke)
 
 
 def parse_args() -> SmokeArgs:
