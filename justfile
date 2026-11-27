@@ -8,15 +8,15 @@ ai_review_ci_workflow_template_version := "1"
 ai_review_ci_local_delegation := "global-justfile"
 ai_review_ci_default_branch := "main"
 
-[doc("Run immediate commit-tier QC")]
+[doc("Validate supported staged file syntax through shared QC")]
 test-commit:
     @just -f ~/ai-review-ci/justfiles/bun.just -d . test-commit
 
-[doc("Run the full project suite before pushing")]
+[doc("Validate supported outgoing file syntax through shared QC")]
 test-push:
     @just -f ~/ai-review-ci/justfiles/bun.just -d . test-push
 
-[doc("Run CI acceptance QC")]
+[doc("Run shared CI diagnostics including Bun tests, Biome and ESLint")]
 test-ci:
     @just -f ~/ai-review-ci/justfiles/bun.just -d . test-ci
 
@@ -261,7 +261,7 @@ schemathesis-stateful-live:
 [doc("Full live API proof: generic fuzz, stateful workflow, client wrapper, lookups, smoke.")]
 api-live: schemathesis-fuzz-live schemathesis-stateful-live client-live item-lookup-live smoke-live
 
-[doc("Run commit-tier checks: typecheck, then the canonical QC lint and tests")]
+[doc("Type-check the TypeScript source and run staged syntax validation")]
 check: typecheck test-commit
 
 [doc("Release a patch version — bug fixes, infra, tooling (default)")]
