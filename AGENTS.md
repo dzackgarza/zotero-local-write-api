@@ -129,13 +129,19 @@ Zotero also supports development proxy-file loading, but this repo's proven loca
 - Do not treat generated ignored artifacts as committed state.
   The XPI, generated `src/bootstrap.js`, generated `src/manifest.json`, `lcov.info`, and `node_modules/` are local build outputs unless the repo policy changes.
 - Do not mix global QC migration edits with runtime proof claims.
-  The live Zotero proof can pass while `just test` or pre-commit still fails under global QC.
+  The live Zotero proof can pass while the shared QC checks fail.
 
 ## Global QC Notes
 
-Use the top-level `just` recipes.
-`just test` is the local QC contract and routes through the global Bun QC policy.
-Current global QC may be stricter than the repo's local `bun run lint`.
+Use the top-level `just` recipes, which delegate to the shared Bun QC profile in `ai-review-ci`:
+
+- `just check`: TypeScript typechecking and the commit-tier syntax check.
+- `just test-commit`: syntax validation of supported staged file types.
+- `just test-push`: syntax validation of supported files in the outgoing commits.
+- `just test-ci`: the shared CI diagnostics, including the Bun test suite, Biome and ESLint. Inspect the per-check results in `.qc-triage/results.json` (or the directory set by `QC_TRIAGE_DIR`); a successful diagnostic run alone does not mean every check passed.
+
+To run the CI diagnostics locally and require every check to pass, use `QC_ENFORCEMENT=all just test-ci`.
+The commit and push tiers do not run the whole lint or test suite. There is no separate local lint script or recipe.
 
 When aligning this repo with global QC:
 
